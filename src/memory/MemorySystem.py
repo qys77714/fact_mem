@@ -88,24 +88,36 @@ class MemorySystem:
         history_name: str,
         questions: List[str],
         question_dates: List,
-        
+        mcq_options: Optional[List[Optional[List[str]]]],
         top_k: int = 5,
     ):
         if len(question_dates) != len(questions):
             raise ValueError("question_date 的数量需要与 question_text 对齐。")
 
         messages_list = []
-        for q, date in zip(questions, question_dates):
+        for q, date, options in zip(questions, question_dates, mcq_options):
             instruction = (
                 "You are a memory-augmented assistant. "
                 "Use the retrieved memory units to provide accurate and context-aware answers to the user's questions. "
                 "If no relevant memory is found, rely on general knowledge to respond."
-            )  
-            header = (
-                f"### Question Details\n"
-                f"- Current Date: {date}\n"
-                f"- Question: {q}"
             )
+            # 不是选择题
+            if not options:
+                header = (
+                    f"### Question Details\n"
+                    f"- Current Date: {date}\n"
+                    f"- Question: {q}"
+                )
+            # 是选择题
+            else:
+                options_text = "\n".join(options)
+                header = (
+                    f"### Question Details\n"
+                    f"- Current Date: {date}\n"
+                    f"- Question: {q}\n"
+                    f"- Options:\n{options_text}\n\n"
+                )
+
             q_for_retrieval = (
                 f"- Current Date: {date}\n"
                 f"- Question: {q}"

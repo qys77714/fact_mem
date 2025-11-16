@@ -162,6 +162,7 @@ async def main_online(
     question_map = _group_questions_by_day(qa_list)
 
     for day, payload in day_chunks.items():
+        print(payload["dates"][0][:10])
         memory_system.store_history(
             history_name,
             payload["chat"],

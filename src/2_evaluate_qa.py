@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List
-
+import re
 from generate.load_api_llm import load_api_chat_completion
 
 
@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
         help="评估任务类型",
     )
     parser.add_argument("--judge_model", required=True, help="评估所用模型名称")
+    parser.add_argument("--use_cot", action="store_true", help="是否在评估时使用链式思维提示")
     return parser.parse_args()
 
 
@@ -42,7 +43,11 @@ def evaluate_locomo(*_args, **_kwargs):
     pass
 
 
-def evaluate_lmb(samples: List[Dict[str, Any]], judge_model: str) -> Dict[str, Any]:
+def evaluate_lmb(
+        samples: List[Dict[str, Any]], 
+        judge_model: str, 
+        use_cot: bool = False
+) -> Dict[str, Any]:
     if not samples:
         return {"overall_accuracy": 0.0, "per_type": {}}
 
@@ -56,20 +61,11 @@ def evaluate_lmb(samples: List[Dict[str, Any]], judge_model: str) -> Dict[str, A
             reference = item.get("answer", "")
             candidate = item.get("model_answer")
             question_type = item.get("question_type", "unknown")
-            user_prompt = (
-                "You are given a question, its ground-truth answer, and a model response. "
-                "Determine if the model response is semantically equivalent or meaningfully similar to the ground-truth answer. "
-                "Consider the following as acceptable variations:\n"
-                "- Different wording but same core meaning\n"
-                "- Partial answers that contain the key information\n"
-                "- Answers with additional relevant context\n"
-                "- Answers that rephrase the same idea\n"
-                "- Minor factual details may differ if the main point is correct\n\n"
-                "Be lenient in your judgment - if the response captures the essence of the correct answer, consider it correct.\n\n"
-                f"Question: {question}\n"
-                f"Ground-truth answer: {reference}\n"
-                f"Model response: {candidate}\n\n"
-                "Answer yes or no only."
+            user_prompt = _build_eval_prompt(
+                question=question,
+                reference=reference,
+                candidate=candidate,
+                use_cot=use_cot,
             )
             messages_list.append(
                 [
@@ -81,18 +77,17 @@ def evaluate_lmb(samples: List[Dict[str, Any]], judge_model: str) -> Dict[str, A
 
         responses = await client.get_response_chat(
             messages_list,
-            max_new_tokens=8,
+            max_new_tokens=2048,
             temperature=0.0,
-            max_concurrency=5,
+            max_concurrency=10,
             use_tqdm=True,
-            verbose=False,
+            verbose=True,
         )
 
         per_type: Dict[str, Dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
         for resp, info in zip(responses, meta):
             verdict = _extract_response_text(resp)
-            normalized = verdict.strip().lower()
-            is_correct = normalized.startswith("yes")
+            is_correct = _parse_verdict(verdict)
             q_type = info["question_type"]
             per_type[q_type]["total"] += 1
             if is_correct:
@@ -114,6 +109,40 @@ def evaluate_lmb(samples: List[Dict[str, Any]], judge_model: str) -> Dict[str, A
 
     return asyncio.run(_run())
 
+def _build_eval_prompt(question: str, reference: str, candidate: str, use_cot: bool) -> str:
+    prompt = (
+        "You are given a question, its ground-truth answer, and a model response. "
+        "Determine if the model response is semantically equivalent or meaningfully similar to the ground-truth answer. "
+        "Consider the following as acceptable variations:\n"
+        "- Different wording but same core meaning\n"
+        "- Partial answers that contain the key information\n"
+        "- Answers with additional relevant context\n"
+        "- Answers that rephrase the same idea\n"
+        "- Minor factual details may differ if the main point is correct\n\n"
+        "Be lenient in your judgment - if the response captures the essence of the correct answer, consider it correct.\n\n"
+        f"Question: {question}\n"
+        f"Ground-truth answer: {reference}\n"
+        f"Model response: {candidate}\n\n"
+    )
+    if use_cot:
+        prompt += (
+            "Think step by step about whether the model response matches the ground-truth answer. "
+            "Provide a brief reasoning and then end with 'Final answer: yes' or 'Final answer: no'."
+        )
+    else:
+        prompt += "Answer yes or no only."
+    return prompt
+
+
+def _parse_verdict(text: str) -> bool:
+    normalized = text.strip().lower()
+    match = re.search(r"(final answer|answer)\s*[:\-]\s*(yes|no)", normalized)
+    if match:
+        return match.group(2) == "yes"
+    else:
+        print(f"无法解析的评估响应：{text}")
+        return normalized.startswith("yes")
+
 
 def _extract_response_text(resp: Any) -> str:
     if isinstance(resp, str):
@@ -133,7 +162,7 @@ def main() -> None:
     samples = load_jsonl(args.input_path)
 
     if args.evaluate_task == "lmb":
-        metrics = evaluate_lmb(samples, args.judge_model)
+        metrics = evaluate_lmb(samples, args.judge_model, args.use_cot)
     elif args.evaluate_task == "lme":
         metrics = evaluate_lme(samples, args.judge_model)
     else:

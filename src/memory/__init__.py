@@ -444,9 +444,9 @@ class RagMemoryMethod(BaseMemoryMethod):
     ) -> None:
         database = self._get_database(history_name)
         dataset_dir = database._dataset_dir()
-        if dataset_dir.exists() and any(dataset_dir.iterdir()):
-            print(f"[RAG] 跳过历史 '{history_name}'，数据已存在。")
-            return
+        # if dataset_dir.exists() and any(dataset_dir.iterdir()):
+        #     print(f"[RAG] 跳过历史 '{history_name}'，数据已存在。")
+        #     return
 
         if granularity not in {"session", "turn"}:
             raise ValueError("granularity must be 'session' or 'turn'")

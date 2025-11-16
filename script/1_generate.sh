@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 task=lmb_event
-chat_model=Qwen2.5-7B-Instruct
+chat_model=qwen-plus
 embed_model_name=qwen3-embedding-0.6b
 method=rag
 topk=20
@@ -18,4 +18,4 @@ python src/1_run_generation.py \
   --topk "$topk" \
   --granularity "$granularity" \
   --context_token_limit "$context_token_limit" \
-  --run_mode offline
+  --run_mode advanced

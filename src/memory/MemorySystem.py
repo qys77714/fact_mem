@@ -143,6 +143,6 @@ class MemorySystem:
             max_new_tokens=1024, 
             temperature=0.0,
             use_tqdm=True,
-            verbose=True,
+            verbose=False,
         )
         return responses

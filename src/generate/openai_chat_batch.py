@@ -6,6 +6,7 @@ from tqdm.asyncio import tqdm
 from common_utils import configure_logging
 from datetime import datetime
 from openai import OpenAI
+import time
 
 class OpenAIClient:
     def __init__(
@@ -19,6 +20,7 @@ class OpenAIClient:
             base_url=base_url
         )
         self.model_name = model
+        time.sleep(1)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[4:-7]  # 毫秒精度
         self.logger = configure_logging(
             log_file_path=os.path.join("logs", f"{model}_False_{ts}.log"),

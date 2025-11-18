@@ -46,7 +46,8 @@ def evaluate_locomo(*_args, **_kwargs):
 def evaluate_lmb(
         samples: List[Dict[str, Any]], 
         judge_model: str, 
-        use_cot: bool = False
+        use_cot: bool = False,
+        is_mcq: bool = False,
 ) -> Dict[str, Any]:
     if not samples:
         return {"overall_accuracy": 0.0, "per_type": {}}
@@ -61,12 +62,23 @@ def evaluate_lmb(
             reference = item.get("answer", "")
             candidate = item.get("model_answer")
             question_type = item.get("question_type", "unknown")
-            user_prompt = _build_eval_prompt(
-                question=question,
-                reference=reference,
-                candidate=candidate,
-                use_cot=use_cot,
-            )
+            options = item.get("mcq_options", [])
+            if is_mcq:
+                user_prompt = _build_eval_prompt_mcq(
+                    question=question,
+                    options=options,
+                    golden_option=item.get("golden_option"),
+                    reference=reference,
+                    candidate=candidate,
+                    use_cot=use_cot,
+                )
+            else:
+                user_prompt = _build_eval_prompt(
+                    question=question,
+                    reference=reference,
+                    candidate=candidate,
+                    use_cot=use_cot,
+                )
             messages_list.append(
                 [
                     {"role": "system", "content": "You are a careful evaluation assistant."},
@@ -79,7 +91,7 @@ def evaluate_lmb(
             messages_list,
             max_new_tokens=2048,
             temperature=0.0,
-            max_concurrency=10,
+            max_concurrency=20,
             use_tqdm=True,
             verbose=True,
         )
@@ -133,6 +145,34 @@ def _build_eval_prompt(question: str, reference: str, candidate: str, use_cot: b
         prompt += "Answer yes or no only."
     return prompt
 
+def _build_eval_prompt_mcq(
+    question: str,
+    options: List[Any],
+    golden_option: Any,
+    reference: str,
+    candidate: str,
+    use_cot: bool,
+) -> str:
+    options_block = "\n".join(options) if options else "（无可用选项）"
+    ground_truth = f"{golden_option}. {reference}"
+
+    prompt = (
+        "You are given a multiple-choice question with options, the correct option, "
+        "and a model response. Determine if the model response selects the correct option "
+        "or unambiguously states the correct answer.\n\n"
+        f"Question: {question}\n"
+        f"Options:\n{options_block}\n"
+        f"Ground-truth answer: {ground_truth}\n"
+        f"Model response: {candidate}\n\n"
+    )
+    if use_cot:
+        prompt += (
+            "Reason briefly about whether the model picked the correct choice, then end with "
+            "'Final answer: yes' or 'Final answer: no'."
+        )
+    else:
+        prompt += "Answer yes or no only."
+    return prompt
 
 def _parse_verdict(text: str) -> bool:
     normalized = text.strip().lower()
@@ -160,15 +200,19 @@ def _extract_response_text(resp: Any) -> str:
 def main() -> None:
     args = parse_args()
     samples = load_jsonl(args.input_path)
+    is_mcq_eval = "_mcq" in args.input_path
 
     if args.evaluate_task == "lmb":
-        metrics = evaluate_lmb(samples, args.judge_model, args.use_cot)
+        metrics = evaluate_lmb(samples, args.judge_model, args.use_cot, is_mcq_eval)
     elif args.evaluate_task == "lme":
         metrics = evaluate_lme(samples, args.judge_model)
     else:
         metrics = evaluate_locomo(samples, args.judge_model)
 
-    print(json.dumps(metrics, ensure_ascii=False, indent=2))
+    with open("experiment/eval_results.txt", "a", encoding="utf-8") as f:
+        f.write(f"{args.input_path}\n")
+        f.write(json.dumps(metrics, ensure_ascii=False, indent=2))
+        f.write("\n\n")
 
 
 if __name__ == "__main__":

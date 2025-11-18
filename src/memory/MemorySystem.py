@@ -15,7 +15,7 @@ def trim_context(context: str, tokenizer: AutoTokenizer, max_tokens: int) -> str
     original_len = len(token_ids)
 
     if original_len <= max_tokens:
-        print("Retrieved Context Trimming: No")
+        print(f"Retrieved Context Trimming: No, length={original_len}")
         return context
 
     trimmed_ids = token_ids[:max_tokens]  # Retain the first max_tokens tokens
@@ -83,7 +83,7 @@ class MemorySystem:
     ) -> List[RetrievedMemory]:
         return self.method.retrieve(history_name, question_text, top_k)
 
-    async def answer_question(
+    async def answer_question_cn(
         self,
         history_name: str,
         questions: List[str],
@@ -95,6 +95,88 @@ class MemorySystem:
             raise ValueError("question_date 的数量需要与 question_text 对齐。")
 
         messages_list = []
+        if mcq_options is None: mcq_options = [None] * len(questions)
+        
+        for q, date, options in zip(questions, question_dates, mcq_options):
+            instruction = (
+                "你是一个增强记忆的助手。"
+                "请使用检索到的记忆单元为用户的问题提供准确且具有上下文意识的答案。"
+                "如果没有找到相关记忆，请依靠一般知识进行回答。"
+            )
+            # 不是选择题
+            if not options:
+                header = (
+                    f"### 问题详情\n"
+                    f"- 当前日期: {date}\n"
+                    f"- 问题: {q}"
+                )
+            # 是选择题
+            else:
+                options_text = "\n".join(options)
+                header = (
+                    f"### 问题详情\n"
+                    f"- 当前日期: {date}\n"
+                    f"- 问题: {q}\n"
+                    f"- 选项:\n{options_text}\n\n"
+                    f"请仔细推理并选择最合适的选项。"
+                    f"请以以下格式给出最终答案: '最终答案: <选项>'。"
+                )
+
+            q_for_retrieval = (
+                f"- 当前日期: {date}\n"
+                f"- 问题: {q}"
+            )
+
+            retrieved = self.retrieve_context(history_name, q_for_retrieval, top_k)
+            if retrieved:
+                context_lines = [
+                    f"### 检索到的记忆单元 {idx + 1}\n{item.text}"
+                    for idx, item in enumerate(retrieved)
+                ]
+                context_block = "\n\n".join(context_lines)
+            else:
+                context_block = "### 检索到的记忆单元\n未找到相关记忆。"
+
+            context_block = trim_context(
+                context_block, 
+                tokenizer=self.tokenizer, 
+                max_tokens=self.chat_model_context_token_limit - 1024
+            )
+
+            prompt = f"{instruction}\n{context_block}\n{header}"
+            messages_list.append(
+                [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    },
+                ]
+            )
+        
+        responses = await self.chat_model.get_response_chat(
+            messages_list, 
+            max_concurrency=10, 
+            max_new_tokens=1024, 
+            temperature=0.0,
+            use_tqdm=True,
+            verbose=True,
+        )
+        return responses
+
+    async def answer_question_en(
+        self,
+        history_name: str,
+        questions: List[str],
+        question_dates: List,
+        mcq_options: Optional[List[Optional[List[str]]]],
+        top_k: int = 5,
+    ):
+        if len(question_dates) != len(questions):
+            raise ValueError("question_date 的数量需要与 question_text 对齐。")
+
+        messages_list = []
+        if mcq_options is None: mcq_options = [None] * len(questions)
+
         for q, date, options in zip(questions, question_dates, mcq_options):
             instruction = (
                 "You are a memory-augmented assistant. "
@@ -116,6 +198,8 @@ class MemorySystem:
                     f"- Current Date: {date}\n"
                     f"- Question: {q}\n"
                     f"- Options:\n{options_text}\n\n"
+                    f"Please reason carefully and select the most appropriate option. "
+                    f"Give your final answer in the format: 'Final Answer: <option>'."
                 )
 
             q_for_retrieval = (
@@ -155,6 +239,6 @@ class MemorySystem:
             max_new_tokens=1024, 
             temperature=0.0,
             use_tqdm=True,
-            verbose=False,
+            verbose=True,
         )
         return responses

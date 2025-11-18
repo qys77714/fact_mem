@@ -17,7 +17,7 @@ def configure_logging(log_file_path, override=False):
     if os.path.exists(log_file_path) and override:
         os.remove(log_file_path)
     
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(log_file_path)
     logger.setLevel(logging.INFO)
 
     file_handler = logging.FileHandler(log_file_path)

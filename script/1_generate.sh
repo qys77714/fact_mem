@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 task=lmb_event
-chat_model=qwen-plus
-embed_model_name=qwen3-embedding-0.6b
-method=rag
+chat_model=Qwen3-8B
+embed_model_name=qwen3-embedding-8b
+method=mem0
 topk=20
 context_token_limit=32768
 granularity=session

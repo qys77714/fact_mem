@@ -56,11 +56,11 @@ def _group_questions_by_day(qa_list: List[Dict[str, Any]]) -> OrderedDict[str, D
     question_map: OrderedDict[str, Dict[str, List[Any]]] = OrderedDict()
     for idx, qa in enumerate(qa_list):
         day_key = _normalize_date(qa.get("question_time"))
-        bucket = question_map.setdefault(day_key, {"indices": [], "questions": [], "dates": []})
+        bucket = question_map.setdefault(day_key, {"indices": [], "questions": [], "dates": [], "mcq_options": []})
         bucket["indices"].append(idx)
         bucket["questions"].append(qa.get("question"))
         bucket["dates"].append(qa.get("question_time"))
-        bucket["mcq_options"] = qa.get("options", [None] * len(bucket["questions"]))
+        bucket["mcq_options"].append(qa.get("options", None))
     return question_map
 
 
@@ -71,8 +71,8 @@ def _build_output_path(base_path: Path, suffix: str) -> Path:
 
 
 def _write_records(handle: TextIO, task: str, entry: Dict[str, Any], qa_subset: List[Dict[str, Any]], responses: List[str]) -> int:
-    if not qa_subset:
-        return 0
+    assert len(qa_subset) == len(responses), f"Length mismatch: {len(qa_subset)} vs {len(responses)}"
+
     written = 0
     if task.startswith("lme"):
         hypothesis = responses[0]
@@ -90,7 +90,7 @@ def _write_records(handle: TextIO, task: str, entry: Dict[str, Any], qa_subset: 
                 "answer": qa.get("answer"),
                 "model_answer": answer_text,
                 "question_type": qa.get("question_type"),
-                "mcq_options": qa.get("options"),
+                "options": qa.get("options"),
                 "golden_option": qa.get("golden_option")
             }
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -141,7 +141,7 @@ async def run_offline(args: argparse.Namespace) -> None:
 
             questions = [qa.get("question") for qa in qa_list]
             dates = [qa.get("question_time") for qa in qa_list]
-            responses = await memory_system.answer_question(
+            responses = await memory_system.answer_question_cn(
                 history_name=history_name,
                 questions=questions,
                 question_dates=dates,
@@ -176,11 +176,11 @@ async def main_online(
         question_payload = question_map.pop(day, None)
         if question_payload and question_payload["questions"]:
             # 非选择题
-            responses = await memory_system.answer_question(
+            responses = await memory_system.answer_question_cn(
                 history_name=history_name,
                 questions=question_payload["questions"],
                 question_dates=question_payload["dates"],
-                mcq_options=[None] * len(question_payload["questions"]),
+                mcq_options=None,
                 top_k=args.topk,
             )
             qa_subset = [qa_list[idx] for idx in question_payload["indices"]]
@@ -189,14 +189,13 @@ async def main_online(
 
             # 选择题
             if question_payload['mcq_options'][0] != None:
-                responses_mcq = await memory_system.answer_question(
+                responses_mcq = await memory_system.answer_question_cn(
                     history_name=history_name,
                     questions=question_payload["questions"],
                     question_dates=question_payload["dates"],
                     mcq_options=question_payload['mcq_options'],
                     top_k=args.topk,
                 )
-                qa_subset = [qa_list[idx] for idx in question_payload["indices"]]
                 if _write_records(online_handle_mcq, args.task, entry, qa_subset, responses_mcq):
                     online_handle_mcq.flush()
             
@@ -237,22 +236,24 @@ async def main_advanced(args: argparse.Namespace) -> None:
             questions = [qa.get("question") for qa in qa_list]
             question_dates = [qa.get("question_time") for qa in qa_list]
             mcq_options = [qa.get("options", None) for qa in qa_list]
+            # print(mcq_options)
 
             await main_online(memory_system, entry, args, online_f, online_f_mcq)
             
             # 非选择题
-            offline_responses = await memory_system.answer_question(
+            offline_responses = await memory_system.answer_question_cn(
                     history_name=history_name,
                     questions=questions,
                     question_dates=question_dates,
-                    mcq_options=[None] * len(qa_list),
+                    mcq_options=None,
                     top_k=args.topk,
                 )
+            
             _write_records(offline_f, args.task, entry, qa_list, offline_responses)
             
             # 选择题
             if mcq_options[0] != None:
-                offline_responses_mcq = await memory_system.answer_question(
+                offline_responses_mcq = await memory_system.answer_question_cn(
                     history_name=history_name,
                     questions=questions,
                     question_dates=question_dates,

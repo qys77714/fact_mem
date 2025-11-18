@@ -388,7 +388,7 @@ class FullContextMemoryMethod(BaseMemoryMethod):
             return
         
         for session_idx, session in tqdm(enumerate(chat_history), desc="Storing Session"):
-            mem_content = "\n\n".join(
+            mem_content = "\n".join(
                 f"**{turn['speaker']}**: {turn['content']}" for turn in session
             )
             if not mem_content:
@@ -453,7 +453,7 @@ class RagMemoryMethod(BaseMemoryMethod):
 
         if granularity == "session":
             for session_idx, session in tqdm(enumerate(chat_history), desc="Storing Session"):
-                mem_content = "\n\n".join(
+                mem_content = "\n".join(
                     f"**{turn['speaker']}**: {turn['content']}" for turn in session
                 )
                 if not mem_content:

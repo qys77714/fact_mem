@@ -35,16 +35,25 @@ class OpenAIClient:
             verbose=False,
             **kargs
     ) -> str:
-        completion = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            extra_body={
-                "chat_template_kwargs": {"enable_thinking": False},
-            },
-            **kargs
-        )
+        if self.model_name in ["gpt-4o-mini"]:
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                **kargs
+            )
+        else:
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                extra_body={
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
+                **kargs
+            )
 
         response = completion.choices[0].message.content
 
@@ -88,16 +97,25 @@ class AsyncOpenAIClient:
         async with semaphore:
             for attempt in range(max_retries):
                 try:
-                    completion = await self.client.chat.completions.create(
-                        model=self.model_name,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        extra_body={
-                            "chat_template_kwargs": {"enable_thinking": False},
-                        },
-                        **kwargs
-                    )
+                    if self.model_name in ["gpt-4o-mini"]:
+                        completion = await self.client.chat.completions.create(
+                            model=self.model_name,
+                            messages=messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            **kwargs
+                        )
+                    else:
+                        completion = await self.client.chat.completions.create(
+                            model=self.model_name,
+                            messages=messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            extra_body={
+                                "chat_template_kwargs": {"enable_thinking": False},
+                            },
+                            **kwargs
+                        )
                     response = completion.choices[0].message.content
                     
                     if verbose:

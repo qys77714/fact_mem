@@ -33,6 +33,7 @@ class OpenAIClient:
             max_new_tokens=1024,
             temperature=0.0,
             verbose=False,
+            **kargs
     ) -> str:
         completion = self.client.chat.completions.create(
             model=self.model_name,
@@ -42,6 +43,7 @@ class OpenAIClient:
             extra_body={
                 "chat_template_kwargs": {"enable_thinking": False},
             },
+            **kargs
         )
 
         response = completion.choices[0].message.content

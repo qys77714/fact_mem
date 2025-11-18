@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 task=lmb_event
-chat_model=Qwen3-8B
+chat_model=Qwen2.5-7B-Instruct
 embed_model_name=qwen3-embedding-8b
 method=mem0
 topk=20

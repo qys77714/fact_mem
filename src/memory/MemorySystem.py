@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from generate.load_api_llm import load_api_chat_completion
 from memory import *
 from memory.mem0 import Mem0MemoryMethod
+from memory.amem import AMemMemoryMethod
 from openai import OpenAI
 from transformers import AutoTokenizer
 
@@ -38,6 +39,7 @@ class MemorySystem:
             "only_query": OnlyQueryMemoryMethod,
             "rag": RagMemoryMethod,
             "mem0": Mem0MemoryMethod,
+            "amem": AMemMemoryMethod,
         }
         if method_name not in registry:
             raise ValueError(f"未知的记忆方法: {method_name}")
@@ -55,7 +57,7 @@ class MemorySystem:
             "database_root": database_root,
         }
 
-        if method_name == "mem0":
+        if method_name in ["mem0", "amem"]:
             manager_model = load_api_chat_completion(chat_model, async_=False)
             method_kwargs.update({
                 "llm_client": manager_model,

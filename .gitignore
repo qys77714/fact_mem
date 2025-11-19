@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 data
+!data/preprocessed/LifeMemBench_event.json
 experiment
 logs
 MemDB
+src/generate/load_api_llm.py
+src/generate/openai_chat_batch.py
+

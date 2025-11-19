@@ -8,7 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
-data
+data/preprocessed/*
+data/raw_data
 !data/preprocessed/LifeMemBench_event.json
 experiment
 logs

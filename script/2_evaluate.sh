@@ -1,12 +1,12 @@
 # 定义输入路径数组
 INPUT_PATHS=(
-    # "experiment/lmb_event_Qwen3-8B_rag_top20_session_offline.jsonl"
-    "experiment/lmb_event_Qwen3-8B_rag_top20_session_offline_mcq.jsonl"
-    "experiment/lmb_event_Qwen3-8B_rag_top20_session_online.jsonl"
-    "experiment/lmb_event_Qwen3-8B_rag_top20_session_online_mcq.jsonl"
+    "experiment/lmb_event_Qwen3-8B_amem_top20_session_online.jsonl"
+    # "experiment/lmb_event_Qwen3-8B_rag_top20_session_offline_mcq.jsonl"
+    # "experiment/lmb_event_Qwen3-8B_rag_top20_session_online.jsonl"
+    # "experiment/lmb_event_Qwen3-8B_rag_top20_session_online_mcq.jsonl"
 )
 
-JUDGE_MODEL=qwen3-32b
+JUDGE_MODEL=gpt-4o-mini
 
 # 并行执行（放到后台）
 echo "开始并行执行..."

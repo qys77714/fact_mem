@@ -119,7 +119,7 @@ async def run_offline(args: argparse.Namespace) -> None:
         method_name=args.method,
         chat_model=args.chat_model,
         embed_model_name=args.embed_model_name,
-        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7104/v1/"),
+        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7100/v1/"),
         database_root=f"MemDB/{args.task}/{args.chat_model}_{args.granularity}/{args.method}",
         context_token_limit=args.context_token_limit
     )
@@ -210,7 +210,7 @@ async def main_advanced(args: argparse.Namespace) -> None:
         method_name=args.method,
         chat_model=args.chat_model,
         embed_model_name=args.embed_model_name,
-        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7104/v1/"),
+        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7100/v1/"),
         database_root=f"MemDB/{args.task}/{args.chat_model}_{args.granularity}/{args.method}",
         context_token_limit=args.context_token_limit
     )

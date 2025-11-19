@@ -14,6 +14,6 @@ data/raw_data
 experiment
 logs
 MemDB
-src/generate/load_api_llm.py
-src/generate/openai_chat_batch.py
+src/generate/load_api_llm_mine.py
+src/generate/openai_chat_batch_mine.py
 

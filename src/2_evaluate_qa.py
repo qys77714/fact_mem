@@ -91,7 +91,7 @@ def evaluate_lmb(
             messages_list,
             max_new_tokens=2048,
             temperature=0.0,
-            max_concurrency=20,
+            max_concurrency=30,
             use_tqdm=True,
             verbose=True,
         )

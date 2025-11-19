@@ -5,7 +5,7 @@ import logging
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import random
-from .prompts import FACT_RETRIEVAL_PROMPT, get_update_memory_messages
+from .prompts import *
 from tqdm import tqdm
 from memory import MemoryDatabase, RetrievedMemory, BaseMemoryMethod
 from openai import OpenAI
@@ -114,6 +114,7 @@ class Mem0MemoryMethod(BaseMemoryMethod):
             messages, 
             max_new_tokens=2048,
             temperature=0,
+            response_format=FACT_RETRIEVAL_RESPONSE_FORMAT,
             verbose=True
         )
         facts = self._parse_fact_response(raw_response)
@@ -175,6 +176,7 @@ class Mem0MemoryMethod(BaseMemoryMethod):
             [{"role": "user", "content": update_prompt}], 
             max_new_tokens=2048,
             temperature=0,
+            response_format=UPDATE_MEMORY_RESPONSE_FORMAT,
             verbose=True
         )
         return self._parse_memory_changes(raw_response)

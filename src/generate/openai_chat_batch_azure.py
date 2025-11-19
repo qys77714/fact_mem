@@ -8,6 +8,11 @@ from datetime import datetime
 from openai import OpenAI
 import time
 
+import random
+from openai import AzureOpenAI
+from azure.identity import get_bearer_token_provider, AzureCliCredential
+
+
 class OpenAIClient:
     def __init__(
             self,
@@ -15,11 +20,7 @@ class OpenAIClient:
             base_url="https://api.openai.com/v1",
             model="gpt-4o-mini"
     ):
-        self.client = OpenAI(
-            api_key=api_key, 
-            base_url=base_url
-        )
-        self.model_name = model
+        self.client, self.model_name = get_client(model_name=model)
         time.sleep(1)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[4:-7]  # 毫秒精度
         self.logger = configure_logging(
@@ -72,11 +73,7 @@ class AsyncOpenAIClient:
             base_url="https://api.openai.com/v1",
             model="gpt-4o-mini"
     ):
-        self.client = AsyncOpenAI(
-            api_key=api_key, 
-            base_url=base_url
-        )
-        self.model_name = model
+        self.client, self.model_name = get_client(model_name=model)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[4:-7]  # 毫秒精度
         self.logger = configure_logging(
             log_file_path=os.path.join("logs", f"{model}_True_{ts}.log"),
@@ -97,7 +94,7 @@ class AsyncOpenAIClient:
         async with semaphore:
             for attempt in range(max_retries):
                 try:
-                    if self.model_name in ["gpt-4o-mini"]:
+                    if self.model_name in ["gpt-4o-mini", "gpt-4o"]:
                         completion = await self.client.chat.completions.create(
                             model=self.model_name,
                             messages=messages,
@@ -172,32 +169,167 @@ class AsyncOpenAIClient:
         #     logger.info(f"message:\n{messages_list[0]}\n{'--'*50}")
         #     logger.info(f"response:\n{sorted_results[0][1]}\n{'--'*50}")
 
-if __name__ == "__main__":
-    async def test():
-        client = AsyncOpenAIClient(
-            api_key="zjj", 
-            base_url="http://localhost:7104/v1/",
-            model="gpt-4o-mini"
-        )
-        messages_list = [
-            [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Hello, how are you?"}
-            ],
-            [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "What is the capital of France?"}
-            ]
-        ]
-        responses = await client.get_response_chat(
-            messages_list,
-            max_new_tokens=50,
-            temperature=0.7,
-            max_concurrency=2,
-            use_tqdm=True,
-            verbose=True
-        )
-        for resp in responses:
-            print("Response:", resp)
 
-    asyncio.run(test())
+
+def get_endpoints():
+    gpt_4o = [
+        {
+            "endpoints": "https://conversationhubeastus.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        {
+            "endpoints": "https://conversationhubeastus2.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        {
+            "endpoints": "https://conversationhubnorthcentralus.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        {
+            "endpoints": "https://conversationhubsouthcentralus.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        {
+            "endpoints": "https://conversationhubwestus.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        # {
+        #     "endpoints": "https://conversationhubwestus3.openai.azure.com/",
+        #     "speed": 150,
+        #     "model": "gpt-4o"
+        # },
+        {
+            "endpoints": "https://readineastus.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        {
+            "endpoints": "https://readineastus2.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        {
+            "endpoints": "https://readinnorthcentralus.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        # {
+        #     "endpoints": "https://readinsouthcentralus.openai.azure.com/",
+        #     "speed": 150,
+        #     "model": "gpt-4o"
+        # },
+        {
+            "endpoints": "https://readinwestus.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        # {
+        #     "endpoints": "https://readinwestus3.openai.azure.com/",
+        #     "speed": 150,
+        #     "model": "gpt-4o"
+        # },
+        {
+            "endpoints": "https://conversationhubeastus.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+        {
+            "endpoints": "https://conversationhubeastus2.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+        {
+            "endpoints": "https://conversationhubnorthcentralus.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+        {
+            "endpoints": "https://conversationhubsouthcentralus.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+        # {
+        #     "endpoints": "https://conversationhubwestus.openai.azure.com/",
+        #     "speed": 450,
+        #     "model": "gpt-4o-global"
+        # },
+        {
+            "endpoints": "https://readineastus.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+        {
+            "endpoints": "https://readineastus2.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+        {
+            "endpoints": "https://readinnorthcentralus.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+        {
+            "endpoints": "https://readinwestus.openai.azure.com/",
+            "speed": 450,
+            "model": "gpt-4o-global"
+        },
+    ]
+    gpt_4_turbo = [
+        {
+            "endpoints": "https://conversationhubswedencentral.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4-turbo"
+        },
+        {
+            "endpoints": "https://conversationhubeastus2.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+        {
+            "endpoints": "https://readineastus2.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-4o"
+        },
+    ]
+    gpt_5 = [
+        {
+            "endpoints": "https://conversationhubeastus2.openai.azure.com/",
+            "speed": 150,
+            "model": "gpt-5-global"
+        },
+    ]
+    return {
+        "gpt-4o": gpt_4o,
+        "gpt-4-turbo": gpt_4_turbo,
+        "gpt-5": gpt_5,
+    }
+def select_endpoint(model_name: str) -> dict:
+    azure_endpoints = get_endpoints()
+    entries = azure_endpoints[model_name]
+    candidates = [e for e in entries if e.get("speed", 0) > 0 and e.get("endpoints")]
+    weights = [e["speed"] for e in candidates]
+    chosen = random.choices(candidates, weights=weights, k=1)[0]
+    return chosen
+def get_client(
+        model_name="gpt-4o",
+        tenant_id="72f988bf-86f1-41af-91ab-2d7cd011db47",
+        api_version="2024-12-01-preview",
+        max_retries=5,
+    ):
+    azure_ad_token_provider = get_bearer_token_provider(
+        AzureCliCredential(tenant_id=tenant_id),
+        "https://cognitiveservices.azure.com/.default"
+    )
+    selected = select_endpoint(model_name)
+    client = AzureOpenAI(
+        azure_endpoint=selected["endpoints"],
+        azure_ad_token_provider=azure_ad_token_provider,
+        api_version=api_version,
+        max_retries=max_retries,
+    )
+    return client, selected["model"]

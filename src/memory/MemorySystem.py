@@ -157,7 +157,7 @@ class MemorySystem:
         
         responses = await self.chat_model.get_response_chat(
             messages_list, 
-            max_concurrency=10, 
+            max_concurrency=20, 
             max_new_tokens=1024, 
             temperature=0.0,
             use_tqdm=True,
@@ -237,7 +237,7 @@ class MemorySystem:
         
         responses = await self.chat_model.get_response_chat(
             messages_list, 
-            max_concurrency=10, 
+            max_concurrency=20, 
             max_new_tokens=1024, 
             temperature=0.0,
             use_tqdm=True,

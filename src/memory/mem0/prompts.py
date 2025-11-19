@@ -1,3 +1,4 @@
+from typing import Dict, Any
 # FACT_RETRIEVAL_PROMPT = f"""
 # 你是一名信息提取专家，专注于从输入文本中总结出清晰、准确的事实。你的任务是从输入的文本中提取所有相关事实，并将其组织为清晰、可管理的独立条目。
 
@@ -181,3 +182,55 @@ def get_update_memory_messages(retrieved_old_memory_dict, response_content, cust
 
    除该 JSON 外不要返回任何内容。
    """
+
+
+FACT_RETRIEVAL_RESPONSE_FORMAT: Dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "fact_retrieval",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "facts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                }
+            },
+            "required": ["facts"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}
+
+UPDATE_MEMORY_RESPONSE_FORMAT: Dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "update_memory_actions",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "memory": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "text": {"type": "string"},
+                            "event": {
+                                "type": "string",
+                                "enum": ["ADD", "UPDATE", "DELETE", "NONE"],
+                            },
+                            "old_memory": {"type": "string"},
+                        },
+                        "required": ["id", "text", "event"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["memory"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+}

@@ -33,6 +33,7 @@ class MemorySystem:
         embed_client: OpenAI,
         context_token_limit: int = 2048,
         database_root: Optional[str] = None,
+        language: str = "en",
     ) -> None:
         registry = {
             "full_context": FullContextMemoryMethod,
@@ -62,11 +63,13 @@ class MemorySystem:
             method_kwargs.update({
                 "llm_client": manager_model,
                 "related_memory_top_k": 5,
+                "language": language
             })
 
         self.method = method_cls(**method_kwargs)
 
         self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+        self.answer_question_fn = self.answer_question_zh if language == "zh" else self.answer_question_en
 
     def store_history(
             self, 
@@ -85,7 +88,7 @@ class MemorySystem:
     ) -> List[RetrievedMemory]:
         return self.method.retrieve(history_name, question_text, top_k)
 
-    async def answer_question_cn(
+    async def answer_question_zh(
         self,
         history_name: str,
         questions: List[str],
@@ -103,14 +106,14 @@ class MemorySystem:
             instruction = (
                 "你是一个增强记忆的助手。"
                 "请使用检索到的记忆单元为用户的问题提供准确且具有上下文意识的答案。"
-                "如果没有找到相关记忆，请依靠一般知识进行回答。"
             )
             # 不是选择题
             if not options:
                 header = (
                     f"### 问题详情\n"
                     f"- 当前日期: {date}\n"
-                    f"- 问题: {q}"
+                    f"- 问题: {q}\n\n"
+                    f"请给出简短的答案。"
                 )
             # 是选择题
             else:
@@ -120,7 +123,7 @@ class MemorySystem:
                     f"- 当前日期: {date}\n"
                     f"- 问题: {q}\n"
                     f"- 选项:\n{options_text}\n\n"
-                    f"请仔细推理并选择最合适的选项。"
+                    f"请推理并选择最合适的选项。"
                     f"请以以下格式给出最终答案: '最终答案: <选项>'。"
                 )
 
@@ -183,14 +186,14 @@ class MemorySystem:
             instruction = (
                 "You are a memory-augmented assistant. "
                 "Use the retrieved memory units to provide accurate and context-aware answers to the user's questions. "
-                "If no relevant memory is found, rely on general knowledge to respond."
             )
             # 不是选择题
             if not options:
                 header = (
                     f"### Question Details\n"
                     f"- Current Date: {date}\n"
-                    f"- Question: {q}"
+                    f"- Question: {q}\n\n"
+                    f"Please give a short answer."
                 )
             # 是选择题
             else:
@@ -200,7 +203,7 @@ class MemorySystem:
                     f"- Current Date: {date}\n"
                     f"- Question: {q}\n"
                     f"- Options:\n{options_text}\n\n"
-                    f"Please reason carefully and select the most appropriate option. "
+                    f"Please reason and select the most appropriate option. "
                     f"Give your final answer in the format: 'Final Answer: <option>'."
                 )
 

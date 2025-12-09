@@ -25,11 +25,12 @@ def parse_args() -> argparse.Namespace:
 
 
 TASK_TO_DATASET = {
-    "lme_oracle": "data/preprocessed/longmemeval_oracle.json",
-    "lme_m": "data/preprocessed/longmemeval_m_cleaned.json",
-    "lme_s": "data/preprocessed/longmemeval_s_cleaned.json",
-    "locomo": "data/preprocessed/locomo10.json",
-    "lmb_event": "data/preprocessed/LifeMemBench_event.json"
+    "lme_oracle": ("data/preprocessed/longmemeval_oracle.json", "en"),
+    "lme_m": ("data/preprocessed/longmemeval_m_cleaned.json", "en"),
+    "lme_s": ("data/preprocessed/longmemeval_s_cleaned.json", "en"),
+    "locomo": ("data/preprocessed/locomo10.json", "en"),
+    "lmb_event": ("data/preprocessed/LifeMemBench_event.json", "zh"),
+    "emb_event": ("data/preprocessed/EgoMemBench_event_half.json", "en")
 }
 
 
@@ -63,6 +64,22 @@ def _group_questions_by_day(qa_list: List[Dict[str, Any]]) -> OrderedDict[str, D
         bucket["mcq_options"].append(qa.get("options", None))
     return question_map
 
+def get_all_questions_data(question_map: OrderedDict[str, Dict[str, List[Any]]]) -> Dict[str, List[Any]]:
+    """合并所有day_key的数据"""
+    all_data = {
+        "indices": [],
+        "questions": [],
+        "dates": [],
+        "mcq_options": []
+    }
+    
+    for day_data in question_map.values():
+        all_data["indices"].extend(day_data["indices"])
+        all_data["questions"].extend(day_data["questions"])
+        all_data["dates"].extend(day_data["dates"])
+        all_data["mcq_options"].extend(day_data["mcq_options"])
+    
+    return all_data
 
 def _build_output_path(base_path: Path, suffix: str) -> Path:
     if base_path.suffix:
@@ -82,7 +99,7 @@ def _write_records(handle: TextIO, task: str, entry: Dict[str, Any], qa_subset: 
             written += 1
         return written
 
-    if task.startswith("lmb"):
+    if task.startswith("lmb") or task.startswith("emb"):
         for idx, qa in enumerate(qa_subset):
             answer_text = responses[idx]
             record = {
@@ -107,11 +124,12 @@ def _write_records(handle: TextIO, task: str, entry: Dict[str, Any], qa_subset: 
             }
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             written += 1
+    
         return written
 
 
 async def run_offline(args: argparse.Namespace) -> None:
-    dataset_path = TASK_TO_DATASET.get(args.task, "")
+    dataset_path, language = TASK_TO_DATASET.get(args.task, "")
     with open(dataset_path, "r", encoding="utf-8") as file:
         entries = json.load(file)
 
@@ -119,9 +137,10 @@ async def run_offline(args: argparse.Namespace) -> None:
         method_name=args.method,
         chat_model=args.chat_model,
         embed_model_name=args.embed_model_name,
-        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7100/v1/"),
+        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7107/v1/"),
         database_root=f"MemDB/{args.task}/{args.chat_model}_{args.granularity}/{args.method}",
-        context_token_limit=args.context_token_limit
+        context_token_limit=args.context_token_limit,
+        language=language
     )
     stored_histories = set()
 
@@ -141,7 +160,7 @@ async def run_offline(args: argparse.Namespace) -> None:
 
             questions = [qa.get("question") for qa in qa_list]
             dates = [qa.get("question_time") for qa in qa_list]
-            responses = await memory_system.answer_question_cn(
+            responses = await memory_system.answer_question_fn(
                 history_name=history_name,
                 questions=questions,
                 question_dates=dates,
@@ -173,10 +192,15 @@ async def main_online(
             payload["dates"],
             granularity=args.granularity
         )
-        question_payload = question_map.pop(day, None)
+        # 如果不是最后一天
+        if day != list(day_chunks.keys())[-1]:
+            question_payload = question_map.pop(day, None)
+        else:
+            question_payload = get_all_questions_data(question_map)
+
         if question_payload and question_payload["questions"]:
             # 非选择题
-            responses = await memory_system.answer_question_cn(
+            responses = await memory_system.answer_question_fn(
                 history_name=history_name,
                 questions=question_payload["questions"],
                 question_dates=question_payload["dates"],
@@ -189,7 +213,7 @@ async def main_online(
 
             # 选择题
             if question_payload['mcq_options'][0] != None:
-                responses_mcq = await memory_system.answer_question_cn(
+                responses_mcq = await memory_system.answer_question_fn(
                     history_name=history_name,
                     questions=question_payload["questions"],
                     question_dates=question_payload["dates"],
@@ -202,7 +226,7 @@ async def main_online(
 
 
 async def main_advanced(args: argparse.Namespace) -> None:
-    dataset_path = TASK_TO_DATASET.get(args.task, "")
+    dataset_path, language = TASK_TO_DATASET.get(args.task, "")
     with open(dataset_path, "r", encoding="utf-8") as file:
         entries = json.load(file)
 
@@ -210,9 +234,10 @@ async def main_advanced(args: argparse.Namespace) -> None:
         method_name=args.method,
         chat_model=args.chat_model,
         embed_model_name=args.embed_model_name,
-        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7100/v1/"),
+        embed_client=OpenAI(api_key="zjj", base_url="http://localhost:7107/v1/"),
         database_root=f"MemDB/{args.task}/{args.chat_model}_{args.granularity}/{args.method}",
-        context_token_limit=args.context_token_limit
+        context_token_limit=args.context_token_limit,
+        language=language
     )
 
     base_path = Path(args.output)
@@ -241,7 +266,7 @@ async def main_advanced(args: argparse.Namespace) -> None:
             await main_online(memory_system, entry, args, online_f, online_f_mcq)
             
             # 非选择题
-            offline_responses = await memory_system.answer_question_cn(
+            offline_responses = await memory_system.answer_question_fn(
                     history_name=history_name,
                     questions=questions,
                     question_dates=question_dates,
@@ -253,7 +278,7 @@ async def main_advanced(args: argparse.Namespace) -> None:
             
             # 选择题
             if mcq_options[0] != None:
-                offline_responses_mcq = await memory_system.answer_question_cn(
+                offline_responses_mcq = await memory_system.answer_question_fn(
                     history_name=history_name,
                     questions=questions,
                     question_dates=question_dates,

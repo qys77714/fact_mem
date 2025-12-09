@@ -21,6 +21,7 @@ class Mem0MemoryMethod(BaseMemoryMethod):
         embed_client: Optional["OpenAI"] = None,
         database_root: Optional[str] = None,
         related_memory_top_k: int = 5,
+        language: str = "en",
     ) -> None:
         super().__init__(
             embed_model_name=embed_model_name,
@@ -32,8 +33,8 @@ class Mem0MemoryMethod(BaseMemoryMethod):
             raise ValueError("llm_client must be provided for Mem0MemoryMethod.")
         
         self.llm = llm_client
-        self.fact_retrieval_prompt = FACT_RETRIEVAL_PROMPT.strip()
         self.related_memory_top_k = max(1, related_memory_top_k)
+        self.language = language
 
     def store_history(
         self,
@@ -51,12 +52,19 @@ class Mem0MemoryMethod(BaseMemoryMethod):
         for session_idx, turn_idx, turns in tqdm(self._iter_work_items(chat_history, granularity), desc=f"Storing history {history_name}"):
             session_date=dates[session_idx]
 
-            transcript = self._format_session_transcript(turns, session_date)
-            if not transcript.strip():
-                continue
+            dialogue_content = self._format_session_transcript(turns)
+            transcript = f"Dialogue Date：{session_date}\n" + dialogue_content.strip()
         
-            facts = self._extract_facts(transcript)
+            facts = self._extract_facts(transcript, user_name=history_name)
             if not facts:
+                mem_text = (
+                    f"- Memory Date: {session_date}\n"
+                    f"- Memory Content: \n"
+                    f"<MemoryContent>\n"
+                    f"{dialogue_content}\n"
+                    f"</MemoryContent>"
+                )
+                database.add(mem_text, metadata={})
                 continue
             
             metadata_base = self._build_metadata(
@@ -96,7 +104,7 @@ class Mem0MemoryMethod(BaseMemoryMethod):
                     items.append((session_idx, turn_idx, [turn]))
         return items
 
-    def _format_session_transcript(self, turns: List[Dict[str, str]], session_date: Any) -> str:
+    def _format_session_transcript(self, turns: List[Dict[str, str]]) -> str:
         lines: List[str] = []
         for turn in turns:
             content = (turn.get("content") or "").strip()
@@ -104,11 +112,12 @@ class Mem0MemoryMethod(BaseMemoryMethod):
                 continue
             speaker = (turn.get("speaker") or "unknown").strip()
             lines.append(f"**{speaker}**: {content}")
-        return f"对话日期：{session_date}\n" + "\n".join(lines)
+        return "\n".join(lines)
 
-    def _extract_facts(self, transcript: str) -> List[str]:
+    def _extract_facts(self, transcript: str, user_name) -> List[str]:
+        fact_retrieval_prompt = build_fact_retrieval_prompt(user_name=user_name, language=self.language)
         messages = [
-            {"role": "user", "content": f"{self.fact_retrieval_prompt}\n# 输入文本：\n{transcript}"},
+            {"role": "user", "content": f"{fact_retrieval_prompt}\n# 输入文本：\n{transcript}"},
         ]
         raw_response = self.llm.get_response_chat(
             messages, 
@@ -117,6 +126,8 @@ class Mem0MemoryMethod(BaseMemoryMethod):
             response_format=FACT_RETRIEVAL_RESPONSE_FORMAT,
             verbose=True
         )
+        if not raw_response:
+            return []
         facts = self._parse_fact_response(raw_response)
         return list(dict.fromkeys(facts))
 
@@ -168,9 +179,10 @@ class Mem0MemoryMethod(BaseMemoryMethod):
         if not facts:
             return []
         response_content = json.dumps({"facts": facts}, ensure_ascii=False, indent=2)
-        update_prompt = get_update_memory_messages(
+        update_prompt = build_update_memory_messages(
             retrieved_old_memory_json,
             response_content,
+            language=self.language
         )
         raw_response = self.llm.get_response_chat(
             [{"role": "user", "content": update_prompt}], 
@@ -179,6 +191,8 @@ class Mem0MemoryMethod(BaseMemoryMethod):
             response_format=UPDATE_MEMORY_RESPONSE_FORMAT,
             verbose=True
         )
+        if not raw_response:
+            return []
         return self._parse_memory_changes(raw_response)
 
     def _apply_memory_changes(
@@ -309,10 +323,11 @@ class Mem0MemoryMethod(BaseMemoryMethod):
             return json.loads(value)
         except json.JSONDecodeError:
             start = value.find("{")
-            end = value.rfind("}")
+            end = value.rfind("},")
             if start != -1 and end != -1 and start < end:
                 try:
-                    return json.loads(value[start : end + 1])
+                    print(value[start : end + 1]+ "]}")
+                    return json.loads(value[start : end + 1]+ "]}")
                 except json.JSONDecodeError:
                     logger.warning("Mem0 failed to parse JSON payload: %s", value)
         return None

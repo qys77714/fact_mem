@@ -1,7 +1,7 @@
 # 定义可用的 GPU 和端口
-gpus=(4,5,6,7)
-ports=(7104)
-model_name=Qwen3-8B
+gpus=(6)
+ports=(7106)
+model_name=Qwen3-4B
 
 # 循环遍历 GPU 和端口
 for i in ${!gpus[@]}; do

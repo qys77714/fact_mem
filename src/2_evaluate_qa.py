@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--evaluate_task",
         required=True,
-        choices=("lme", "lmb", "locomo"),
+        choices=("lme", "lmb", "emb", "locomo"),
         help="评估任务类型",
     )
     parser.add_argument("--judge_model", required=True, help="评估所用模型名称")
@@ -50,7 +50,7 @@ def evaluate_lmb(
         is_mcq: bool = False,
 ) -> Dict[str, Any]:
     if not samples:
-        return {"overall_accuracy": 0.0, "per_type": {}}
+        return {"overall_accuracy": 0.0, "per_type": {}}, []
 
     async def _run() -> Dict[str, Any]:
         client = load_api_chat_completion(judge_model, async_=True)
@@ -62,7 +62,7 @@ def evaluate_lmb(
             reference = item.get("answer", "")
             candidate = item.get("model_answer")
             question_type = item.get("question_type", "unknown")
-            options = item.get("mcq_options", [])
+            options = item.get("options", [])
             if is_mcq:
                 user_prompt = _build_eval_prompt_mcq(
                     question=question,
@@ -91,15 +91,18 @@ def evaluate_lmb(
             messages_list,
             max_new_tokens=2048,
             temperature=0.0,
-            max_concurrency=30,
+            max_concurrency=20,
             use_tqdm=True,
             verbose=True,
         )
 
         per_type: Dict[str, Dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
+        is_correct_flags: List[bool] = []
+
         for resp, info in zip(responses, meta):
             verdict = _extract_response_text(resp)
             is_correct = _parse_verdict(verdict)
+            is_correct_flags.append(is_correct)
             q_type = info["question_type"]
             per_type[q_type]["total"] += 1
             if is_correct:
@@ -117,7 +120,7 @@ def evaluate_lmb(
             }
             for q_type, stat in per_type.items()
         }
-        return {"overall_accuracy": overall_accuracy, "per_type": per_type_accuracy}
+        return {"overall_accuracy": overall_accuracy, "per_type": per_type_accuracy}, is_correct_flags
 
     return asyncio.run(_run())
 
@@ -158,8 +161,7 @@ def _build_eval_prompt_mcq(
 
     prompt = (
         "You are given a multiple-choice question with options, the correct option, "
-        "and a model response. Determine if the model response selects the correct option "
-        "or unambiguously states the correct answer.\n\n"
+        "and a model response. Determine if the model response selects the correct option.\n\n"
         f"Question: {question}\n"
         f"Options:\n{options_block}\n"
         f"Ground-truth answer: {ground_truth}\n"
@@ -202,12 +204,22 @@ def main() -> None:
     samples = load_jsonl(args.input_path)
     is_mcq_eval = "_mcq" in args.input_path
 
-    if args.evaluate_task == "lmb":
-        metrics = evaluate_lmb(samples, args.judge_model, args.use_cot, is_mcq_eval)
+    per_sample_flags: List[bool] = []
+    if args.evaluate_task in ("lmb", "emb"):
+        metrics, per_sample_flags = evaluate_lmb(samples, args.judge_model, args.use_cot, is_mcq_eval)
     elif args.evaluate_task == "lme":
         metrics = evaluate_lme(samples, args.judge_model)
     else:
         metrics = evaluate_locomo(samples, args.judge_model)
+
+    if per_sample_flags:
+        if len(per_sample_flags) != len(samples):
+            raise ValueError("判定结果数量与样本数量不一致。")
+        for sample, flag in zip(samples, per_sample_flags):
+            sample["is_correct"] = flag
+        with open(args.input_path, "w", encoding="utf-8") as f:
+            for sample in samples:
+                f.write(json.dumps(sample, ensure_ascii=False) + "\n")
 
     with open("experiment/eval_results.txt", "a", encoding="utf-8") as f:
         f.write(f"{args.input_path}\n")

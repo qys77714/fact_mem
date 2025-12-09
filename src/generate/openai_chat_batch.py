@@ -35,33 +35,45 @@ class OpenAIClient:
             verbose=False,
             **kargs
     ) -> str:
-        if self.model_name in ["gpt-4o-mini"]:
-            completion = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=max_new_tokens,
-                temperature=temperature,
-                **kargs
-            )
-        else:
-            completion = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=max_new_tokens,
-                temperature=temperature,
-                extra_body={
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
-                **kargs
-            )
+        response = None
+        try:
+            
+            if self.model_name in ["gpt-4o-mini"]:
+                try:
+                    completion = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        max_tokens=max_new_tokens,
+                        temperature=temperature,
+                        **kargs
+                    )
+                except Exception as e:
+                    print(f"Error during completion: {e}")
+            else:
+                completion = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    max_tokens=max_new_tokens,
+                    temperature=temperature,
+                    extra_body={
+                        "chat_template_kwargs": {"enable_thinking": False},
+                    },
+                    **kargs
+                )
+                
 
-        response = completion.choices[0].message.content
+            response = completion.choices[0].message.content
 
-        if verbose:
-            self.logger.info("=========")
-            self.logger.info(f"prompt: {messages[-1]['content']}\n" + "-"*20)
-            self.logger.info(f"response: {response}")
-            self.logger.info("=========")
+            if verbose:
+                self.logger.info("=========")
+                self.logger.info(f"prompt: {messages[-1]['content']}\n" + "-"*20)
+                self.logger.info(f"response: {response}")
+                self.logger.info("=========")
+        except Exception as e:
+            error_str = str(e)
+            if 'data_inspection_failed' in error_str or 'inappropriate content' in error_str:
+                print(f"请求内容安全检查失败，跳过生成")
+                return None # 返回 None 表示跳过
 
         return response
 

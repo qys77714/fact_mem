@@ -60,6 +60,7 @@ class AMemMemoryMethod(BaseMemoryMethod):
         metadata_temperature: float = 0.0,
         evolution_temperature: float = 0.2,
         enable_evolution: bool = True,
+        language: str = "en",
     ) -> None:
         if llm_client is None:
             raise ValueError("llm_client must be provided for AMemMemoryMethod.")
@@ -75,6 +76,7 @@ class AMemMemoryMethod(BaseMemoryMethod):
         self.metadata_temperature = metadata_temperature
         self.evolution_temperature = evolution_temperature
         self.enable_evolution = enable_evolution
+        self.language = language
 
     def store_history(
         self,
@@ -134,7 +136,6 @@ class AMemMemoryMethod(BaseMemoryMethod):
                         database=database,
                         metadata=metadata,
                         neighbors=neighbors,
-                        insights=insights,
                     )
 
             memory_text = self._render_memory_text(
@@ -157,17 +158,21 @@ class AMemMemoryMethod(BaseMemoryMethod):
         return database.search(query, top_k)
 
     def _extract_memory_insights(self, transcript: str) -> MemoryInsights:
-        prompt = build_metadata_prompt(transcript)
+        prompt = build_metadata_prompt(transcript, self.language)
         try:
             raw = self.llm.get_response_chat(
                 [{"role": "user", "content": prompt}],
-                max_new_tokens=1024,
+                max_new_tokens=2048,
                 temperature=self.metadata_temperature,
                 response_format=METADATA_RESPONSE_FORMAT,
                 verbose=True,
             )
+            if not raw:
+                raise ValueError("Empty response from LLM for metadata extraction.")
+            
             payload = self._safe_json_loads(raw) or {}
             return MemoryInsights.from_payload(payload)
+        
         except Exception as exc:
             logger.warning("AMem metadata extraction failed: %s", exc)
             return MemoryInsights(
@@ -196,8 +201,7 @@ class AMemMemoryMethod(BaseMemoryMethod):
         self,
         database: MemoryDatabase,
         metadata: Dict[str, Any],
-        neighbors: List[RetrievedMemory],
-        insights: MemoryInsights,
+        neighbors: List[RetrievedMemory]
     ) -> Dict[str, Any]:
         if not neighbors:
             return metadata
@@ -209,15 +213,18 @@ class AMemMemoryMethod(BaseMemoryMethod):
             keywords=", ".join(metadata.get("keywords", [])),
             tags=", ".join(metadata.get("tags", [])),
             neighbor_summary=neighbor_summary,
+            language=self.language,
         )
         try:
             raw = self.llm.get_response_chat(
                 [{"role": "user", "content": prompt}],
-                max_new_tokens=1024,
+                max_new_tokens=2048,
                 temperature=self.evolution_temperature,
                 response_format=EVOLUTION_RESPONSE_FORMAT,
                 verbose=True,
             )
+            if not raw:
+                raise ValueError("Empty response from LLM for evolution.")
         except Exception as exc:
             logger.warning("AMem evolution LLM call failed: %s", exc)
             return metadata
@@ -281,7 +288,7 @@ class AMemMemoryMethod(BaseMemoryMethod):
         return question_text
 
     def _generate_query_keywords(self, question_text: str) -> List[str]:
-        prompt = build_query_prompt(question_text)
+        prompt = build_query_prompt(question_text, language=self.language)
         try:
             raw = self.llm.get_response_chat(
                 [{"role": "user", "content": prompt}],
@@ -290,6 +297,9 @@ class AMemMemoryMethod(BaseMemoryMethod):
                 response_format=QUERY_RESPONSE_FORMAT,
                 verbose=True,
             )
+            if not raw:
+                raise ValueError("Empty response from LLM for keyword generation.")
+            # Parse the response to extract keywords
             payload = self._safe_json_loads(raw) or {}
             keywords = payload.get("keywords")
             normalized = _normalize_string_list(keywords)

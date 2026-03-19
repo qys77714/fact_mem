@@ -1,6 +1,6 @@
 # 定义可用的 GPU 和端口
-gpus=(6)
-ports=(7106)
+gpus=(1)
+ports=(7111)
 model_name=Qwen3-4B
 
 # 循环遍历 GPU 和端口
@@ -15,7 +15,7 @@ for i in ${!gpus[@]}; do
         --max_num_batched_tokens 32768 \
         --dtype bfloat16 \
         --tensor-parallel-size ${gpu_count} \
-        --gpu-memory-utilization 0.8 \
+        --gpu-memory-utilization 0.85 \
         --api-key zjj &
 done
 

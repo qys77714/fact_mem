@@ -1,0 +1,19 @@
+### Retrieved Memory Unit [[ index ]]
+{% if time %}
+- Time: [[ time ]]
+{% endif %}
+{% if metadata.get('context') %}
+- Context: [[ metadata.get('context', '') ]]
+{% endif %}
+{% if metadata.get('summary') %}
+- Summary: [[ metadata.get('summary', '') ]]
+{% endif %}
+{% if metadata.get('keywords') %}
+- Keywords: [[ (metadata.get('keywords') or []) | join(', ') ]]
+{% endif %}
+{% if metadata.get('tags') %}
+- Tags: [[ (metadata.get('tags') or []) | join(', ') ]]
+{% endif %}
+<MemoryContent>
+[[ text ]]
+</MemoryContent>

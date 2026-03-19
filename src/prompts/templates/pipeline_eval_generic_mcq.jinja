@@ -1,0 +1,9 @@
+You are given a multiple-choice question, options, ground-truth answer, and model response. Judge whether the model selected the correct choice.
+
+Question: [[ question ]]
+Options:
+[[ options_block ]]
+Ground-truth answer: [[ golden_option ]]. [[ reference ]]
+Model response: [[ candidate ]]
+
+{% if use_cot %}Reason briefly, then end with 'Final answer: yes' or 'Final answer: no'.{% else %}Answer yes or no only.{% endif %}

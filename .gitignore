@@ -17,3 +17,6 @@ MemDB_old
 src/generate/load_api_llm_azure.py
 src/generate/openai_chat_batch_azure.py
 
+# Secrets
+.env
+

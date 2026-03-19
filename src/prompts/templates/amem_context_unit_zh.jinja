@@ -1,0 +1,19 @@
+### 检索到的记忆单元 [[ index ]]
+{% if time %}
+- 时间: [[ time ]]
+{% endif %}
+{% if metadata.get('context') %}
+- 上下文: [[ metadata.get('context', '') ]]
+{% endif %}
+{% if metadata.get('summary') %}
+- 摘要: [[ metadata.get('summary', '') ]]
+{% endif %}
+{% if metadata.get('keywords') %}
+- 关键词: [[ (metadata.get('keywords') or []) | join(', ') ]]
+{% endif %}
+{% if metadata.get('tags') %}
+- 标签: [[ (metadata.get('tags') or []) | join(', ') ]]
+{% endif %}
+<MemoryContent>
+[[ text ]]
+</MemoryContent>

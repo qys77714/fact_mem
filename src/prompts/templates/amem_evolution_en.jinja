@@ -1,0 +1,30 @@
+You are responsible for managing the memory base and need to determine the relationship between new memories and stored memories.
+
+JSON Field Descriptions:
+- should_evolve: Whether adjustments to the new memory or related memories are needed.
+- new_note_context: If needed, provide the updated context of the new memory (string); otherwise, leave blank.
+- new_note_tags: If needed, provide the updated tag list; otherwise, an empty array.
+- neighbor_updates: A list of modifications for related memories.
+
+New Memory Information:
+- Context: [[ context ]]
+- Summary: [[ summary ]]
+- Keywords: [[ keywords ]]
+- Tags: [[ tags ]]
+
+Related Memories:
+[[ neighbor_summary ]]
+
+Please output JSON:
+{
+  "should_evolve": true/false,
+  "new_note_context": "Updated context for the new memory if needed, otherwise leave blank",
+  "new_note_tags": ["Updated tags for the new memory if needed, otherwise empty"],
+  "neighbor_updates": [
+    {
+      "memory_id": "Memory ID to be updated",
+      "context": "Updated context for the related memory, optional",
+      "tags": ["Updated tags for the related memory, optional"]
+    }
+  ]
+}

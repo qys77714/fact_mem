@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
-task=lmb_event
-chat_model=Qwen3-4B
-embed_model_name=qwen3-embedding-8b
-method=amem
-topk=20
-context_token_limit=32768
-granularity=session
-output="experiment/${task}_${chat_model}_${method}_top${topk}_${granularity}.jsonl"
+set -euo pipefail
 
+benchmark=test
+answer_model=qwen3-max
+manager_model=qwen3-max
+embedding_model=qwen3-embedding-8b
+embedding_base_url=http://localhost:7110/v1/
+embedding_api_key=zjj
+method=mem0
+retrieve_topk=10
+memory_token_limit=32768
+memory_granularity=all
+output="experiment/${benchmark}_${manager_model}_${method}_top${retrieve_topk}_${memory_granularity}.jsonl"
+agent_trace_dir="logs/answer_agent_trace"
 
-python src/1_run_generation.py \
-  --task $task \
+python src/pipeline_generate.py \
+  --benchmark "$benchmark" \
   --output $output \
-  --chat_model "$chat_model" \
-  --embed_model_name "$embed_model_name" \
+  --answer_model "$answer_model" \
+  --manager_model "$manager_model" \
+  --embedding_model "$embedding_model" \
+  --embedding_base_url "$embedding_base_url" \
+  --embedding_api_key "$embedding_api_key" \
   --method "$method" \
-  --topk "$topk" \
-  --granularity "$granularity" \
-  --context_token_limit "$context_token_limit" \
-  --run_mode advanced
+  --retrieve_topk "$retrieve_topk" \
+  --memory_granularity "$memory_granularity" \
+  --memory_token_limit "$memory_token_limit" \
+  --agent_trace_dir "$agent_trace_dir"

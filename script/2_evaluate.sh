@@ -1,28 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 # 定义输入路径数组
 INPUT_PATHS=(
-    "experiment/qwen-plus_MemOS_offline_mcq.jsonl"
-    "experiment/qwen-plus_MemOS_online_mcq.jsonl"
-    "experiment/qwen-plus_MemOS_offline_oqa.jsonl"
-    "experiment/qwen-plus_MemOS_online_oqa.jsonl"
-    "experiment/qwen3-8b_MemOS_offline_mcq.jsonl"
-    "experiment/qwen3-8b_MemOS_online_mcq.jsonl"
-    "experiment/qwen3-8b_MemOS_offline_oqa.jsonl"
-    "experiment/qwen3-8b_MemOS_online_oqa.jsonl"
+/data/zjj/project/easy_mem/experiment/test_qwen3-max_mem0_top10_2.jsonl
 )
 
-JUDGE_MODEL=qwen3-32b
+JUDGE_MODEL=qwen3-max
+BENCHMARK=lme
 
 # 并行执行（放到后台）
 echo "开始并行执行..."
 pids=()  # 存储进程ID
 
 for input_path in "${INPUT_PATHS[@]}"; do
-    python src/2_evaluate_qa.py \
-        --input_path "$input_path" \
-        --evaluate_task lmb \
-        --judge_model $JUDGE_MODEL \
-        --use_cot &
-    pids+=($!)  # 保存进程ID
+    python src/pipeline_evaluate.py \
+        --input "$input_path" \
+        --benchmark "$BENCHMARK" \
+        --judge_model "$JUDGE_MODEL" \
+        --write_back &
+    pids+=($!)
     echo "后台任务启动，进程ID: ${pids[-1]}"
     sleep 2
 done

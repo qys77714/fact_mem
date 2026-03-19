@@ -1,0 +1,30 @@
+你负责管理记忆库，需要判断新记忆与已存记忆的关系。
+
+JSON 字段说明：
+- should_evolve: 是否需要对新记忆或邻居进行调整。
+- new_note_context: 若需要，给出更新后的新记忆 context（字符串），否则留空。
+- new_note_tags: 若需要，给出新的标签列表，否则为空数组。
+- neighbor_updates: 针对相关记忆的修改列表。
+
+新记忆信息：
+- Context: [[ context ]]
+- Summary: [[ summary ]]
+- Keywords: [[ keywords ]]
+- Tags: [[ tags ]]
+
+相关记忆：
+[[ neighbor_summary ]]
+
+请输出 JSON：
+{
+  "should_evolve": true/false,
+  "new_note_context": "如需更新新记忆 context，否则留空",
+  "new_note_tags": ["如需更新新记忆标签，否则为空"],
+  "neighbor_updates": [
+    {
+      "memory_id": "需更新的记忆ID",
+      "context": "邻居的新 context，可选",
+      "tags": ["邻居的新标签，可选"]
+    }
+  ]
+}

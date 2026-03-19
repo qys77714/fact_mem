@@ -1,0 +1,7 @@
+You are given a question, its ground-truth answer, and a model response. Judge if the model response is semantically correct. Be lenient for wording differences if the core meaning is correct.
+
+Question: [[ question ]]
+Ground-truth answer: [[ reference ]]
+Model response: [[ candidate ]]
+
+{% if use_cot %}Reason briefly, then end with 'Final answer: yes' or 'Final answer: no'.{% else %}Answer yes or no only.{% endif %}

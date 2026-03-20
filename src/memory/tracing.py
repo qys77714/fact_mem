@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
@@ -10,22 +11,67 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 
+def _sanitize_for_filename(s: str) -> str:
+    """Replace characters unsafe for filenames."""
+    return s.replace("/", "_").replace("\\", "_").replace(":", "_")
+
+
 class MemoryTraceLogger:
     """Structured JSONL tracer for LLM interactions and memory operations."""
 
-    def __init__(self, method: str, log_dir: str = "logs/memory_trace") -> None:
+    def __init__(
+        self,
+        method: str,
+        log_dir: str = "logs/memory_trace",
+        history_name: Optional[str] = None,
+        run_id: Optional[str] = None,
+        use_experiment_naming: bool = False,
+    ) -> None:
         self.method = method
-        self.run_id = f"{method}-{uuid.uuid4().hex[:8]}"
+        self.run_id = run_id or f"{method}-{uuid.uuid4().hex[:8]}"
         self._seq = 0
         self._llm_seq = 0
         self._memop_seq = 0
         self._retrieval_seq = 0
         self._scope_seq = 0
+        self.use_experiment_naming = use_experiment_naming
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_path = self.log_dir / f"{method}_{timestamp}_{self.run_id}.jsonl"
+
+        if history_name is not None:
+            safe_name = _sanitize_for_filename(history_name)
+            if use_experiment_naming:
+                self.log_path = self.log_dir / f"{safe_name}.jsonl"
+            else:
+                self.log_path = self.log_dir / f"{method}_{safe_name}_{self.run_id}.jsonl"
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.log_path = self.log_dir / f"{method}_{timestamp}_{self.run_id}.jsonl"
+
+        self._trace_cache: Dict[str, "MemoryTraceLogger"] = {}
+        self._lock = threading.Lock()
+
+    def get_logger_for(self, history_name: str) -> "MemoryTraceLogger":
+        """Return a logger that writes to a per-episode file. Thread-safe."""
+        with self._lock:
+            if history_name not in self._trace_cache:
+                self._trace_cache[history_name] = MemoryTraceLogger(
+                    method=self.method,
+                    log_dir=str(self.log_dir),
+                    history_name=history_name,
+                    run_id=self.run_id,
+                    use_experiment_naming=self.use_experiment_naming,
+                )
+            return self._trace_cache[history_name]
+
+    def get_trace_path(self, history_name: str) -> Path:
+        """Return the trace file path for a given history_name (for cleanup)."""
+        if not self.use_experiment_naming:
+            safe_name = _sanitize_for_filename(history_name)
+            return self.log_dir / f"{self.method}_{safe_name}_{self.run_id}.jsonl"
+        safe_name = _sanitize_for_filename(history_name)
+        return self.log_dir / f"{safe_name}.jsonl"
 
     def _next(self, prefix: str) -> str:
         self._seq += 1

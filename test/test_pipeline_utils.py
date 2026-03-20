@@ -21,10 +21,56 @@ def test_resolve_benchmark_with_explicit_file():
         embedding_base_url="http://x",
         embedding_api_key="k",
         language="zh",
+        agent_trace_dir=None,
+        parallel_episodes=1,
+        rebuild_memory=False,
+        mem0_dialogue_format="auto",
     )
     fp, lang = pg._resolve_benchmark(cfg)
     assert fp == "/tmp/a.json"
     assert lang == "zh"
+
+
+def test_resolve_mem0_dialogue_format():
+    base = dict(
+        benchmark_file=None,
+        output="o.jsonl",
+        method="mem0",
+        extractor_model=None,
+        manager_model="m",
+        answer_model="Qwen3-4B",
+        embedding_model="embed",
+        retrieve_topk=5,
+        memory_token_limit=2048,
+        memory_granularity="all",
+        database_root=None,
+        embedding_base_url="http://x",
+        embedding_api_key="k",
+        language=None,
+        agent_trace_dir=None,
+        parallel_episodes=1,
+        rebuild_memory=False,
+    )
+    assert (
+        pg._resolve_mem0_dialogue_format(
+            pg.GenerateConfig(benchmark="locomo", mem0_dialogue_format="auto", **base)
+        )
+        == "named_speakers"
+    )
+    assert (
+        pg._resolve_mem0_dialogue_format(
+            pg.GenerateConfig(benchmark="lme_s", mem0_dialogue_format="auto", **base)
+        )
+        == "user_assistant"
+    )
+    assert (
+        pg._resolve_mem0_dialogue_format(
+            pg.GenerateConfig(
+                benchmark="lme_s", mem0_dialogue_format="named_speakers", **base
+            )
+        )
+        == "named_speakers"
+    )
 
 
 def test_resolve_benchmark_unknown_raises():
@@ -44,6 +90,10 @@ def test_resolve_benchmark_unknown_raises():
         embedding_base_url="http://x",
         embedding_api_key="k",
         language=None,
+        agent_trace_dir=None,
+        parallel_episodes=1,
+        rebuild_memory=False,
+        mem0_dialogue_format="auto",
     )
     with pytest.raises(ValueError):
         pg._resolve_benchmark(cfg)

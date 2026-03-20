@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING, Union
 import numpy as np
 
@@ -68,6 +70,7 @@ class AMemMemorySystem(BaseMemorySystem):
         enable_evolution: bool = True,
         language: str = "en",
         granularity: Union[str, int] = "all",
+        trace_log_dir: Optional[str] = None,
     ) -> None:
         if llm_client is None:
             raise ValueError("llm_client must be provided for AMemMemorySystem.")
@@ -84,7 +87,11 @@ class AMemMemorySystem(BaseMemorySystem):
         self.enable_evolution = enable_evolution
         self.language = language
         self.granularity = self._parse_granularity(granularity)
-        self.trace = MemoryTraceLogger(method="amem")
+        self.trace = MemoryTraceLogger(
+            method="amem",
+            log_dir=trace_log_dir or "logs/memory_trace",
+            use_experiment_naming=trace_log_dir is not None,
+        )
         self._databases = {}
 
     @staticmethod
@@ -103,13 +110,28 @@ class AMemMemorySystem(BaseMemorySystem):
         raise ValueError("AMem granularity must be 'all' or a positive integer.")
 
     def _get_database(self, history_name: str) -> LocalFaissDatabase:
-        namespace = f"amem_{self.granularity}_{history_name}"
+        namespace = history_name
         if namespace not in self._databases:
             self._databases[namespace] = LocalFaissDatabase(
                 namespace=namespace,
                 database_root=self.database_root
             )
         return self._databases[namespace]
+
+    def episode_storage_path(self, history_name: str) -> Optional[Path]:
+        return self.persisted_data_root() / history_name
+
+    def clear(self, history_name: str) -> None:
+        """Remove all memory for this episode (for resume after interrupt)."""
+        namespace = history_name
+        if namespace in self._databases:
+            db = self._databases[namespace]
+            db.clear_all()
+            del self._databases[namespace]
+        if self.database_root:
+            ns_dir = Path(self.database_root) / namespace
+            if ns_dir.exists():
+                shutil.rmtree(ns_dir)
         
     def _embed_texts(self, inputs: List[str]) -> np.ndarray:
         from utils.embed_utils import embed_texts
@@ -149,10 +171,11 @@ class AMemMemorySystem(BaseMemorySystem):
         return "\n".join(parts)
 
     def store_session(self, history_name: str, session_idx: int, session: ChatSession) -> None:
+        trace = self.trace.get_logger_for(history_name)
         database = self._get_database(history_name)
         session_date = session.session_date
 
-        session_scope = self.trace.create_scope(
+        session_scope = trace.create_scope(
             "amem_store_session",
             metadata={
                 "history_name": history_name,
@@ -173,7 +196,7 @@ class AMemMemorySystem(BaseMemorySystem):
                     work_items.append((i, i + len(chunk_turns) - 1, chunk_turns))
 
         for turn_start, turn_end, turns in work_items:
-            chunk_scope = self.trace.create_scope(
+            chunk_scope = trace.create_scope(
                 "amem_store_chunk",
                 parent_scope_id=session_scope,
                 metadata={
@@ -184,11 +207,11 @@ class AMemMemorySystem(BaseMemorySystem):
             )
             content_block = self._format_memory_content(turns)
             if not content_block.strip():
-                self.trace.close_scope(chunk_scope, status="skip", metadata={"reason": "empty_content"})
+                trace.close_scope(chunk_scope, status="skip", metadata={"reason": "empty_content"})
                 continue
 
             transcript = self._format_session_transcript(turns, session_date)
-            insights = self._extract_memory_insights(transcript, trace_scope_id=chunk_scope)
+            insights = self._extract_memory_insights(transcript, trace_scope_id=chunk_scope, trace=trace)
 
             metadata = {
                 "method": "amem",
@@ -232,6 +255,7 @@ class AMemMemorySystem(BaseMemorySystem):
                         metadata=metadata,
                         neighbors=neighbors,
                         trace_scope_id=chunk_scope,
+                        trace=trace,
                     )
 
             # 只存 content_block（与 RAG 一致），date/context/keywords/tags/summary 在 time 和 metadata 中
@@ -248,7 +272,7 @@ class AMemMemorySystem(BaseMemorySystem):
             text_for_embed = self.build_text_for_embedding(text_to_store, metadata=metadata)
             mem_emb = self._embed_texts([text_for_embed])[0]
             memory_id = database.add(text_to_store, source_index, str(session_date), metadata, embedding=mem_emb)
-            self.trace.log_memory_operation(
+            trace.log_memory_operation(
                 operation="ADD",
                 memory_id=memory_id,
                 scope_id=chunk_scope,
@@ -265,9 +289,9 @@ class AMemMemorySystem(BaseMemorySystem):
                 },
                 status="ok",
             )
-            self.trace.close_scope(chunk_scope, status="ok", metadata={"stored_memory_id": memory_id})
+            trace.close_scope(chunk_scope, status="ok", metadata={"stored_memory_id": memory_id})
 
-        self.trace.close_scope(session_scope, status="ok")
+        trace.close_scope(session_scope, status="ok")
 
     def retrieve(
         self,
@@ -278,8 +302,9 @@ class AMemMemorySystem(BaseMemorySystem):
     ) -> List[RetrievedMemory]:
         if top_k <= 0 or not query:
             return []
+        trace = self.trace.get_logger_for(history_name)
         database = self._get_database(history_name)
-        augmented_query = self._build_retrieval_query(query)
+        augmented_query = self._build_retrieval_query(query, trace=trace)
         
         query_embedding = self._embed_texts([augmented_query])
         if query_embedding.size == 0:
@@ -310,7 +335,12 @@ class AMemMemorySystem(BaseMemorySystem):
         ]
         return "\n\n".join(context_lines)
 
-    def _extract_memory_insights(self, transcript: str, trace_scope_id: Optional[str] = None) -> MemoryInsights:
+    def _extract_memory_insights(
+        self,
+        transcript: str,
+        trace_scope_id: Optional[str] = None,
+        trace: Optional[MemoryTraceLogger] = None,
+    ) -> MemoryInsights:
         prompt = build_metadata_prompt(transcript, self.language)
         messages = [{"role": "user", "content": prompt}]
         try:
@@ -327,7 +357,8 @@ class AMemMemorySystem(BaseMemorySystem):
             if not raw:
                 raise ValueError("Empty response from LLM for metadata extraction.")
 
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="amem_extract_metadata",
                 messages=messages,
                 response=raw,
@@ -339,7 +370,8 @@ class AMemMemorySystem(BaseMemorySystem):
             return MemoryInsights.from_payload(payload)
         
         except Exception as exc:
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="amem_extract_metadata",
                 messages=messages,
                 response=None,
@@ -361,6 +393,7 @@ class AMemMemorySystem(BaseMemorySystem):
         metadata: Dict[str, Any],
         neighbors: List[RetrievedMemory],
         trace_scope_id: Optional[str] = None,
+        trace: Optional[MemoryTraceLogger] = None,
     ) -> Dict[str, Any]:
         if not neighbors:
             return metadata
@@ -389,7 +422,8 @@ class AMemMemorySystem(BaseMemorySystem):
             if not raw:
                 raise ValueError("Empty response from LLM for evolution.")
 
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="amem_evolution_decision",
                 messages=messages,
                 response=raw,
@@ -397,7 +431,8 @@ class AMemMemorySystem(BaseMemorySystem):
                 metadata={"temperature": self.evolution_temperature, "neighbor_count": len(neighbors)},
             )
         except Exception as exc:
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="amem_evolution_decision",
                 messages=messages,
                 response=None,
@@ -422,7 +457,11 @@ class AMemMemorySystem(BaseMemorySystem):
 
         neighbor_updates = payload.get("neighbor_updates") or []
         if neighbor_updates:
-            self._apply_neighbor_updates(database, neighbors, neighbor_updates, trace_scope_id=trace_scope_id)
+            self._apply_neighbor_updates(
+                database, neighbors, neighbor_updates,
+                trace_scope_id=trace_scope_id,
+                trace=trace,
+            )
         return metadata
 
     def _apply_neighbor_updates(
@@ -431,6 +470,7 @@ class AMemMemorySystem(BaseMemorySystem):
         neighbors: List[RetrievedMemory],
         updates: Iterable[Dict[str, Any]],
         trace_scope_id: Optional[str] = None,
+        trace: Optional[MemoryTraceLogger] = None,
     ) -> None:
         neighbor_map = {
             mem.memory_id: mem
@@ -475,7 +515,8 @@ class AMemMemorySystem(BaseMemorySystem):
                 metadata_updates=m_updates,
                 new_embedding=embeddings[i]
             )
-            self.trace.log_memory_operation(
+            t = trace or self.trace
+            t.log_memory_operation(
                 operation="UPDATE",
                 memory_id=m_id,
                 scope_id=trace_scope_id,
@@ -484,13 +525,22 @@ class AMemMemorySystem(BaseMemorySystem):
                 status="ok" if success else "failed",
             )
 
-    def _build_retrieval_query(self, question_text: str) -> str:
-        keywords = self._generate_query_keywords(question_text)
+    def _build_retrieval_query(
+        self,
+        question_text: str,
+        trace: Optional[MemoryTraceLogger] = None,
+    ) -> str:
+        keywords = self._generate_query_keywords(question_text, trace=trace)
         if keywords:
             return f"{question_text}\nKeywords: {', '.join(keywords)}"
         return question_text
 
-    def _generate_query_keywords(self, question_text: str) -> List[str]:
+    def _generate_query_keywords(
+        self,
+        question_text: str,
+        trace: Optional[MemoryTraceLogger] = None,
+    ) -> List[str]:
+        t = trace or self.trace
         prompt = build_query_prompt(question_text, language=self.language)
         messages = [{"role": "user", "content": prompt}]
         try:
@@ -507,7 +557,7 @@ class AMemMemorySystem(BaseMemorySystem):
             if not raw:
                 raise ValueError("Empty response from LLM for keyword generation.")
 
-            self.trace.log_llm_interaction(
+            t.log_llm_interaction(
                 purpose="amem_query_keywords",
                 messages=messages,
                 response=raw,
@@ -520,7 +570,7 @@ class AMemMemorySystem(BaseMemorySystem):
             if normalized:
                 return normalized[:8]
         except Exception as exc:
-            self.trace.log_llm_interaction(
+            t.log_llm_interaction(
                 purpose="amem_query_keywords",
                 messages=messages,
                 response=None,

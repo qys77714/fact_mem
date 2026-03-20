@@ -1,4 +1,5 @@
-from typing import List, Iterable, Union
+from pathlib import Path
+from typing import List, Iterable, Union, Optional
 import numpy as np
 from memory.base import BaseMemorySystem, RetrievedMemory
 from memory.storage.local_faiss import LocalFaissDatabase
@@ -27,8 +28,11 @@ class RagMemorySystem(BaseMemorySystem):
         self.granularity = granularity
         self._databases = {}
 
+    def episode_storage_path(self, history_name: str) -> Optional[Path]:
+        return self.persisted_data_root() / history_name
+
     def _get_database(self, history_name: str) -> LocalFaissDatabase:
-        namespace = f"rag_{self.granularity}_{history_name}"
+        namespace = history_name
         if namespace not in self._databases:
             self._databases[namespace] = LocalFaissDatabase(
                 namespace=namespace,

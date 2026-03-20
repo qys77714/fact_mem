@@ -43,6 +43,7 @@ def get_memory_system(
             related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
             language=kwargs.get("language"),
             granularity=kwargs.get("granularity", "all"),
+            trace_log_dir=kwargs.get("trace_log_dir"),
         )
     elif method_name == "mem0":
         llm_client = kwargs.get("llm_client")
@@ -56,6 +57,8 @@ def get_memory_system(
             related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
             language=kwargs.get("language"),
             granularity=kwargs.get("granularity", "all"),
+            trace_log_dir=kwargs.get("trace_log_dir"),
+            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
         )
     else:
         raise ValueError(f"Unknown memory method: {method_name}")

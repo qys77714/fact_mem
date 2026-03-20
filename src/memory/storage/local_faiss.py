@@ -213,6 +213,57 @@ class LocalFaissDatabase:
 
         return [mem for _, mem in entries]
 
+    def deduplicate_identical_text(self) -> int:
+        """
+        Remove memories whose stripped text is identical to another entry.
+        Keeps one per text: earliest by `time` (parse_chat_time), then smaller list index as tie-breaker.
+        Returns the number of removed memories.
+        """
+        self._ensure_loaded()
+        store = self._store
+        n = len(store.ids)
+        if n <= 1:
+            return 0
+
+        from utils.date_utils import parse_chat_time
+
+        groups: Dict[str, List[int]] = {}
+        for i in range(n):
+            key = store.texts[i].strip()
+            if not key:
+                continue
+            groups.setdefault(key, []).append(i)
+
+        remove_idx: set[int] = set()
+        for indices in groups.values():
+            if len(indices) < 2:
+                continue
+
+            keeper = min(indices, key=lambda i: (parse_chat_time(store.times[i]), i))
+            for i in indices:
+                if i != keeper:
+                    remove_idx.add(i)
+
+        if not remove_idx:
+            return 0
+
+        for idx in sorted(remove_idx, reverse=True):
+            store.ids.pop(idx)
+            store.texts.pop(idx)
+            store.source_indices.pop(idx)
+            store.times.pop(idx)
+            store.metadatas.pop(idx)
+            if len(store.embeddings) > idx:
+                store.embeddings.pop(idx)
+
+        if not store.ids:
+            self._clear_dataset()
+        else:
+            self._rebuild_index()
+            self._persist()
+
+        return len(remove_idx)
+
     def _initialize_history(self, dim: int) -> None:
         self._store.index = faiss.IndexFlatIP(dim)
 
@@ -302,3 +353,7 @@ class LocalFaissDatabase:
             shutil.rmtree(dataset_dir)
         self._reset_store()
         self._store_loaded = True
+
+    def clear_all(self) -> None:
+        """Remove all data for this namespace (for resume/cleanup)."""
+        self._clear_dataset()

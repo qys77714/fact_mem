@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 import numpy as np
 
@@ -31,6 +33,8 @@ class Mem0MemorySystem(BaseMemorySystem):
         related_memory_top_k: int = 5,
         language: str = "en",
         granularity: Union[str, int] = "all",
+        trace_log_dir: Optional[str] = None,
+        dialogue_format: str = "user_assistant",
     ) -> None:
         super().__init__(
             embed_client=embed_client,
@@ -45,8 +49,19 @@ class Mem0MemorySystem(BaseMemorySystem):
             
         self.related_memory_top_k = max(1, related_memory_top_k)
         self.language = language
+        df = (dialogue_format or "user_assistant").strip().lower()
+        if df not in ("user_assistant", "named_speakers"):
+            raise ValueError(
+                "dialogue_format must be 'user_assistant' or 'named_speakers', "
+                f"got {dialogue_format!r}"
+            )
+        self.dialogue_format = df
         self.granularity = self._parse_granularity(granularity)
-        self.trace = MemoryTraceLogger(method="mem0")
+        self.trace = MemoryTraceLogger(
+            method="mem0",
+            log_dir=trace_log_dir or "logs/memory_trace",
+            use_experiment_naming=trace_log_dir is not None,
+        )
         self._databases = {}
 
     @staticmethod
@@ -64,14 +79,46 @@ class Mem0MemorySystem(BaseMemorySystem):
             return granularity
         raise ValueError("Mem0 granularity must be 'all' or a positive integer.")
 
+    def _build_chunk_transcript(self, chunk_turns: List[Any]) -> str:
+        lines: List[str] = []
+        for turn in chunk_turns:
+            content = turn.content.strip()
+            if not content:
+                continue
+            if self.dialogue_format == "named_speakers":
+                speaker = (turn.speaker or "Unknown").strip()
+                lines.append(f"{speaker}: {content}")
+                continue
+            role = turn.speaker.lower()
+            if role not in ("user", "assistant"):
+                role = "user" if role in ("human", "人") else "assistant"
+            lines.append(f"{role}: {content}")
+        return "\n".join(lines)
+
     def _get_database(self, history_name: str) -> LocalFaissDatabase:
-        namespace = f"mem0_{self.granularity}_{history_name}"
+        namespace = history_name
         if namespace not in self._databases:
             self._databases[namespace] = LocalFaissDatabase(
                 namespace=namespace,
                 database_root=self.database_root
             )
         return self._databases[namespace]
+
+    def episode_storage_path(self, history_name: str) -> Optional[Path]:
+        return self.persisted_data_root() / history_name
+
+    def clear(self, history_name: str) -> None:
+        """Remove all memory for this episode (for resume after interrupt)."""
+        namespace = history_name
+        if namespace in self._databases:
+            db = self._databases[namespace]
+            db.clear_all()
+            del self._databases[namespace]
+        # Also remove from disk if not in cache (e.g. from previous run)
+        if self.database_root:
+            ns_dir = Path(self.database_root) / namespace
+            if ns_dir.exists():
+                shutil.rmtree(ns_dir)
 
     def _iter_turn_chunks(self, turns: List[Any]) -> List[Tuple[Optional[int], Optional[int], List[Any]]]:
         if self.granularity == "all":
@@ -99,10 +146,11 @@ class Mem0MemorySystem(BaseMemorySystem):
         return text
 
     def store_session(self, history_name: str, session_idx: int, session: ChatSession) -> None:
+        trace = self.trace.get_logger_for(history_name)
         database = self._get_database(history_name)
         session_date = session.session_date
 
-        session_scope = self.trace.create_scope(
+        session_scope = trace.create_scope(
             "mem0_store_session",
             metadata={
                 "history_name": history_name,
@@ -114,26 +162,16 @@ class Mem0MemorySystem(BaseMemorySystem):
 
         chunks = self._iter_turn_chunks(session.turns)
         for turn_start, turn_end, chunk_turns in chunks:
-            chunk_scope = self.trace.create_scope(
+            chunk_scope = trace.create_scope(
                 "mem0_store_chunk",
                 parent_scope_id=session_scope,
                 metadata={"turn_start": turn_start, "turn_end": turn_end, "turn_count": len(chunk_turns)},
             )
-            dialogue_lines = []
-            for turn in chunk_turns:
-                content = turn.content.strip()
-                if content:
-                    role = turn.speaker.lower()
-                    if role not in ("user", "assistant"):
-                        role = "user" if role in ("human", "人") else "assistant"
-                    dialogue_lines.append(f"{role}: {content}")
+            transcript = self._build_chunk_transcript(chunk_turns)
 
-            dialogue_content = "\n".join(dialogue_lines)
-            transcript = dialogue_content
-
-            facts = self._extract_facts(transcript, user_name="user", trace_scope_id=chunk_scope)
+            facts = self._extract_facts(transcript, user_name="user", trace_scope_id=chunk_scope, trace=trace)
             if not facts:
-                self.trace.close_scope(chunk_scope, status="ok", metadata={"skipped": "no_facts"})
+                trace.close_scope(chunk_scope, status="ok", metadata={"skipped": "no_facts"})
                 continue
 
             metadata_base = {
@@ -148,12 +186,17 @@ class Mem0MemorySystem(BaseMemorySystem):
                 metadata_base["turn_end"] = turn_end
 
             old_memory_json, temp_uuid_mapping = self._collect_related_memories(database, facts, session_date)
-            operations = self._decide_memory_operations(facts, old_memory_json, trace_scope_id=chunk_scope)
+            operations = self._decide_memory_operations(
+                facts, old_memory_json, trace_scope_id=chunk_scope, trace=trace
+            )
 
-            self._apply_memory_changes(database, operations, temp_uuid_mapping, metadata_base, session_idx, trace_scope_id=chunk_scope)
-            self.trace.close_scope(chunk_scope, status="ok", metadata={"operation_count": len(operations)})
+            self._apply_memory_changes(
+                database, operations, temp_uuid_mapping, metadata_base, session_idx,
+                trace_scope_id=chunk_scope, trace=trace,
+            )
+            trace.close_scope(chunk_scope, status="ok", metadata={"operation_count": len(operations)})
 
-        self.trace.close_scope(session_scope, status="ok")
+        trace.close_scope(session_scope, status="ok")
 
     def retrieve(self, history_name: str, query: str, current_time: str, top_k: int = 5) -> List[RetrievedMemory]:
         database = self._get_database(history_name)
@@ -185,8 +228,18 @@ class Mem0MemorySystem(BaseMemorySystem):
         ]
         return "\n\n".join(context_lines)
 
-    def _extract_facts(self, transcript: str, user_name: str, trace_scope_id: Optional[str] = None) -> List[str]:
-        system_prompt = build_fact_retrieval_system_prompt(user_name=user_name, language=self.language)
+    def _extract_facts(
+        self,
+        transcript: str,
+        user_name: str,
+        trace_scope_id: Optional[str] = None,
+        trace: Optional[MemoryTraceLogger] = None,
+    ) -> List[str]:
+        system_prompt = build_fact_retrieval_system_prompt(
+            user_name=user_name,
+            language=self.language,
+            dialogue_format=self.dialogue_format,
+        )
         user_prompt = f"Input:\n{transcript}"
         messages = [
             {"role": "system", "content": system_prompt},
@@ -200,7 +253,8 @@ class Mem0MemorySystem(BaseMemorySystem):
                 response_format=FACT_RETRIEVAL_RESPONSE_FORMAT,
                 verbose=False
             )
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="mem0_extract_facts",
                 messages=messages,
                 response=raw_response,
@@ -208,7 +262,8 @@ class Mem0MemorySystem(BaseMemorySystem):
                 metadata={"temperature": 0},
             )
         except Exception as exc:
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="mem0_extract_facts",
                 messages=messages,
                 response=None,
@@ -271,6 +326,7 @@ class Mem0MemorySystem(BaseMemorySystem):
         facts: List[str],
         retrieved_old_memory_json: Optional[str],
         trace_scope_id: Optional[str] = None,
+        trace: Optional[MemoryTraceLogger] = None,
     ) -> List[Dict[str, Any]]:
         if not facts:
             return []
@@ -290,7 +346,8 @@ class Mem0MemorySystem(BaseMemorySystem):
                 response_format=UPDATE_MEMORY_RESPONSE_FORMAT,
                 verbose=False
             )
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="mem0_decide_memory_operations",
                 messages=messages,
                 response=raw_response,
@@ -298,7 +355,8 @@ class Mem0MemorySystem(BaseMemorySystem):
                 metadata={"temperature": 0, "fact_count": len(facts)},
             )
         except Exception as exc:
-            self.trace.log_llm_interaction(
+            t = trace or self.trace
+            t.log_llm_interaction(
                 purpose="mem0_decide_memory_operations",
                 messages=messages,
                 response=None,
@@ -321,6 +379,7 @@ class Mem0MemorySystem(BaseMemorySystem):
         metadata_base: Dict[str, Any],
         session_idx: int,
         trace_scope_id: Optional[str] = None,
+        trace: Optional[MemoryTraceLogger] = None,
     ) -> None:
         # 分组准备需要 embed 的文本
         texts_to_embed = []
@@ -358,7 +417,8 @@ class Mem0MemorySystem(BaseMemorySystem):
                     metadata=dict(metadata_base),
                     embedding=embeddings[emb_idx]
                 )
-                self.trace.log_memory_operation(
+                t = trace or self.trace
+                t.log_memory_operation(
                     operation="ADD",
                     memory_id=memory_id,
                     scope_id=trace_scope_id,
@@ -386,7 +446,8 @@ class Mem0MemorySystem(BaseMemorySystem):
                     )
                     if not success:
                         logger.warning("Mem0 update failed: memory_id=%s", target_id)
-                    self.trace.log_memory_operation(
+                    t = trace or self.trace
+                    t.log_memory_operation(
                         operation="UPDATE",
                         memory_id=target_id,
                         scope_id=trace_scope_id,
@@ -408,13 +469,25 @@ class Mem0MemorySystem(BaseMemorySystem):
                     success = database.delete(target_id)
                     if not success:
                         logger.warning("Mem0 delete failed: memory_id=%s", target_id)
-                    self.trace.log_memory_operation(
+                    t = trace or self.trace
+                    t.log_memory_operation(
                         operation="DELETE",
                         memory_id=target_id,
                         scope_id=trace_scope_id,
                         metadata={"op_id": op_id},
                         status="ok" if success else "failed",
                     )
+
+        removed = database.deduplicate_identical_text()
+        if removed:
+            t = trace or self.trace
+            t.log_memory_operation(
+                operation="DEDUPE_TEXT",
+                memory_id=None,
+                scope_id=trace_scope_id,
+                metadata={"removed_count": removed},
+                status="ok",
+            )
 
     def _parse_fact_response(self, raw_response: str) -> List[str]:
         payload = self._safe_json_loads(raw_response)

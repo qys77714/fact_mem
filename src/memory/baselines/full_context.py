@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List, Optional
 from tqdm import tqdm
 from memory.base import BaseMemorySystem, RetrievedMemory
@@ -14,8 +15,11 @@ class FullContextMemorySystem(BaseMemorySystem):
         super().__init__(*args, **kwargs)
         self._databases = {}
 
+    def episode_storage_path(self, history_name: str) -> Optional[Path]:
+        return self.persisted_data_root() / history_name
+
     def _get_database(self, history_name: str) -> LocalFaissDatabase:
-        namespace = f"full_context_{history_name}"
+        namespace = history_name
         if namespace not in self._databases:
             self._databases[namespace] = LocalFaissDatabase(
                 namespace=namespace,

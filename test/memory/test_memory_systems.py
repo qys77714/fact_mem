@@ -107,3 +107,68 @@ def test_get_memory_system_rag_alias_behavior(tmp_path):
     )
     assert isinstance(rag_session, RagMemorySystem)
     assert rag_session.granularity == "all"
+
+
+class _DummyLLM:
+    def get_response_chat(self, *args, **kwargs):
+        raise AssertionError("LLM should not be called in transcript-only tests")
+
+
+def test_mem0_chunk_transcript_user_assistant_maps_unknown_speakers(tmp_path):
+    from memory.mem0 import Mem0MemorySystem
+
+    mem = Mem0MemorySystem(
+        embed_model_name="mock",
+        llm_client=_DummyLLM(),
+        embed_client=_MockEmbedClient(dim=4),
+        database_root=str(tmp_path),
+        dialogue_format="user_assistant",
+    )
+    turns = [
+        ChatTurn(speaker="Caroline", content="Hi"),
+        ChatTurn(speaker="Melanie", content="Hello"),
+    ]
+    assert mem._build_chunk_transcript(turns) == "assistant: Hi\nassistant: Hello"
+
+
+def test_mem0_chunk_transcript_named_speakers_keeps_labels(tmp_path):
+    from memory.mem0 import Mem0MemorySystem
+
+    mem = Mem0MemorySystem(
+        embed_model_name="mock",
+        llm_client=_DummyLLM(),
+        embed_client=_MockEmbedClient(dim=4),
+        database_root=str(tmp_path),
+        dialogue_format="named_speakers",
+    )
+    turns = [
+        ChatTurn(speaker="Caroline", content="Hi"),
+        ChatTurn(speaker="Melanie", content="Hello"),
+    ]
+    assert mem._build_chunk_transcript(turns) == "Caroline: Hi\nMelanie: Hello"
+
+
+def test_mem0_fact_retrieval_prompt_switches_template():
+    from memory.mem0.prompts import build_fact_retrieval_system_prompt
+
+    multi = build_fact_retrieval_system_prompt(
+        user_name="user", language="en", dialogue_format="named_speakers"
+    )
+    assert "multi-party" in multi.lower()
+
+    single = build_fact_retrieval_system_prompt(
+        user_name="user", language="en", dialogue_format="user_assistant"
+    )
+    assert "USER'S MESSAGES" in single
+
+
+def test_get_memory_system_mem0_passes_dialogue_format(tmp_path):
+    mem = get_memory_system(
+        method_name="mem0",
+        embed_model_name="mock",
+        embed_client=_MockEmbedClient(dim=4),
+        database_root=str(tmp_path),
+        llm_client=_DummyLLM(),
+        dialogue_format="named_speakers",
+    )
+    assert mem.dialogue_format == "named_speakers"

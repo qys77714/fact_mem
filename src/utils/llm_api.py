@@ -58,7 +58,9 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"Qwen3-8B": "Qwen3-8B",
 		"qwen3-32b": "Qwen3-32B", 
 		"Qwen3-4B": "Qwen3-4B",
-		"qwen3-30b-moe": "qwen3-30b-moe"
+		"qwen3-30b-moe": "qwen3-30b-moe",
+		"Qwen3.5-27B-FP8": "Qwen3.5-27B-FP8",
+		"Qwen3.5-27B": "Qwen3.5-27B"
 	}
 
 	if model_name in list(model_name_vllm.keys()):

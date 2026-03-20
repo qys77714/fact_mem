@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List, Optional
 from benchmark.base import ChatSession
 from memory.base import BaseMemorySystem, RetrievedMemory
@@ -9,6 +10,9 @@ class OnlyQueryMemorySystem(BaseMemorySystem):
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+    def episode_storage_path(self, history_name: str) -> Optional[Path]:
+        return None
 
     def store_session(self, history_name: str, session_idx: int, session: ChatSession) -> None:
         """什么也不保存"""

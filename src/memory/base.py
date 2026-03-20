@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from benchmark.base import ChatSession
 
@@ -58,6 +59,21 @@ class BaseMemorySystem:
         清理当前用户(history_name)的缓存或数据库空间，例如重置该用户的上下文状态。
         """
         pass
+
+    def episode_storage_path(self, history_name: str) -> Optional[Path]:
+        """
+        若该记忆系统把 episode 持久化到磁盘，返回其向量库目录（与 LocalFaissDatabase 的 dataset 目录一致）；
+        无持久化（如 only_query）则返回 None，流水线将把记忆视为「无需标记、始终就绪」且跳过写 marker。
+        """
+        return None
+
+    def memory_ready_marker_path(self, history_name: str) -> Optional[Path]:
+        base = self.episode_storage_path(history_name)
+        return (base / ".memory_ready.json") if base is not None else None
+
+    def persisted_data_root(self) -> Path:
+        """与 LocalFaissDatabase 一致的 database_root 解析（用于拼接 namespace 目录）。"""
+        return Path(self.database_root) if self.database_root else Path("MemDB/LocalStore")
 
     def build_text_for_embedding(
         self,

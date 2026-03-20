@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-benchmark=test
-answer_model=qwen3-max
-manager_model=qwen3-max
+benchmark=lme_s
+answer_model=Qwen3.5-27B
+manager_model=Qwen3.5-27B
 embedding_model=qwen3-embedding-8b
 embedding_base_url=http://localhost:7110/v1/
 embedding_api_key=zjj
 method=mem0
-retrieve_topk=10
+retrieve_topk=20
 memory_token_limit=32768
-memory_granularity=all
-output="experiment/${benchmark}_${manager_model}_${method}_top${retrieve_topk}_${memory_granularity}.jsonl"
+memory_granularity=4
+output="experiment/${benchmark}_gran${memory_granularity}_${method}_${manager_model}_top${retrieve_topk}.jsonl"
 agent_trace_dir="logs/answer_agent_trace"
+parallel_episodes=10
 
 python src/pipeline_generate.py \
   --benchmark "$benchmark" \
@@ -26,4 +27,5 @@ python src/pipeline_generate.py \
   --retrieve_topk "$retrieve_topk" \
   --memory_granularity "$memory_granularity" \
   --memory_token_limit "$memory_token_limit" \
-  --agent_trace_dir "$agent_trace_dir"
+  --agent_trace_dir "$agent_trace_dir" \
+  --parallel_episodes "$parallel_episodes"

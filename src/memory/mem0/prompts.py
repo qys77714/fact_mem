@@ -4,9 +4,22 @@ from prompts import render_prompt
 from .schemas import FACT_RETRIEVAL_RESPONSE_FORMAT, UPDATE_MEMORY_RESPONSE_FORMAT
 
 
-def build_fact_retrieval_system_prompt(user_name: str = "user", language: str = "zh") -> str:
+def build_fact_retrieval_system_prompt(
+    user_name: str = "user",
+    language: str = "zh",
+    dialogue_format: str = "user_assistant",
+) -> str:
     """Build system prompt for fact extraction (aligned with Mem0 USER_MEMORY_EXTRACTION_PROMPT)."""
-    template = "mem0_fact_retrieval_zh.jinja" if language == "zh" else "mem0_fact_retrieval_en.jinja"
+    df = (dialogue_format or "user_assistant").strip().lower()
+    if df == "named_speakers":
+        template = "mem0_fact_retrieval_multi_zh.jinja" if language == "zh" else "mem0_fact_retrieval_multi_en.jinja"
+    elif df == "user_assistant":
+        template = "mem0_fact_retrieval_zh.jinja" if language == "zh" else "mem0_fact_retrieval_en.jinja"
+    else:
+        raise ValueError(
+            "dialogue_format must be 'user_assistant' or 'named_speakers', "
+            f"got {dialogue_format!r}"
+        )
     return render_prompt(
         template,
         user_name=user_name,
@@ -14,9 +27,17 @@ def build_fact_retrieval_system_prompt(user_name: str = "user", language: str = 
     )
 
 
-def build_fact_retrieval_prompt(user_name: str, language: str = "zh") -> str:
+def build_fact_retrieval_prompt(
+    user_name: str,
+    language: str = "zh",
+    dialogue_format: str = "user_assistant",
+) -> str:
     """Legacy: returns full prompt for single-message mode. Prefer build_fact_retrieval_system_prompt + user 'Input:\\n{transcript}'."""
-    return build_fact_retrieval_system_prompt(user_name=user_name, language=language)
+    return build_fact_retrieval_system_prompt(
+        user_name=user_name,
+        language=language,
+        dialogue_format=dialogue_format,
+    )
 
 
 def get_update_memory_messages_en(retrieved_old_memory_dict, response_content, custom_update_memory_prompt=None):

@@ -16,6 +16,17 @@ def _session_index_from_key(key: str) -> int:
     return int(match.group(1))
 
 
+def _gold_answer_from_qa(qa: dict[str, Any]) -> str:
+    """LoCoMo raw uses ``answer``; adversarial (category 5) items use ``adversarial_answer`` only."""
+    a = qa.get("answer", None)
+    if a is not None and str(a).strip() != "":
+        return str(a)
+    adv = qa.get("adversarial_answer", None)
+    if adv is not None and str(adv).strip() != "":
+        return str(adv)
+    return ""
+
+
 def _map_locomo_category_to_question_type(category: Any) -> str | None:
     # 按用户提供规则: 0~4
     mapping = {
@@ -96,7 +107,7 @@ class LocomoBenchmark(BaseBenchmark):
                 qa_item: dict[str, Any] = {
                     "question_id": str(uuid.uuid4()),
                     "question": qa.get("question", ""),
-                    "answer": str(qa.get("answer", "")),
+                    "answer": _gold_answer_from_qa(qa),
                     "question_time": "",
                     "question_type": _map_locomo_category_to_question_type(category),
                 }
@@ -217,7 +228,7 @@ class LocomoBenchmark(BaseBenchmark):
 
                 qas.append(QuestionItem(
                     question=qa_data.get("question", ""),
-                    answer=str(qa_data.get("answer", "")),  # 强制转str, 有时答案是数字
+                    answer=_gold_answer_from_qa(qa_data),
                     question_time=qa_data.get("question_time", ""), # LoCoMo如果缺失则为空
                     options=qa_data.get("options", None),
                     question_type=qa_data.get(

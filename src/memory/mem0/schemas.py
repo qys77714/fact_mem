@@ -67,6 +67,18 @@ class Mem0UpdateMemoryResponse(BaseModel):
     memory: list[Mem0MemoryOperation]
 
 
+Mem0MemoryOperationNoDelete = Annotated[
+    Union[Mem0AddOperation, Mem0UpdateOperation, Mem0NoneOperation],
+    Field(discriminator="event"),
+]
+
+
+class Mem0UpdateMemoryResponseNoDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memory: list[Mem0MemoryOperationNoDelete]
+
+
 FACT_RETRIEVAL_RESPONSE_FORMAT: Dict[str, Any] = _build_response_format(
     Mem0FactRetrievalResponse,
     "fact_retrieval",
@@ -75,4 +87,9 @@ FACT_RETRIEVAL_RESPONSE_FORMAT: Dict[str, Any] = _build_response_format(
 UPDATE_MEMORY_RESPONSE_FORMAT: Dict[str, Any] = _build_response_format(
     Mem0UpdateMemoryResponse,
     "update_memory_actions",
+)
+
+UPDATE_MEMORY_RESPONSE_FORMAT_NO_DELETE: Dict[str, Any] = _build_response_format(
+    Mem0UpdateMemoryResponseNoDelete,
+    "update_memory_actions_no_delete",
 )

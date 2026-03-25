@@ -118,7 +118,7 @@ class StandardAgent(BaseAgent):
         # 6. 交给内部的生成模型进行并发推理
         responses = await self.chat_model.get_response_chat(
             messages_list,
-            max_concurrency=20,
+            max_concurrency=2,
             max_new_tokens=1024,
             temperature=0.0,
             use_tqdm=True,

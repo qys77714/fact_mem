@@ -25,6 +25,8 @@ def test_resolve_benchmark_with_explicit_file():
         parallel_episodes=1,
         rebuild_memory=False,
         mem0_dialogue_format="auto",
+        manager_max_new_tokens=2048,
+        mem0_extract_concurrency=8,
     )
     fp, lang = pg._resolve_benchmark(cfg)
     assert fp == "/tmp/a.json"
@@ -50,6 +52,8 @@ def test_resolve_mem0_dialogue_format():
         agent_trace_dir=None,
         parallel_episodes=1,
         rebuild_memory=False,
+        manager_max_new_tokens=2048,
+        mem0_extract_concurrency=8,
     )
     assert (
         pg._resolve_mem0_dialogue_format(
@@ -94,6 +98,8 @@ def test_resolve_benchmark_unknown_raises():
         parallel_episodes=1,
         rebuild_memory=False,
         mem0_dialogue_format="auto",
+        manager_max_new_tokens=2048,
+        mem0_extract_concurrency=8,
     )
     with pytest.raises(ValueError):
         pg._resolve_benchmark(cfg)
@@ -126,8 +132,12 @@ def test_pipeline_evaluate_helpers():
     assert pe._parse_verdict("Final answer: yes") is True
     assert pe._parse_verdict("answer: no") is False
     assert pe._extract_response_text({"content": "yes"}) == "yes"
+    assert pe._judge_response_text(None) is None
+    assert pe._judge_response_text("") is None
+    assert pe._judge_response_text("  ") is None
+    assert pe._judge_response_text({"content": None}) is None
 
-    prompt = pe._prompt_generic(
+    prompt = pe._build_judge_user_prompt(
         {
             "question": "q",
             "answer": "a",
@@ -136,7 +146,6 @@ def test_pipeline_evaluate_helpers():
             "golden_option": "A",
         },
         use_cot=True,
-        is_mcq=True,
     )
     assert "Final answer" in prompt
     assert "Options" in prompt

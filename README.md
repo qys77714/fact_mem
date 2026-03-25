@@ -91,6 +91,8 @@ uv run python src/pipeline_evaluate.py \
 
 `--benchmark` 可省略，脚本会尽量从样本或文件名推断（`lme` / `lmb` / `emb` / `locomo`）。
 
+汇总结果默认追加到 `experiment/eval_judge.jsonl`（每行一条 JSON）；若需表格对比可加 `--csv experiment/eval_summary.csv`，与 F1 脚本共用同一 CSV 列结构。Token 级 F1/EM 使用 `src/pipeline_evaluate_f1.py`，默认写入 `experiment/eval_f1.jsonl`，同样支持 `--csv`。
+
 ## 项目结构（摘要）
 
 ```
@@ -101,6 +103,7 @@ src/
   prompts/         # Judge 等模板
   pipeline_generate.py
   pipeline_evaluate.py
+  pipeline_evaluate_f1.py
 script/            # 启动模型与批处理示例
 test/              # pytest
 ```

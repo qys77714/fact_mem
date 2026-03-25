@@ -44,6 +44,7 @@ def get_memory_system(
             language=kwargs.get("language"),
             granularity=kwargs.get("granularity", "all"),
             trace_log_dir=kwargs.get("trace_log_dir"),
+            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
         )
     elif method_name == "mem0":
         llm_client = kwargs.get("llm_client")
@@ -59,6 +60,27 @@ def get_memory_system(
             granularity=kwargs.get("granularity", "all"),
             trace_log_dir=kwargs.get("trace_log_dir"),
             dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
+            allow_memory_delete=True,
+            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
+            extract_concurrency=kwargs.get("extract_concurrency", 8),
+        )
+    elif method_name == "mem0_nodel":
+        llm_client = kwargs.get("llm_client")
+        if llm_client is None:
+            raise ValueError("mem0_nodel requires llm_client (via kwargs)")
+        return Mem0MemorySystem(
+            embed_model_name=embed_model_name,
+            llm_client=llm_client,
+            embed_client=embed_client,
+            database_root=database_root,
+            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
+            language=kwargs.get("language"),
+            granularity=kwargs.get("granularity", "all"),
+            trace_log_dir=kwargs.get("trace_log_dir"),
+            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
+            allow_memory_delete=False,
+            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
+            extract_concurrency=kwargs.get("extract_concurrency", 8),
         )
     else:
         raise ValueError(f"Unknown memory method: {method_name}")

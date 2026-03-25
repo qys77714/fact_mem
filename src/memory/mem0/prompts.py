@@ -40,7 +40,9 @@ def build_fact_retrieval_prompt(
     )
 
 
-def get_update_memory_messages_en(retrieved_old_memory_dict, response_content, custom_update_memory_prompt=None):
+def get_update_memory_messages_en(
+    retrieved_old_memory_dict, response_content, custom_update_memory_prompt=None, allow_delete: bool = True
+):
     if retrieved_old_memory_dict:
         current_memory_part = render_prompt(
             "mem0_current_memory_part_en.jinja",
@@ -49,14 +51,21 @@ def get_update_memory_messages_en(retrieved_old_memory_dict, response_content, c
     else:
         current_memory_part = render_prompt("mem0_current_memory_empty_en.jinja")
 
+    template = (
+        "mem0_update_memory_default_en.jinja"
+        if allow_delete
+        else "mem0_update_memory_no_delete_en.jinja"
+    )
     return render_prompt(
-        "mem0_update_memory_default_en.jinja",
+        template,
         current_memory_part=current_memory_part,
         response_content=response_content,
     )
 
 
-def get_update_memory_messages_zh(retrieved_old_memory_dict, response_content, custom_update_memory_prompt=None):
+def get_update_memory_messages_zh(
+    retrieved_old_memory_dict, response_content, custom_update_memory_prompt=None, allow_delete: bool = True
+):
     if retrieved_old_memory_dict:
         current_memory_part = render_prompt(
             "mem0_current_memory_part_zh.jinja",
@@ -65,14 +74,29 @@ def get_update_memory_messages_zh(retrieved_old_memory_dict, response_content, c
     else:
         current_memory_part = render_prompt("mem0_current_memory_empty_zh.jinja")
 
+    template = (
+        "mem0_update_memory_default_zh.jinja"
+        if allow_delete
+        else "mem0_update_memory_no_delete_zh.jinja"
+    )
     return render_prompt(
-        "mem0_update_memory_default_zh.jinja",
+        template,
         current_memory_part=current_memory_part,
         response_content=response_content,
     )
 
 
-def build_update_memory_messages(retrieved_old_memory_dict, response_content, language="zh", custom_update_memory_prompt=None):
+def build_update_memory_messages(
+    retrieved_old_memory_dict,
+    response_content,
+    language="zh",
+    custom_update_memory_prompt=None,
+    allow_delete: bool = True,
+):
     if language == "zh":
-        return get_update_memory_messages_zh(retrieved_old_memory_dict, response_content, custom_update_memory_prompt)
-    return get_update_memory_messages_en(retrieved_old_memory_dict, response_content, custom_update_memory_prompt)
+        return get_update_memory_messages_zh(
+            retrieved_old_memory_dict, response_content, custom_update_memory_prompt, allow_delete=allow_delete
+        )
+    return get_update_memory_messages_en(
+        retrieved_old_memory_dict, response_content, custom_update_memory_prompt, allow_delete=allow_delete
+    )

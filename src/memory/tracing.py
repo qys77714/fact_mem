@@ -51,6 +51,20 @@ class MemoryTraceLogger:
 
         self._trace_cache: Dict[str, "MemoryTraceLogger"] = {}
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+
+    def _append_record(self, payload: Dict[str, Any]) -> None:
+        """Append one JSONL record; caller must hold ``_write_lock`` when concurrency is possible."""
+        base = {
+            "event_id": self._next("evt"),
+            "timestamp": datetime.now().isoformat(),
+            "run_id": self.run_id,
+            "method": self.method,
+        }
+        base.update(payload)
+        line = json.dumps(self._to_jsonable(base), ensure_ascii=False) + "\n"
+        with self.log_path.open("a", encoding="utf-8") as f:
+            f.write(line)
 
     def get_logger_for(self, history_name: str) -> "MemoryTraceLogger":
         """Return a logger that writes to a per-episode file. Thread-safe."""
@@ -95,15 +109,8 @@ class MemoryTraceLogger:
         return str(value)
 
     def _write(self, payload: Dict[str, Any]) -> None:
-        base = {
-            "event_id": self._next("evt"),
-            "timestamp": datetime.now().isoformat(),
-            "run_id": self.run_id,
-            "method": self.method,
-        }
-        base.update(payload)
-        with self.log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(self._to_jsonable(base), ensure_ascii=False) + "\n")
+        with self._write_lock:
+            self._append_record(payload)
 
     def create_scope(
         self,
@@ -147,22 +154,23 @@ class MemoryTraceLogger:
         metadata: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
     ) -> str:
-        self._llm_seq += 1
-        interaction_id = f"llm-{self._llm_seq:06d}"
-        self._write(
-            {
-                "event_type": "llm_interaction",
-                "interaction_id": interaction_id,
-                "scope_id": scope_id,
-                "purpose": purpose,
-                "status": "error" if error else "ok",
-                "summary": f"LLM interaction for {purpose}",
-                "metadata": metadata or {},
-                "request": {"messages": messages},
-                "response": response,
-                "error": error,
-            }
-        )
+        with self._write_lock:
+            self._llm_seq += 1
+            interaction_id = f"llm-{self._llm_seq:06d}"
+            self._append_record(
+                {
+                    "event_type": "llm_interaction",
+                    "interaction_id": interaction_id,
+                    "scope_id": scope_id,
+                    "purpose": purpose,
+                    "status": "error" if error else "ok",
+                    "summary": f"LLM interaction for {purpose}",
+                    "metadata": metadata or {},
+                    "request": {"messages": messages},
+                    "response": response,
+                    "error": error,
+                }
+            )
         return interaction_id
 
     def log_memory_operation(

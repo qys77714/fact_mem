@@ -26,7 +26,7 @@ BENCHMARK_TO_DATASET: Dict[str, Tuple[str, str]] = {
     "test": ("data/preprocessed/test.json", "zh"),
     "lme_o": ("data/preprocessed/longmemeval_oracle_converted.json", "en"),
     "lme_s": ("data/preprocessed/longmemeval_s_cleaned_converted.json", "en"),
-    "locomo": ("data/preprocessed/locomo10_converted.json", "en"),
+    "locomo": ("data/raw_data/locomo10.json", "en"),
     "lmb_event": ("data/preprocessed/LifeMemBench_event.json", "zh"),
     "emb_event": ("data/preprocessed/EgoMemBench_event_half.json", "en"),
 }
@@ -53,6 +53,8 @@ class GenerateConfig:
     parallel_episodes: int
     rebuild_memory: bool
     mem0_dialogue_format: str
+    manager_max_new_tokens: int
+    mem0_extract_concurrency: int
 
 
 def _normalize_memory_granularity(value: str) -> str:
@@ -72,9 +74,17 @@ def parse_args() -> GenerateConfig:
     parser.add_argument("--benchmark_file", default=None, help="可选：自定义 benchmark 数据文件")
     parser.add_argument("--output", required=True, help="输出 jsonl 文件路径")
 
-    parser.add_argument("--method", required=True, help="记忆方法，如 amem / mem0 / rag / full_context")
+    parser.add_argument(
+        "--method",
+        required=True,
+        help="记忆方法，如 amem / mem0 / mem0_nodel / rag / full_context",
+    )
     parser.add_argument("--extractor_model", default=None, help="记忆抽取模型（预留，当前优先使用 manager_model）")
-    parser.add_argument("--manager_model", default=None, help="记忆管理模型（amem/mem0 必填其一）")
+    parser.add_argument(
+        "--manager_model",
+        default=None,
+        help="记忆管理模型（amem / mem0 / mem0_nodel 必填其一）",
+    )
     parser.add_argument("--answer_model", required=True, help="回答问题模型")
     parser.add_argument("--embedding_model", required=True, help="向量模型")
 
@@ -112,6 +122,18 @@ def parse_args() -> GenerateConfig:
         choices=["auto", "user_assistant", "named_speakers"],
         help="mem0：对话转写与事实抽取模板；auto 对 locomo benchmark 使用 named_speakers",
     )
+    parser.add_argument(
+        "--manager_max_new_tokens",
+        type=int,
+        default=2048,
+        help="amem/mem0 记忆管理 LLM 的 max_new_tokens（传给 OpenAI 兼容 API 的 max_tokens）",
+    )
+    parser.add_argument(
+        "--mem0-extract-concurrency",
+        type=int,
+        default=8,
+        help="mem0/mem0_nodel：episode 内事实抽取 LLM 调用的最大并发（1=串行）；与 --parallel-episodes 相乘影响总 QPS",
+    )
 
     args = parser.parse_args()
     granularity = _normalize_memory_granularity(args.memory_granularity)
@@ -136,6 +158,8 @@ def parse_args() -> GenerateConfig:
         parallel_episodes=args.parallel_episodes,
         rebuild_memory=bool(args.rebuild_memory),
         mem0_dialogue_format=str(args.mem0_dialogue_format),
+        manager_max_new_tokens=int(args.manager_max_new_tokens),
+        mem0_extract_concurrency=max(1, int(args.mem0_extract_concurrency)),
     )
 
 
@@ -156,7 +180,7 @@ def _resolve_benchmark(cfg: GenerateConfig) -> Tuple[str, str]:
 
 def _build_experiment_name(cfg: GenerateConfig) -> str:
     """Build experiment dir name: {benchmark}_gran{gran}_{method}_{model}."""
-    if cfg.method in {"amem", "mem0"}:
+    if cfg.method in {"amem", "mem0", "mem0_nodel"}:
         model = cfg.manager_model or cfg.extractor_model or "default"
     else:
         model = cfg.answer_model
@@ -193,10 +217,12 @@ def _build_memory_system(cfg: GenerateConfig, language: str):
 
     llm_client = None
     trace_log_dir = None
-    if method in {"amem", "mem0"}:
+    if method in {"amem", "mem0", "mem0_nodel"}:
         manager_or_extractor_model = cfg.manager_model or cfg.extractor_model
         if not manager_or_extractor_model:
-            raise ValueError("For method 'amem'/'mem0', please provide --manager_model (or --extractor_model).")
+            raise ValueError(
+                "For method 'amem'/'mem0'/'mem0_nodel', please provide --manager_model (or --extractor_model)."
+            )
         llm_client = load_api_chat_completion(manager_or_extractor_model, async_=False)
         trace_log_dir = _build_memory_trace_dir(cfg)
 
@@ -208,8 +234,11 @@ def _build_memory_system(cfg: GenerateConfig, language: str):
         "language": language,
         "trace_log_dir": trace_log_dir,
     }
-    if method == "mem0":
+    if method in ("mem0", "mem0_nodel"):
         kwargs["dialogue_format"] = _resolve_mem0_dialogue_format(cfg)
+        kwargs["extract_concurrency"] = cfg.mem0_extract_concurrency
+    if method in {"amem", "mem0", "mem0_nodel"}:
+        kwargs["manager_max_new_tokens"] = cfg.manager_max_new_tokens
 
     return get_memory_system(
         method_name=method,
@@ -369,21 +398,14 @@ def _store_sessions_sync(
         label = label[:27] + "…"
     slot = tqdm_slot_pool.acquire()
     try:
-        for session_idx, session in enumerate(
-            tqdm(
-                sessions,
-                desc=f"Memory sessions [{label}]",
-                position=slot,
-                leave=False,
-                unit="session",
-            ),
-            start=1,
-        ):
-            memory_system.store_session(
-                history_name=history_name,
-                session_idx=session_idx,
-                session=session,
-            )
+        with tqdm(
+            total=len(sessions),
+            desc=f"Memory [{label}]",
+            position=slot,
+            leave=False,
+            unit="session",
+        ) as pbar:
+            memory_system.store_episode(history_name, sessions, session_progress=pbar)
     finally:
         tqdm_slot_pool.release(slot)
 

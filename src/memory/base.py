@@ -4,6 +4,15 @@ from typing import List, Dict, Any, Optional
 from benchmark.base import ChatSession
 
 
+def _session_progress_tick(session_progress: Optional[Any], n: int = 1) -> None:
+    """If ``session_progress`` has an ``update`` method (e.g. tqdm), call ``update(n)``."""
+    if session_progress is None or n <= 0:
+        return
+    update = getattr(session_progress, "update", None)
+    if callable(update):
+        update(n)
+
+
 @dataclass
 class RetrievedMemory:
     """检索到的单条记忆"""
@@ -43,7 +52,19 @@ class BaseMemorySystem:
         :param session: 我们刚刚写的标准化的 ChatSession 结构
         """
         raise NotImplementedError
-        
+
+    def store_episode(
+        self,
+        history_name: str,
+        sessions: List[ChatSession],
+        *,
+        session_progress: Optional[Any] = None,
+    ) -> None:
+        """按 session 顺序写入一整段 episode（默认实现为逐个 store_session）。"""
+        for session_idx, session in enumerate(sessions, start=1):
+            self.store_session(history_name, session_idx, session)
+            _session_progress_tick(session_progress, 1)
+
     def retrieve(self, history_name: str, query: str, current_time: str, top_k: int = 5) -> List[RetrievedMemory]:
         """
         根据问题和此时此刻的时间，从数据库检索相关记忆。

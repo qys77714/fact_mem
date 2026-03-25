@@ -23,6 +23,7 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"qwen2.5-72b-instruct": "qwen2.5-72b-instruct",
 		"qwen2.5-32b-instruct": "qwen2.5-32b-instruct",
 		"qwen1.5-72b-chat": "qwen1.5-72b-chat",
+		"glm-5": "glm-5",
 		# # deepseek
 		# "deepseek-v3": "deepseek-v3",
 		# "deepseek-r1": "deepseek-r1",

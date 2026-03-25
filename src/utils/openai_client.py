@@ -11,6 +11,15 @@ from tqdm.asyncio import tqdm
 from utils.common_utils import configure_logging
 
 
+def _extra_body_disable_qwen_thinking(existing: dict | None) -> dict:
+    """Merge with caller extra_body; Qwen3.5-style servers read chat_template_kwargs.enable_thinking."""
+    merged = dict(existing) if existing else {}
+    chat_kw = dict(merged.get("chat_template_kwargs") or {})
+    chat_kw["enable_thinking"] = False
+    merged["chat_template_kwargs"] = chat_kw
+    return merged
+
+
 def _legacy_log_enabled() -> bool:
     return os.getenv("OPENAI_CLIENT_LEGACY_LOG", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -43,6 +52,7 @@ class OpenAIClient:
     ) -> str:
         response = None
         try:
+            kargs = dict(kargs)
             if self.model_name in ["gpt-4o-mini"]:
                 try:
                     completion = self.client.chat.completions.create(
@@ -56,14 +66,13 @@ class OpenAIClient:
                     print(f"Error during completion: {e}")
                     return None
             else:
+                user_extra = kargs.pop("extra_body", None)
                 completion = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
                     max_tokens=max_new_tokens,
                     temperature=temperature,
-                    extra_body={
-                        "chat_template_kwargs": {"enable_thinking": False},
-                    },
+                    extra_body=_extra_body_disable_qwen_thinking(user_extra),
                     **kargs,
                 )
 
@@ -114,6 +123,7 @@ class AsyncOpenAIClient:
         async with semaphore:
             for attempt in range(max_retries):
                 try:
+                    kwargs = dict(kwargs)
                     if self.model_name in ["gpt-4o-mini"]:
                         completion = await self.client.chat.completions.create(
                             model=self.model_name,
@@ -123,14 +133,13 @@ class AsyncOpenAIClient:
                             **kwargs,
                         )
                     else:
+                        user_extra = kwargs.pop("extra_body", None)
                         completion = await self.client.chat.completions.create(
                             model=self.model_name,
                             messages=messages,
                             max_tokens=max_tokens,
                             temperature=temperature,
-                            extra_body={
-                                "chat_template_kwargs": {"enable_thinking": False},
-                            },
+                            extra_body=_extra_body_disable_qwen_thinking(user_extra),
                             **kwargs,
                         )
                     response = completion.choices[0].message.content

@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pytest
 
@@ -172,3 +173,87 @@ def test_get_memory_system_mem0_passes_dialogue_format(tmp_path):
         dialogue_format="named_speakers",
     )
     assert mem.dialogue_format == "named_speakers"
+
+
+def test_get_memory_system_mem0_nodel_disables_delete(tmp_path):
+    from memory.mem0 import Mem0MemorySystem
+    from memory.mem0.schemas import UPDATE_MEMORY_RESPONSE_FORMAT_NO_DELETE
+
+    mem = get_memory_system(
+        method_name="mem0_nodel",
+        embed_model_name="mock",
+        embed_client=_MockEmbedClient(dim=4),
+        database_root=str(tmp_path),
+        llm_client=_DummyLLM(),
+        dialogue_format="user_assistant",
+    )
+    assert isinstance(mem, Mem0MemorySystem)
+    assert mem._allow_memory_delete is False
+    assert mem._update_memory_response_format is UPDATE_MEMORY_RESPONSE_FORMAT_NO_DELETE
+    assert mem.trace.method == "mem0_nodel"
+
+
+class _Mem0ParallelExtractMockLLM:
+    def get_response_chat(self, messages, max_new_tokens=0, temperature=0, response_format=None, verbose=False):
+        from memory.mem0.schemas import FACT_RETRIEVAL_RESPONSE_FORMAT, UPDATE_MEMORY_RESPONSE_FORMAT
+
+        user = messages[-1]["content"]
+        if response_format == FACT_RETRIEVAL_RESPONSE_FORMAT:
+            if "MARKER_A" in user:
+                return json.dumps({"facts": ["fact A"]})
+            if "MARKER_B" in user:
+                return json.dumps({"facts": ["fact B"]})
+            return json.dumps({"facts": []})
+        if response_format == UPDATE_MEMORY_RESPONSE_FORMAT:
+            if "fact A" in user:
+                return json.dumps({"memory": [{"id": "0", "text": "memory-a", "event": "ADD"}]})
+            if "fact B" in user:
+                return json.dumps({"memory": [{"id": "0", "text": "memory-b", "event": "ADD"}]})
+        return json.dumps({"memory": []})
+
+
+def _mem0_sorted_memory_texts(mem, history_name: str):
+    db = mem._get_database(history_name)
+    return sorted(m.text for m in db.list_all_memories(sort_by_time=False))
+
+
+def test_mem0_store_episode_parallel_extract_matches_serial(tmp_path):
+    from memory.mem0 import Mem0MemorySystem
+
+    llm = _Mem0ParallelExtractMockLLM()
+    sessions = [
+        ChatSession(
+            session_date="2024-01-01",
+            turns=[ChatTurn(speaker="user", content="MARKER_A hello")],
+        ),
+        ChatSession(
+            session_date="2024-01-02",
+            turns=[ChatTurn(speaker="user", content="MARKER_B hello")],
+        ),
+    ]
+
+    root_serial = tmp_path / "serial"
+    root_parallel = tmp_path / "parallel"
+    root_serial.mkdir()
+    root_parallel.mkdir()
+
+    mem_serial = Mem0MemorySystem(
+        embed_model_name="mock",
+        llm_client=llm,
+        embed_client=_MockEmbedClient(dim=8),
+        database_root=str(root_serial),
+        extract_concurrency=1,
+    )
+    mem_parallel = Mem0MemorySystem(
+        embed_model_name="mock",
+        llm_client=llm,
+        embed_client=_MockEmbedClient(dim=8),
+        database_root=str(root_parallel),
+        extract_concurrency=8,
+    )
+
+    mem_serial.store_episode("u", sessions)
+    mem_parallel.store_episode("u", sessions)
+
+    assert _mem0_sorted_memory_texts(mem_serial, "u") == _mem0_sorted_memory_texts(mem_parallel, "u")
+    assert _mem0_sorted_memory_texts(mem_serial, "u") == ["memory-a", "memory-b"]

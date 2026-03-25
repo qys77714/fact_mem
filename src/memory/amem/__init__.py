@@ -71,6 +71,7 @@ class AMemMemorySystem(BaseMemorySystem):
         language: str = "en",
         granularity: Union[str, int] = "all",
         trace_log_dir: Optional[str] = None,
+        manager_max_new_tokens: int = 2048,
     ) -> None:
         if llm_client is None:
             raise ValueError("llm_client must be provided for AMemMemorySystem.")
@@ -81,6 +82,7 @@ class AMemMemorySystem(BaseMemorySystem):
             database_root=database_root,
         )
         self.llm = llm_client
+        self._manager_max_new_tokens = max(1, int(manager_max_new_tokens))
         self.related_memory_top_k = max(1, related_memory_top_k)
         self.metadata_temperature = metadata_temperature
         self.evolution_temperature = evolution_temperature
@@ -346,7 +348,7 @@ class AMemMemorySystem(BaseMemorySystem):
         try:
             raw = self.llm.get_response_chat(
                 messages,
-                max_new_tokens=2048,
+                max_new_tokens=self._manager_max_new_tokens,
                 temperature=self.metadata_temperature,
                 response_format=METADATA_RESPONSE_FORMAT,
                 verbose=False,
@@ -411,7 +413,7 @@ class AMemMemorySystem(BaseMemorySystem):
         try:
             raw = self.llm.get_response_chat(
                 messages,
-                max_new_tokens=2048,
+                max_new_tokens=self._manager_max_new_tokens,
                 temperature=self.evolution_temperature,
                 response_format=EVOLUTION_RESPONSE_FORMAT,
                 verbose=False,
@@ -546,7 +548,7 @@ class AMemMemorySystem(BaseMemorySystem):
         try:
             raw = self.llm.get_response_chat(
                 messages,
-                max_new_tokens=256,
+                max_new_tokens=self._manager_max_new_tokens,
                 temperature=0.0,
                 response_format=QUERY_RESPONSE_FORMAT,
                 verbose=False,

@@ -4,6 +4,7 @@ import json
 import logging
 import shutil
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 import numpy as np
@@ -12,8 +13,12 @@ from .prompts import (
     build_fact_retrieval_system_prompt,
     build_update_memory_messages,
 )
-from .schemas import FACT_RETRIEVAL_RESPONSE_FORMAT, UPDATE_MEMORY_RESPONSE_FORMAT
-from memory.base import BaseMemorySystem, RetrievedMemory
+from .schemas import (
+    FACT_RETRIEVAL_RESPONSE_FORMAT,
+    UPDATE_MEMORY_RESPONSE_FORMAT,
+    UPDATE_MEMORY_RESPONSE_FORMAT_NO_DELETE,
+)
+from memory.base import BaseMemorySystem, RetrievedMemory, _session_progress_tick
 from memory.storage.local_faiss import LocalFaissDatabase
 from memory.tracing import MemoryTraceLogger
 from benchmark.base import ChatSession
@@ -35,6 +40,9 @@ class Mem0MemorySystem(BaseMemorySystem):
         granularity: Union[str, int] = "all",
         trace_log_dir: Optional[str] = None,
         dialogue_format: str = "user_assistant",
+        allow_memory_delete: bool = True,
+        manager_max_new_tokens: int = 2048,
+        extract_concurrency: int = 8,
     ) -> None:
         super().__init__(
             embed_client=embed_client,
@@ -57,12 +65,21 @@ class Mem0MemorySystem(BaseMemorySystem):
             )
         self.dialogue_format = df
         self.granularity = self._parse_granularity(granularity)
+        self._allow_memory_delete = allow_memory_delete
+        self._manager_max_new_tokens = max(1, int(manager_max_new_tokens))
+        self._update_memory_response_format = (
+            UPDATE_MEMORY_RESPONSE_FORMAT
+            if allow_memory_delete
+            else UPDATE_MEMORY_RESPONSE_FORMAT_NO_DELETE
+        )
+        trace_method = "mem0" if allow_memory_delete else "mem0_nodel"
         self.trace = MemoryTraceLogger(
-            method="mem0",
+            method=trace_method,
             log_dir=trace_log_dir or "logs/memory_trace",
             use_experiment_naming=trace_log_dir is not None,
         )
         self._databases = {}
+        self._extract_concurrency = max(1, int(extract_concurrency))
 
     @staticmethod
     def _parse_granularity(granularity: Union[str, int]) -> Union[str, int]:
@@ -145,37 +162,118 @@ class Mem0MemorySystem(BaseMemorySystem):
         """Mem0: 仅对纯 text 做 embedding，不拼接 metadata。"""
         return text
 
+    def store_episode(
+        self,
+        history_name: str,
+        sessions: List[ChatSession],
+        *,
+        session_progress: Optional[Any] = None,
+    ) -> None:
+        if not sessions:
+            return
+        entries = [(idx, sess) for idx, sess in enumerate(sessions, start=1)]
+        self._store_planar_entries(history_name, entries, session_progress=session_progress)
+
     def store_session(self, history_name: str, session_idx: int, session: ChatSession) -> None:
+        self._store_planar_entries(history_name, [(session_idx, session)], session_progress=None)
+
+    def _store_planar_entries(
+        self,
+        history_name: str,
+        session_entries: List[Tuple[int, ChatSession]],
+        *,
+        session_progress: Optional[Any] = None,
+    ) -> None:
         trace = self.trace.get_logger_for(history_name)
         database = self._get_database(history_name)
-        session_date = session.session_date
 
-        session_scope = trace.create_scope(
-            "mem0_store_session",
-            metadata={
-                "history_name": history_name,
-                "session_idx": session_idx,
-                "session_date": str(session_date),
-                "granularity": self.granularity,
-            },
-        )
-
-        chunks = self._iter_turn_chunks(session.turns)
-        for turn_start, turn_end, chunk_turns in chunks:
-            chunk_scope = trace.create_scope(
-                "mem0_store_chunk",
-                parent_scope_id=session_scope,
-                metadata={"turn_start": turn_start, "turn_end": turn_end, "turn_count": len(chunk_turns)},
+        work_items: List[Dict[str, Any]] = []
+        for session_idx, session in session_entries:
+            session_date = session.session_date
+            session_scope = trace.create_scope(
+                "mem0_store_session",
+                metadata={
+                    "history_name": history_name,
+                    "session_idx": session_idx,
+                    "session_date": str(session_date),
+                    "granularity": self.granularity,
+                },
             )
-            transcript = self._build_chunk_transcript(chunk_turns)
+            chunks = self._iter_turn_chunks(session.turns)
+            for turn_start, turn_end, chunk_turns in chunks:
+                chunk_scope = trace.create_scope(
+                    "mem0_store_chunk",
+                    parent_scope_id=session_scope,
+                    metadata={
+                        "turn_start": turn_start,
+                        "turn_end": turn_end,
+                        "turn_count": len(chunk_turns),
+                    },
+                )
+                transcript = self._build_chunk_transcript(chunk_turns)
+                work_items.append(
+                    {
+                        "session_idx": session_idx,
+                        "session_date": session_date,
+                        "turn_start": turn_start,
+                        "turn_end": turn_end,
+                        "session_scope": session_scope,
+                        "chunk_scope": chunk_scope,
+                        "transcript": transcript,
+                    }
+                )
 
-            facts = self._extract_facts(transcript, user_name="user", trace_scope_id=chunk_scope, trace=trace)
+        if not work_items:
+            return
+
+        n = len(work_items)
+        if self._extract_concurrency <= 1 or n <= 1:
+            facts_per_chunk = [
+                self._extract_facts(
+                    it["transcript"],
+                    user_name="user",
+                    trace_scope_id=it["chunk_scope"],
+                    trace=trace,
+                )
+                for it in work_items
+            ]
+        else:
+            workers = min(self._extract_concurrency, n)
+            pending: List[Optional[List[str]]] = [None] * n
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                future_to_i = {
+                    pool.submit(
+                        self._extract_facts,
+                        work_items[idx]["transcript"],
+                        "user",
+                        work_items[idx]["chunk_scope"],
+                        trace,
+                    ): idx
+                    for idx in range(n)
+                }
+                for fut in as_completed(future_to_i):
+                    idx = future_to_i[fut]
+                    pending[idx] = fut.result()
+            facts_per_chunk = [p if p is not None else [] for p in pending]
+
+        for i, item in enumerate(work_items):
+            if i > 0 and item["session_scope"] != work_items[i - 1]["session_scope"]:
+                trace.close_scope(work_items[i - 1]["session_scope"], status="ok")
+                _session_progress_tick(session_progress, 1)
+
+            facts = facts_per_chunk[i]
+            session_idx = item["session_idx"]
+            session_date = item["session_date"]
+            chunk_scope = item["chunk_scope"]
+            turn_start = item["turn_start"]
+            turn_end = item["turn_end"]
+
             if not facts:
                 trace.close_scope(chunk_scope, status="ok", metadata={"skipped": "no_facts"})
                 continue
 
             metadata_base = {
-                "method": "mem0",
+                "method": "mem0_nodel" if not self._allow_memory_delete else "mem0",
                 "history_name": history_name,
                 "session": session_idx,
                 "date": session_date,
@@ -191,12 +289,18 @@ class Mem0MemorySystem(BaseMemorySystem):
             )
 
             self._apply_memory_changes(
-                database, operations, temp_uuid_mapping, metadata_base, session_idx,
-                trace_scope_id=chunk_scope, trace=trace,
+                database,
+                operations,
+                temp_uuid_mapping,
+                metadata_base,
+                session_idx,
+                trace_scope_id=chunk_scope,
+                trace=trace,
             )
             trace.close_scope(chunk_scope, status="ok", metadata={"operation_count": len(operations)})
 
-        trace.close_scope(session_scope, status="ok")
+        trace.close_scope(work_items[-1]["session_scope"], status="ok")
+        _session_progress_tick(session_progress, 1)
 
     def retrieve(self, history_name: str, query: str, current_time: str, top_k: int = 5) -> List[RetrievedMemory]:
         database = self._get_database(history_name)
@@ -248,7 +352,7 @@ class Mem0MemorySystem(BaseMemorySystem):
         try:
             raw_response = self.llm_client.get_response_chat(
                 messages,
-                max_new_tokens=2048,
+                max_new_tokens=self._manager_max_new_tokens,
                 temperature=0,
                 response_format=FACT_RETRIEVAL_RESPONSE_FORMAT,
                 verbose=False
@@ -334,16 +438,17 @@ class Mem0MemorySystem(BaseMemorySystem):
         update_prompt = build_update_memory_messages(
             retrieved_old_memory_json,
             response_content,
-            language=self.language
+            language=self.language,
+            allow_delete=self._allow_memory_delete,
         )
         messages = [{"role": "user", "content": update_prompt}]
         raw_response = None
         try:
             raw_response = self.llm_client.get_response_chat(
                 messages,
-                max_new_tokens=2048,
+                max_new_tokens=self._manager_max_new_tokens,
                 temperature=0,
-                response_format=UPDATE_MEMORY_RESPONSE_FORMAT,
+                response_format=self._update_memory_response_format,
                 verbose=False
             )
             t = trace or self.trace
@@ -400,7 +505,12 @@ class Mem0MemorySystem(BaseMemorySystem):
                 old_mem = operation.get("old_memory") if event == "UPDATE" else None
                 op_mapping.append((event, op_id, text, old_mem))
             elif event == "DELETE":
-                op_mapping.append((event, op_id, None, None))
+                if self._allow_memory_delete:
+                    op_mapping.append((event, op_id, None, None))
+                else:
+                    logger.debug(
+                        "Mem0 nodel: ignoring DELETE from model op_id=%s", op_id
+                    )
 
         if texts_to_embed:
             embeddings = self._embed_texts(texts_to_embed)
@@ -464,6 +574,8 @@ class Mem0MemorySystem(BaseMemorySystem):
                 emb_idx += 1
                 
             elif event == "DELETE":
+                if not self._allow_memory_delete:
+                    continue
                 target_id = temp_uuid_mapping.get(str(op_id))
                 if target_id:
                     success = database.delete(target_id)

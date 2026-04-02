@@ -1,0 +1,17 @@
+### Retrieved Memory Unit [[ index ]]
+{% if time %}
+- Time: [[ time ]]
+{% endif %}
+<MemoryContent>
+[[ text ]]
+</MemoryContent>
+{% if attached_evidence %}
+{% for ev in attached_evidence %}
+<Evidence depth="[[ ev.metadata.get('evidence_depth', 1) ]]">
+{% if ev.time %}
+- Time: [[ ev.time ]]
+{% endif %}
+[[ ev.text ]]
+</Evidence>
+{% endfor %}
+{% endif %}

@@ -55,6 +55,8 @@ class GenerateConfig:
     mem0_dialogue_format: str
     manager_max_new_tokens: int
     mem0_extract_concurrency: int
+    relmem_relation_concurrency: int
+    answer_concurrency: int
 
 
 def _normalize_memory_granularity(value: str) -> str:
@@ -77,13 +79,13 @@ def parse_args() -> GenerateConfig:
     parser.add_argument(
         "--method",
         required=True,
-        help="记忆方法，如 amem / mem0 / mem0_nodel / rag / full_context",
+        help="记忆方法，如 amem / mem0 / mem0_nodel / relmem / append_only / recency_only / rag / full_context",
     )
     parser.add_argument("--extractor_model", default=None, help="记忆抽取模型（预留，当前优先使用 manager_model）")
     parser.add_argument(
         "--manager_model",
         default=None,
-        help="记忆管理模型（amem / mem0 / mem0_nodel 必填其一）",
+        help="记忆管理模型（amem / mem0 / mem0_nodel / relmem / append_only 必填其一）",
     )
     parser.add_argument("--answer_model", required=True, help="回答问题模型")
     parser.add_argument("--embedding_model", required=True, help="向量模型")
@@ -103,7 +105,7 @@ def parse_args() -> GenerateConfig:
     parser.add_argument(
         "--agent_trace_dir",
         default="logs/agent_trace",
-        help="Agent 答题 tracing 日志目录，默认开启；传空字符串可禁用",
+        help="Agent 答题 tracing 根目录，实际写入 {该目录}/{experiment_name}/（与 logs/memory_trace 子目录同名）；传空字符串可禁用",
     )
     parser.add_argument(
         "--parallel_episodes",
@@ -120,19 +122,31 @@ def parse_args() -> GenerateConfig:
         "--mem0-dialogue-format",
         default="auto",
         choices=["auto", "user_assistant", "named_speakers"],
-        help="mem0：对话转写与事实抽取模板；auto 对 locomo benchmark 使用 named_speakers",
+        help="mem0/append_only：对话转写与事实抽取模板；auto 对 locomo benchmark 使用 named_speakers",
     )
     parser.add_argument(
         "--manager_max_new_tokens",
         type=int,
         default=2048,
-        help="amem/mem0 记忆管理 LLM 的 max_new_tokens（传给 OpenAI 兼容 API 的 max_tokens）",
+        help="amem/mem0/append_only 记忆管理或事实抽取 LLM 的 max_new_tokens（传给 OpenAI 兼容 API 的 max_tokens）",
     )
     parser.add_argument(
         "--mem0-extract-concurrency",
         type=int,
         default=8,
-        help="mem0/mem0_nodel：episode 内事实抽取 LLM 调用的最大并发（1=串行）；与 --parallel-episodes 相乘影响总 QPS",
+        help="mem0/mem0_nodel/relmem/append_only：episode 内事实抽取 LLM 的最大并发（1=串行）；与 --parallel-episodes 相乘影响总 QPS",
+    )
+    parser.add_argument(
+        "--relmem-relation-concurrency",
+        type=int,
+        default=8,
+        help="relmem：每条新事实下成对关系分类 LLM 调用的最大并发",
+    )
+    parser.add_argument(
+        "--answer-concurrency",
+        type=int,
+        default=2,
+        help="答题阶段：同一 episode 内多道问题并发调用回答模型的上限（传给 get_response_chat 的 max_concurrency）",
     )
 
     args = parser.parse_args()
@@ -160,6 +174,8 @@ def parse_args() -> GenerateConfig:
         mem0_dialogue_format=str(args.mem0_dialogue_format),
         manager_max_new_tokens=int(args.manager_max_new_tokens),
         mem0_extract_concurrency=max(1, int(args.mem0_extract_concurrency)),
+        relmem_relation_concurrency=max(1, int(args.relmem_relation_concurrency)),
+        answer_concurrency=max(1, int(args.answer_concurrency)),
     )
 
 
@@ -180,7 +196,7 @@ def _resolve_benchmark(cfg: GenerateConfig) -> Tuple[str, str]:
 
 def _build_experiment_name(cfg: GenerateConfig) -> str:
     """Build experiment dir name: {benchmark}_gran{gran}_{method}_{model}."""
-    if cfg.method in {"amem", "mem0", "mem0_nodel"}:
+    if cfg.method in {"amem", "mem0", "mem0_nodel", "relmem", "append_only"}:
         model = cfg.manager_model or cfg.extractor_model or "default"
     else:
         model = cfg.answer_model
@@ -191,6 +207,13 @@ def _build_experiment_name(cfg: GenerateConfig) -> str:
 def _build_memory_trace_dir(cfg: GenerateConfig) -> str:
     """Build memory trace dir: logs/memory_trace/{experiment_name}."""
     return f"logs/memory_trace/{_build_experiment_name(cfg)}"
+
+
+def _resolve_agent_trace_dir(cfg: GenerateConfig) -> Optional[str]:
+    """Same subdirectory name as memory_trace: {agent_trace_dir}/{experiment_name}/."""
+    if not cfg.agent_trace_dir:
+        return None
+    return str(Path(cfg.agent_trace_dir) / _build_experiment_name(cfg))
 
 
 def _resolve_mem0_dialogue_format(cfg: GenerateConfig) -> str:
@@ -217,11 +240,11 @@ def _build_memory_system(cfg: GenerateConfig, language: str):
 
     llm_client = None
     trace_log_dir = None
-    if method in {"amem", "mem0", "mem0_nodel"}:
+    if method in {"amem", "mem0", "mem0_nodel", "relmem", "append_only"}:
         manager_or_extractor_model = cfg.manager_model or cfg.extractor_model
         if not manager_or_extractor_model:
             raise ValueError(
-                "For method 'amem'/'mem0'/'mem0_nodel', please provide --manager_model (or --extractor_model)."
+                "For method 'amem'/'mem0'/'mem0_nodel'/'relmem'/'append_only', please provide --manager_model (or --extractor_model)."
             )
         llm_client = load_api_chat_completion(manager_or_extractor_model, async_=False)
         trace_log_dir = _build_memory_trace_dir(cfg)
@@ -234,10 +257,12 @@ def _build_memory_system(cfg: GenerateConfig, language: str):
         "language": language,
         "trace_log_dir": trace_log_dir,
     }
-    if method in ("mem0", "mem0_nodel"):
+    if method in ("mem0", "mem0_nodel", "relmem", "append_only"):
         kwargs["dialogue_format"] = _resolve_mem0_dialogue_format(cfg)
         kwargs["extract_concurrency"] = cfg.mem0_extract_concurrency
-    if method in {"amem", "mem0", "mem0_nodel"}:
+    if method == "relmem":
+        kwargs["relation_concurrency"] = cfg.relmem_relation_concurrency
+    if method in {"amem", "mem0", "mem0_nodel", "relmem", "append_only"}:
         kwargs["manager_max_new_tokens"] = cfg.manager_max_new_tokens
 
     return get_memory_system(
@@ -495,7 +520,8 @@ async def run_pipeline(cfg: GenerateConfig) -> None:
         chat_model=answer_chat_model,
         memory_token_limit=cfg.memory_token_limit,
         language=language,
-        trace_log_dir=cfg.agent_trace_dir,
+        trace_log_dir=_resolve_agent_trace_dir(cfg),
+        answer_concurrency=cfg.answer_concurrency,
     )
 
     loop = asyncio.get_running_loop()

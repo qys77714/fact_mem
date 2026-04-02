@@ -2,8 +2,10 @@ from .base import BaseMemorySystem, RetrievedMemory
 from .baselines.full_context import FullContextMemorySystem
 from .baselines.rag import RagMemorySystem
 from .baselines.only_query import OnlyQueryMemorySystem
+from .baselines.append_recency import AppendOnlyMemorySystem, RecencyOnlyMemorySystem
 from .amem import AMemMemorySystem
 from .mem0 import Mem0MemorySystem
+from .relmem import RelMemMemorySystem
 
 def get_memory_system(
     method_name: str,
@@ -28,6 +30,29 @@ def get_memory_system(
             embed_model_name=embed_model_name,
             embed_client=embed_client,
             database_root=database_root
+        )
+    elif method_name == "append_only":
+        llm_client = kwargs.get("llm_client")
+        if llm_client is None:
+            raise ValueError("append_only requires llm_client (via kwargs)")
+        return AppendOnlyMemorySystem(
+            embed_model_name=embed_model_name,
+            llm_client=llm_client,
+            embed_client=embed_client,
+            database_root=database_root,
+            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
+            language=kwargs.get("language"),
+            granularity=kwargs.get("granularity", "all"),
+            trace_log_dir=kwargs.get("trace_log_dir"),
+            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
+            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
+            extract_concurrency=kwargs.get("extract_concurrency", 8),
+        )
+    elif method_name == "recency_only":
+        return RecencyOnlyMemorySystem(
+            embed_model_name=embed_model_name,
+            embed_client=embed_client,
+            database_root=database_root,
         )
     elif method_name == "only_query":
         return OnlyQueryMemorySystem()
@@ -82,6 +107,25 @@ def get_memory_system(
             manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
             extract_concurrency=kwargs.get("extract_concurrency", 8),
         )
+    elif method_name == "relmem":
+        llm_client = kwargs.get("llm_client")
+        if llm_client is None:
+            raise ValueError("relmem requires llm_client (via kwargs)")
+        return RelMemMemorySystem(
+            embed_model_name=embed_model_name,
+            llm_client=llm_client,
+            embed_client=embed_client,
+            database_root=database_root,
+            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
+            language=kwargs.get("language"),
+            granularity=kwargs.get("granularity", "all"),
+            trace_log_dir=kwargs.get("trace_log_dir"),
+            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
+            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
+            extract_concurrency=kwargs.get("extract_concurrency", 8),
+            relation_concurrency=kwargs.get("relation_concurrency", 8),
+            relation_max_new_tokens=kwargs.get("relation_max_new_tokens", 256),
+        )
     else:
         raise ValueError(f"Unknown memory method: {method_name}")
 
@@ -91,7 +135,10 @@ __all__ = [
     "get_memory_system",
     "FullContextMemorySystem",
     "RagMemorySystem",
+    "AppendOnlyMemorySystem",
+    "RecencyOnlyMemorySystem",
     "OnlyQueryMemorySystem",
     "AMemMemorySystem",
     "Mem0MemorySystem",
+    "RelMemMemorySystem",
 ]

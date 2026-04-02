@@ -27,6 +27,8 @@ def test_resolve_benchmark_with_explicit_file():
         mem0_dialogue_format="auto",
         manager_max_new_tokens=2048,
         mem0_extract_concurrency=8,
+        relmem_relation_concurrency=8,
+        answer_concurrency=2,
     )
     fp, lang = pg._resolve_benchmark(cfg)
     assert fp == "/tmp/a.json"
@@ -54,6 +56,8 @@ def test_resolve_mem0_dialogue_format():
         rebuild_memory=False,
         manager_max_new_tokens=2048,
         mem0_extract_concurrency=8,
+        relmem_relation_concurrency=8,
+        answer_concurrency=2,
     )
     assert (
         pg._resolve_mem0_dialogue_format(
@@ -100,15 +104,42 @@ def test_resolve_benchmark_unknown_raises():
         mem0_dialogue_format="auto",
         manager_max_new_tokens=2048,
         mem0_extract_concurrency=8,
+        relmem_relation_concurrency=8,
+        answer_concurrency=2,
     )
     with pytest.raises(ValueError):
         pg._resolve_benchmark(cfg)
 
 
-def test_normalize_method_alias():
-    assert pg._normalize_method("rag") == "rag_turn"
-    assert pg._normalize_method("fullcontext") == "full_context"
-    assert pg._normalize_method("amem") == "amem"
+def test_resolve_agent_trace_dir_uses_experiment_subdir():
+    base = dict(
+        benchmark_file=None,
+        output="o.jsonl",
+        method="mem0",
+        extractor_model=None,
+        manager_model="Qwen2.5-7B-Instruct",
+        answer_model="Qwen3-4B",
+        embedding_model="embed",
+        retrieve_topk=5,
+        memory_token_limit=2048,
+        memory_granularity="4",
+        database_root=None,
+        embedding_base_url="http://x",
+        embedding_api_key="k",
+        language=None,
+        agent_trace_dir="logs/answer_agent_trace",
+        parallel_episodes=1,
+        rebuild_memory=False,
+        mem0_dialogue_format="auto",
+        manager_max_new_tokens=2048,
+        mem0_extract_concurrency=8,
+        relmem_relation_concurrency=8,
+        answer_concurrency=2,
+    )
+    cfg = pg.GenerateConfig(benchmark="locomo", **base)
+    assert pg._resolve_agent_trace_dir(cfg) == f"logs/answer_agent_trace/{pg._build_experiment_name(cfg)}"
+    cfg_none = pg.GenerateConfig(benchmark="locomo", **{**base, "agent_trace_dir": None})
+    assert pg._resolve_agent_trace_dir(cfg_none) is None
 
 
 def test_build_record_with_optional_fields():

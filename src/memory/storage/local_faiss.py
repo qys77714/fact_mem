@@ -15,6 +15,16 @@ from memory.base import RetrievedMemory
 logger = logging.getLogger(__name__)
 
 
+def _memory_entry_is_valid(metadata: Dict[str, Any]) -> bool:
+    """Invalidated entries use metadata['memory_status'] == 'invalid' (RelMem). Missing key means valid."""
+    return metadata.get("memory_status") != "invalid"
+
+
+def _memory_entry_is_primary(metadata: Dict[str, Any]) -> bool:
+    """Evidence rows use metadata['memory_role'] == 'evidence'. Missing key means primary (backward compatible)."""
+    return metadata.get("memory_role") != "evidence"
+
+
 @dataclass
 class _HistoryStore:
     index: Optional[faiss.Index]
@@ -77,6 +87,10 @@ class LocalFaissDatabase:
 
         self._persist()
         return memory_id
+
+    def invalidate_memory(self, memory_id: str) -> bool:
+        """Soft-delete: mark entry as invalid; keeps row for audit. RelMem CON updates."""
+        return self.update_memory(memory_id, metadata_updates={"memory_status": "invalid"})
 
     def delete(self, memory_id: str) -> bool:
         self._ensure_loaded()
@@ -147,9 +161,18 @@ class LocalFaissDatabase:
         self._persist()
         return True
 
-    def search(self, query_embedding: np.ndarray, top_k: int) -> List[RetrievedMemory]:
+    def search(
+        self,
+        query_embedding: np.ndarray,
+        top_k: int,
+        *,
+        only_valid: bool = False,
+        only_primary: bool = False,
+    ) -> List[RetrievedMemory]:
         """
         直接接收 query_embedding (1D 或 2D numpy array) 并召回最近似的 K 条结果。
+        only_valid=True 时跳过 metadata['memory_status'] == 'invalid' 的条目（RelMem），必要时扩大检索深度。
+        only_primary=True 时跳过 metadata['memory_role'] == 'evidence'（RelMem 主检索路径）。
         """
         if top_k <= 0 or query_embedding is None or query_embedding.size == 0:
             return []
@@ -161,28 +184,115 @@ class LocalFaissDatabase:
 
         if query_embedding.ndim == 1:
             query_embedding = query_embedding.reshape(1, -1)
-            
+
         normalized_query = np.ascontiguousarray(query_embedding.astype(np.float32))
         faiss.normalize_L2(normalized_query)
-        
-        k = min(top_k, store.index.ntotal)
-        scores, indices = store.index.search(normalized_query, k)
 
-        results: List[RetrievedMemory] = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx == -1:
-                continue
-            results.append(
-                RetrievedMemory(
-                    memory_id=store.ids[idx],
-                    text=store.texts[idx],
-                    source_index=store.source_indices[idx],
-                    time=store.times[idx],
-                    score=float(score),
-                    metadata=store.metadatas[idx]
+        def _passes_filters(meta: Dict[str, Any]) -> bool:
+            if only_valid and not _memory_entry_is_valid(meta):
+                return False
+            if only_primary and not _memory_entry_is_primary(meta):
+                return False
+            return True
+
+        total = store.index.ntotal
+        if not only_valid and not only_primary:
+            k = min(top_k, total)
+            scores, indices = store.index.search(normalized_query, k)
+            results: List[RetrievedMemory] = []
+            for score, idx in zip(scores[0], indices[0]):
+                if idx == -1:
+                    continue
+                results.append(
+                    RetrievedMemory(
+                        memory_id=store.ids[idx],
+                        text=store.texts[idx],
+                        source_index=store.source_indices[idx],
+                        time=store.times[idx],
+                        score=float(score),
+                        metadata=store.metadatas[idx],
+                    )
                 )
-            )
+            return results
+
+        fetch_k = min(total, top_k)
+        results = []
+        seen_rounds = 0
+        max_rounds = 8
+        while seen_rounds < max_rounds:
+            seen_rounds += 1
+            k_req = min(total, fetch_k)
+            scores, indices = store.index.search(normalized_query, k_req)
+            for score, idx in zip(scores[0], indices[0]):
+                if idx == -1:
+                    continue
+                meta = store.metadatas[idx]
+                if not _passes_filters(meta):
+                    continue
+                results.append(
+                    RetrievedMemory(
+                        memory_id=store.ids[idx],
+                        text=store.texts[idx],
+                        source_index=store.source_indices[idx],
+                        time=store.times[idx],
+                        score=float(score),
+                        metadata=meta,
+                    )
+                )
+                if len(results) >= top_k:
+                    return results
+            if k_req >= total:
+                return results
+            fetch_k = min(total, max(fetch_k * 2, top_k * 4))
         return results
+
+    def collect_evidence_descendants(self, root_primary_id: str) -> List[RetrievedMemory]:
+        """
+        从某条 primary 出发，按 parent_primary 链收集所有 evidence（BFS，支持 evidence 再挂子 evidence）。
+        仅包含 valid 且 memory_role == evidence 的条目；返回顺序为 BFS。metadata 中写入 evidence_depth（1 起）。
+        """
+        self._ensure_loaded()
+        store = self._store
+        if not store.ids:
+            return []
+
+        children: Dict[str, List[int]] = {}
+        for i in range(len(store.ids)):
+            meta = store.metadatas[i]
+            if not _memory_entry_is_valid(meta):
+                continue
+            if _memory_entry_is_primary(meta):
+                continue
+            pid = meta.get("parent_primary")
+            if not pid or not isinstance(pid, str):
+                continue
+            children.setdefault(pid, []).append(i)
+
+        out: List[RetrievedMemory] = []
+        seen: set[str] = set()
+        queue: List[tuple[str, int]] = [(root_primary_id, 0)]
+        while queue:
+            parent_id, parent_depth = queue.pop(0)
+            for idx in children.get(parent_id, []):
+                mid = store.ids[idx]
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                depth = parent_depth + 1
+                meta = dict(store.metadatas[idx])
+                meta["evidence_depth"] = depth
+                out.append(
+                    RetrievedMemory(
+                        memory_id=mid,
+                        text=store.texts[idx],
+                        source_index=store.source_indices[idx],
+                        time=store.times[idx],
+                        score=0.0,
+                        metadata=meta,
+                    )
+                )
+                queue.append((mid, depth))
+        return out
 
     def list_all_memories(self, sort_by_time: bool = True, descending: bool = False) -> List[RetrievedMemory]:
         """

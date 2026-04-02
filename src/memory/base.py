@@ -22,6 +22,8 @@ class RetrievedMemory:
     time: str              # 该记忆代表的时间
     score: float           # 检索相似度得分
     metadata: Dict[str, Any] = field(default_factory=dict) # 其他相关元信息
+    # RelMem：检索到的 primary 上附带的 evidence（可嵌套；仅用于上下文拼装，不参与向量检索）
+    attached_evidence: List["RetrievedMemory"] = field(default_factory=list)
 
 class BaseMemorySystem:
     """所有记忆体系统的抽象基类。

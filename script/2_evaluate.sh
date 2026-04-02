@@ -7,16 +7,15 @@ cd "$ROOT"
 
 # 定义输入路径数组
 INPUT_PATHS=(
-  experiment/locomo_gran4_mem0_nodel_Qwen3.5-27B-FP8_top20.jsonl
-  experiment/locomo_gran4_mem0_Qwen3.5-27B-FP8_top20.jsonl
+experiment/locomo_gran4_relmem_Qwen2.5-7B-Instruct_top20.jsonl
 )
 
-JUDGE_MODEL=Qwen3.5-27B-FP8
+JUDGE_MODEL=qwen-turbo
 # 仅写入 eval_judge.jsonl / --csv 的 benchmark 字段；不传也可从路径推断 locomo
 BENCHMARK=locomo
 
 # 并行时两个进程各默认 max_concurrency=20，易打满 API；可按需调低
-MAX_CONCURRENCY=4
+MAX_CONCURRENCY=10
 
 # 可选：统一追加到 CSV，便于对比多次运行
 # CSV_OUT="$ROOT/experiment/eval_summary.csv"

@@ -42,11 +42,13 @@ class StandardAgent(BaseAgent):
         memory_token_limit: int = 2048,
         language: str = "zh",
         trace_log_dir: Optional[str] = None,
+        answer_concurrency: int = 2,
     ):
         self.memory_system = memory_system
         self.chat_model = chat_model
         self.memory_token_limit = memory_token_limit
         self.language = language
+        self.answer_concurrency = max(1, int(answer_concurrency))
         self.trace: Optional[MemoryTraceLogger] = (
             MemoryTraceLogger(method="agent", log_dir=trace_log_dir) if trace_log_dir else None
         )
@@ -118,7 +120,7 @@ class StandardAgent(BaseAgent):
         # 6. 交给内部的生成模型进行并发推理
         responses = await self.chat_model.get_response_chat(
             messages_list,
-            max_concurrency=2,
+            max_concurrency=self.answer_concurrency,
             max_new_tokens=1024,
             temperature=0.0,
             use_tqdm=True,

@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Case study 逐条查看</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f1115;
+      --surface: #181b22;
+      --border: #2a303c;
+      --text: #e8eaef;
+      --muted: #8b93a7;
+      --accent-a: #5eead4;
+      --accent-b: #f472b6;
+      --gold: #fcd34d;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: radial-gradient(1200px 800px at 10% -10%, #1a1f2e 0%, var(--bg) 55%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+    }
+    h1 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.35rem;
+    }
+    .sub {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.25rem;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem 1rem;
+      padding: 1rem 1.1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 1.25rem;
+    }
+    .toolbar label.file-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.45rem 0.85rem;
+      background: #252a36;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .toolbar label.file-btn:hover { border-color: #3d4656; }
+    .toolbar input[type="file"] { display: none; }
+    .nav-btns {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    button {
+      font-family: inherit;
+      padding: 0.45rem 0.9rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #252a36;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover:not(:disabled) { background: #2f3544; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .counter {
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      font-size: 0.9rem;
+      min-width: 8rem;
+      text-align: center;
+    }
+    .jump {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .jump input {
+      width: 5rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-family: "JetBrains Mono", monospace;
+    }
+    .status {
+      font-size: 0.85rem;
+      color: var(--muted);
+      width: 100%;
+      flex-basis: 100%;
+    }
+    .status.err { color: #fb7185; }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.15rem;
+      margin-bottom: 1rem;
+    }
+    .panel h2 {
+      margin: 0 0 0.65rem;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .kv { display: grid; gap: 0.35rem 1rem; font-size: 0.92rem; }
+    .kv span.key { color: var(--muted); }
+    .question {
+      font-size: 1.05rem;
+      border-left: 3px solid #6366f1;
+      padding-left: 0.85rem;
+      margin: 0;
+    }
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 900px) {
+      .grid2 { grid-template-columns: 1fr; }
+    }
+    .col-a { border-top: 3px solid var(--accent-a); padding-top: 0.75rem; }
+    .col-b { border-top: 3px solid var(--accent-b); padding-top: 0.75rem; }
+    .col-a h3, .col-b h3 {
+      margin: 0 0 0.5rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .col-a h3 { color: var(--accent-a); }
+    .col-b h3 { color: var(--accent-b); }
+    .answer-box {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.82rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--bg);
+      padding: 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      max-height: 220px;
+      overflow: auto;
+    }
+    .gold {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border-left: 3px solid var(--gold);
+      padding-left: 0.75rem;
+      margin: 0;
+    }
+    details {
+      margin-top: 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    details summary {
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+      background: #1e222b;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    details[open] summary { color: var(--text); }
+    .trace-body {
+      padding: 0.75rem;
+      max-height: 360px;
+      overflow: auto;
+    }
+    pre.trace {
+      margin: 0;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .badge {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+    .badge.ok { background: rgba(94, 234, 212, 0.15); color: var(--accent-a); }
+    .badge.no { background: rgba(244, 114, 182, 0.15); color: var(--accent-b); }
+    .kbd-hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.75rem;
+    }
+    kbd {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.75em;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Case study：A 对 · B 错</h1>
+    <p class="sub">选择 <code>case_study_a_win_b_lose.jsonl</code>（大文件也可：只建立行索引，按需解析当前行）</p>
+
+    <div class="toolbar">
+      <label class="file-btn">
+        <input type="file" id="file" accept=".jsonl,.json" />
+        选择 JSONL 文件
+      </label>
+      <div class="nav-btns">
+        <button type="button" id="prev" disabled>上一条</button>
+        <span class="counter" id="counter">未加载</span>
+        <button type="button" id="next" disabled>下一条</button>
+      </div>
+      <div class="jump">
+        <span>跳到</span>
+        <input type="number" id="jump" min="1" disabled placeholder="#" />
+        <span>条</span>
+        <button type="button" id="go" disabled>Go</button>
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div id="content" style="display: none">
+      <div class="panel">
+        <h2>元数据</h2>
+        <div class="kv" id="meta"></div>
+      </div>
+      <div class="panel">
+        <h2>题目</h2>
+        <p class="question" id="question"></p>
+      </div>
+      <div class="panel">
+        <h2>参考答案</h2>
+        <p class="gold" id="gold"></p>
+      </div>
+      <div class="grid2">
+        <div class="panel col-a">
+          <h3>方法 A（正确）</h3>
+          <div class="badges" id="badges-a"></div>
+          <div class="answer-box" id="ans-a"></div>
+          <details id="det-prompt-a"><summary>Prompt</summary><div class="trace-body"><pre class="trace" id="prompt-a"></pre></div></details>
+          <details id="det-resp-a"><summary>Response</summary><div class="trace-body"><pre class="trace" id="resp-a"></pre></div></details>
+          <details id="det-ret-a"><summary>Retrieved</summary><div class="trace-body"><pre class="trace" id="ret-a"></pre></div></details>
+        </div>
+        <div class="panel col-b">
+          <h3>方法 B（错误）</h3>
+          <div class="badges" id="badges-b"></div>
+          <div class="answer-box" id="ans-b"></div>
+          <details id="det-prompt-b"><summary>Prompt</summary><div class="trace-body"><pre class="trace" id="prompt-b"></pre></div></details>
+          <details id="det-resp-b"><summary>Response</summary><div class="trace-body"><pre class="trace" id="resp-b"></pre></div></details>
+          <details id="det-ret-b"><summary>Retrieved</summary><div class="trace-body"><pre class="trace" id="ret-b"></pre></div></details>
+        </div>
+      </div>
+    </div>
+
+    <p class="kbd-hint">快捷键：<kbd>←</kbd> 上一条 · <kbd>→</kbd> 下一条 · <kbd>Home</kbd> 第一条 · <kbd>End</kbd> 最后一条</p>
+  </div>
+
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const fileInput = $("file");
+      const prevBtn = $("prev");
+      const nextBtn = $("next");
+      const counter = $("counter");
+      const statusEl = $("status");
+      const jumpInput = $("jump");
+      const goBtn = $("go");
+      const content = $("content");
+
+      /** @type {number[]} byte offset at start of each non-empty line */
+      let lineStarts = [];
+      /** @type {File | null} */
+      let currentFile = null;
+      let currentIndex = 0;
+      const textDecoder = new TextDecoder("utf-8");
+
+      function setStatus(msg, isErr) {
+        statusEl.textContent = msg || "";
+        statusEl.className = "status" + (isErr ? " err" : "");
+      }
+
+      /**
+       * Scan file for newline byte positions without loading whole file into a string.
+       * @param {File} file
+       * @returns {Promise<number[]>}
+       */
+      async function buildLineStarts(file) {
+        const chunkSize = 1024 * 1024;
+        let pos = 0;
+        const starts = [0];
+        while (pos < file.size) {
+          const end = Math.min(pos + chunkSize, file.size);
+          const buf = new Uint8Array(await file.slice(pos, end).arrayBuffer());
+          for (let i = 0; i < buf.length; i++) {
+            if (buf[i] === 10) starts.push(pos + i + 1);
+          }
+          pos = end;
+        }
+        while (starts.length && starts[starts.length - 1] >= file.size) starts.pop();
+        return starts;
+      }
+
+      /**
+       * @param {File} file
+       * @param {number} lineIndex 0-based
+       */
+      async function readLineJson(file, lineIndex) {
+        const start = lineStarts[lineIndex];
+        const end = lineIndex + 1 < lineStarts.length ? lineStarts[lineIndex + 1] : file.size;
+        if (start >= end) throw new Error("空行");
+        const blob = file.slice(start, end);
+        const buf = await blob.arrayBuffer();
+        const line = textDecoder.decode(buf).replace(/\r?\n$/, "");
+        if (!line.trim()) throw new Error("空行");
+        return JSON.parse(line);
+      }
+
+      function esc(s) {
+        if (s === undefined || s === null) return "";
+        const el = document.createElement("div");
+        el.textContent = String(s);
+        return el.innerHTML;
+      }
+
+      function fmtJson(obj) {
+        try {
+          return JSON.stringify(obj, null, 2);
+        } catch {
+          return String(obj);
+        }
+      }
+
+      function showRecord(obj) {
+        $("meta").innerHTML = [
+          ["benchmark", obj.benchmark],
+          ["history_name", obj.history_name],
+          ["question_id", obj.question_id],
+        ]
+          .map(([k, v]) => `<div><span class="key">${esc(k)}</span> · ${esc(v)}</div>`)
+          .join("");
+
+        $("question").textContent = obj.question || "";
+        $("gold").textContent = obj.answer || "";
+
+        $("ans-a").textContent = obj.model_answer_a ?? "";
+        $("ans-b").textContent = obj.model_answer_b ?? "";
+
+        $("badges-a").innerHTML =
+          `<span class="badge ok">is_correct: ${obj.is_correct_a}</span>` +
+          (obj.judge_api_failed_a != null
+            ? `<span class="badge">${esc("judge_api_failed: " + obj.judge_api_failed_a)}</span>`
+            : "");
+        $("badges-b").innerHTML =
+          `<span class="badge no">is_correct: ${obj.is_correct_b}</span>` +
+          (obj.judge_api_failed_b != null
+            ? `<span class="badge">${esc("judge_api_failed: " + obj.judge_api_failed_b)}</span>`
+            : "");
+
+        const ta = obj.agent_trace_a || {};
+        const tb = obj.agent_trace_b || {};
+        $("prompt-a").textContent = ta.prompt || "";
+        $("resp-a").textContent =
+          typeof ta.response === "string" ? ta.response : fmtJson(ta.response);
+        $("ret-a").textContent = fmtJson(ta.retrieved);
+        $("prompt-b").textContent = tb.prompt || "";
+        $("resp-b").textContent =
+          typeof tb.response === "string" ? tb.response : fmtJson(tb.response);
+        $("ret-b").textContent = fmtJson(tb.retrieved);
+
+        ["det-prompt-a", "det-resp-a", "det-ret-a", "det-prompt-b", "det-resp-b", "det-ret-b"].forEach((id) => {
+          $(id).open = false;
+        });
+      }
+
+      function updateNav() {
+        const n = lineStarts.length;
+        const i = currentIndex;
+        counter.textContent = n ? `${i + 1} / ${n}` : "0 / 0";
+        prevBtn.disabled = n === 0 || i <= 0;
+        nextBtn.disabled = n === 0 || i >= n - 1;
+        jumpInput.max = String(Math.max(1, n));
+        jumpInput.disabled = n === 0;
+        goBtn.disabled = n === 0;
+      }
+
+      async function goTo(index) {
+        if (!currentFile || lineStarts.length === 0) return;
+        const n = lineStarts.length;
+        currentIndex = Math.max(0, Math.min(n - 1, index));
+        setStatus("解析中…");
+        try {
+          const obj = await readLineJson(currentFile, currentIndex);
+          showRecord(obj);
+          content.style.display = "block";
+          setStatus("");
+        } catch (e) {
+          setStatus(String(e), true);
+        }
+      }
+
+      fileInput.addEventListener("change", async () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        currentFile = f;
+        content.style.display = "none";
+        setStatus("正在扫描换行符（大文件可能需要几十秒）…");
+        prevBtn.disabled = nextBtn.disabled = true;
+        try {
+          lineStarts = await buildLineStarts(f);
+          currentIndex = 0;
+          updateNav();
+          setStatus(`已索引 ${lineStarts.length} 行`);
+          await goTo(0);
+        } catch (e) {
+          setStatus(String(e), true);
+          lineStarts = [];
+          updateNav();
+        }
+      });
+
+      prevBtn.addEventListener("click", () => goTo(currentIndex - 1));
+      nextBtn.addEventListener("click", () => goTo(currentIndex + 1));
+      goBtn.addEventListener("click", () => {
+        const v = parseInt(jumpInput.value, 10);
+        if (!Number.isFinite(v)) return;
+        goTo(v - 1);
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (!currentFile || lineStarts.length === 0) return;
+        if (e.target === jumpInput) return;
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          goTo(currentIndex - 1);
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          goTo(currentIndex + 1);
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          goTo(0);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          goTo(lineStarts.length - 1);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

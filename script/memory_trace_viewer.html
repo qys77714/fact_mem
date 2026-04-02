@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Memory trace · 记忆更新</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0c0e12;
+      --surface: #151922;
+      --border: #2a3142;
+      --text: #e6e9f0;
+      --muted: #8b95ab;
+      --add: #4ade80;
+      --inv: #f87171;
+      --dem: #fbbf24;
+      --att: #60a5fa;
+      --ded: #6b7280;
+      --llm: #c084fc;
+      --scope: #94a3b8;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: radial-gradient(1000px 700px at 100% 0%, #1a1f30 0%, var(--bg) 50%);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 280px) 1fr;
+      min-height: 100vh;
+    }
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 40vh; }
+    }
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 1rem;
+      overflow: auto;
+    }
+    .main { padding: 1rem 1.25rem 2rem; overflow: auto; }
+    h1 { font-size: 1.2rem; margin: 0 0 0.25rem; font-weight: 600; }
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+      line-height: 1.45;
+    }
+    .hint code { font-family: "JetBrains Mono", monospace; font-size: 0.78rem; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    label.pick {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.75rem;
+      background: #1e2430;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.88rem;
+    }
+    label.pick:hover { border-color: #3d4a63; }
+    input[type="file"] { display: none; }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem 1.25rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin: 0.5rem 0 0.75rem;
+    }
+    .filters label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+    .ep-search {
+      width: 100%;
+      padding: 0.4rem 0.5rem;
+      margin-bottom: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.85rem;
+    }
+    .ep-list { list-style: none; margin: 0; padding: 0; }
+    .ep-list li {
+      padding: 0.45rem 0.55rem;
+      margin-bottom: 2px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+    .ep-list li:hover { background: #1e2430; }
+    .ep-list li.active { background: #252d3d; border-left: 3px solid var(--add); }
+    .status-bar {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+    .status-bar.err { color: #fb7185; }
+    .op-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .op-table th, .op-table td {
+      text-align: left;
+      padding: 0.45rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .op-table th { color: var(--muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .op-tag {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 600;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      display: inline-block;
+    }
+    .op-ADD { color: var(--add); background: rgba(74, 222, 128, 0.12); }
+    .op-INVALIDATE { color: var(--inv); background: rgba(248, 113, 113, 0.12); }
+    .op-DEMOTE { color: var(--dem); background: rgba(251, 191, 36, 0.12); }
+    .op-ATTACH_EQUIVALENT, .op-ATTACH_EVIDENCE { color: var(--att); background: rgba(96, 165, 250, 0.12); }
+    .op-DEDUPE_TEXT { color: var(--ded); background: rgba(107, 114, 128, 0.15); }
+    .op-OTHER { color: var(--muted); background: #1e2430; }
+    .mono { font-family: "JetBrains Mono", monospace; font-size: 0.76rem; word-break: break-all; }
+    details.row-detail {
+      margin: 0.25rem 0 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #12151c;
+    }
+    details.row-detail summary {
+      padding: 0.35rem 0.5rem;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    details.row-detail pre {
+      margin: 0;
+      padding: 0.5rem;
+      max-height: 240px;
+      overflow: auto;
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .llm-block {
+      border-left: 3px solid var(--llm);
+      padding-left: 0.65rem;
+      margin: 0.5rem 0;
+      font-size: 0.78rem;
+    }
+    .scope-block {
+      border-left: 3px solid var(--scope);
+      padding-left: 0.65rem;
+      margin: 0.35rem 0;
+      font-size: 0.76rem;
+      color: var(--muted);
+    }
+    .subhead { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 1rem 0 0.4rem; }
+    .rel-panel {
+      background: #12151c;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .rel-panel h3 {
+      margin: 0 0 0.5rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .rel-panel .hint-small { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.5rem; }
+    .rel-bars {
+      display: grid;
+      gap: 0.35rem;
+      margin: 0.5rem 0 0.75rem;
+    }
+    .rel-bar-row {
+      display: grid;
+      grid-template-columns: 2.5rem 1fr 3.5rem;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+    }
+    .rel-bar-row .bar {
+      height: 8px;
+      background: #1e2430;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .rel-bar-row .bar > i {
+      display: block;
+      height: 100%;
+      min-width: 2px;
+      border-radius: 4px;
+      background: var(--rel-color, #888);
+    }
+    .rel-tag {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 600;
+      font-size: 0.72rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      display: inline-block;
+    }
+    .rel-EQV { --rel-color: #22d3ee; color: #22d3ee; background: rgba(34, 211, 238, 0.12); }
+    .rel-IND { --rel-color: #a78bfa; color: #a78bfa; background: rgba(167, 139, 250, 0.12); }
+    .rel-NSO { --rel-color: #fb923c; color: #fb923c; background: rgba(251, 146, 60, 0.12); }
+    .rel-OSN { --rel-color: #4ade80; color: #4ade80; background: rgba(74, 222, 128, 0.12); }
+    .rel-CON { --rel-color: #f87171; color: #f87171; background: rgba(248, 113, 113, 0.12); }
+    .rel-UNKNOWN, .rel-ERROR { --rel-color: #6b7280; color: #9ca3af; background: rgba(107, 114, 128, 0.15); }
+    details.rel-pairs { margin: 0.25rem 0; border: 1px solid var(--border); border-radius: 6px; background: #0e1118; }
+    details.rel-pairs > summary {
+      padding: 0.4rem 0.55rem;
+      cursor: pointer;
+      font-size: 0.8rem;
+      list-style: none;
+    }
+    details.rel-pairs > summary::-webkit-details-marker { display: none; }
+    .pair-row {
+      padding: 0.45rem 0.55rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.76rem;
+    }
+    .pair-row .lbl { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.15rem; }
+    .pair-row .txt { white-space: pre-wrap; word-break: break-word; }
+    .rel-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 0.35rem; }
+    .rel-table th, .rel-table td { text-align: left; padding: 0.35rem 0.45rem; border-bottom: 1px solid var(--border); }
+    .rel-table th { color: var(--muted); font-weight: 600; font-size: 0.7rem; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>Memory trace</h1>
+      <p class="hint">
+        问答结果 JSONL（如 <code>…_top100000.jsonl</code>）<strong>不含</strong>记忆操作。请选择
+        <code>logs/memory_trace/&lt;experiment_name&gt;/</code> 下所有 <code>*.jsonl</code>（与生成时实验名一致，例如
+        <code>locomo_gran4_relmem_Qwen2.5-7B-Instruct</code>）。加载后右侧会统计全部文件的 RelMem 关系分布；点开某条 episode 可见本文件分布与明细。
+      </p>
+      <div class="toolbar">
+        <label class="pick">
+          <input type="file" id="folder" webkitdirectory directory multiple accept=".jsonl" />
+          选择 trace 文件夹
+        </label>
+      </div>
+      <p class="hint" style="margin-top:0.5rem">或单选多个 jsonl：<code>Ctrl/Cmd+点击</code></p>
+      <div class="toolbar">
+        <label class="pick">
+          <input type="file" id="files" multiple accept=".jsonl" />
+          选择 jsonl 文件
+        </label>
+      </div>
+      <input type="search" class="ep-search" id="epFilter" placeholder="筛选 episode 名…" autocomplete="off" disabled />
+      <ul class="ep-list" id="epList"></ul>
+    </aside>
+    <main class="main">
+      <div id="globalRelPanel" class="rel-panel" style="display:none">
+        <h3>RelMem 关系分类分布（已选全部 jsonl）</h3>
+        <p class="hint-small" id="globalRelHint">加载文件后自动统计 <code>relmem_classify_relation</code> 的 response 中 <code>relation</code> 字段。</p>
+        <div id="globalRelBars" class="rel-bars"></div>
+        <div id="globalRelDetails"></div>
+      </div>
+      <div class="filters">
+        <label><input type="checkbox" id="fMem" checked /> memory_operation</label>
+        <label><input type="checkbox" id="fDedupe" /> 显示 DEDUPE_TEXT</label>
+        <label><input type="checkbox" id="fLlm" /> llm_interaction（关系分类等）</label>
+        <label><input type="checkbox" id="fScope" /> scope 边界</label>
+      </div>
+      <div class="status-bar" id="status">请选择左侧 trace 目录或文件。</div>
+      <div id="content"></div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const epList = $("epList");
+      const epFilter = $("epFilter");
+      const statusEl = $("status");
+      const content = $("content");
+
+      /** @type {{ name: string, file: File }[]} */
+      let episodes = [];
+      let activeIdx = -1;
+
+      const MAX_PAIRS_PER_REL = 200;
+      const REL_ORDER = ["IND", "EQV", "NSO", "OSN", "CON", "UNKNOWN", "ERROR"];
+
+      const fMem = $("fMem");
+      const fDedupe = $("fDedupe");
+      const fLlm = $("fLlm");
+      const fScope = $("fScope");
+
+      function setStatus(msg, err) {
+        statusEl.textContent = msg;
+        statusEl.className = "status-bar" + (err ? " err" : "");
+      }
+
+      function opClass(op) {
+        const o = (op || "").toUpperCase();
+        if (o === "ADD") return "op-ADD";
+        if (o === "INVALIDATE") return "op-INVALIDATE";
+        if (o === "DEMOTE") return "op-DEMOTE";
+        if (o === "ATTACH_EQUIVALENT" || o === "ATTACH_EVIDENCE") return "op-ATTACH_EQUIVALENT";
+        if (o === "DEDUPE_TEXT") return "op-DEDUPE_TEXT";
+        return "op-OTHER";
+      }
+
+      function fmt(o) {
+        try {
+          return JSON.stringify(o, null, 2);
+        } catch {
+          return String(o);
+        }
+      }
+
+      /**
+       * @param {string} userContent
+       * @returns {{ m_old: string | null, m_new: string | null }}
+       */
+      function parseOldNewFromUser(userContent) {
+        const s = userContent || "";
+        const oi = s.indexOf("OLD FACT:");
+        const ni = s.indexOf("NEW FACT:");
+        if (oi < 0 || ni < 0 || ni <= oi) return { m_old: null, m_new: null };
+        const oldPart = s.slice(oi + "OLD FACT:".length, ni).trim();
+        const newPart = s.slice(ni + "NEW FACT:".length).trim();
+        return { m_old: oldPart || null, m_new: newPart || null };
+      }
+
+      /**
+       * @param {any} ev
+       * @returns {{ label: string, raw: string | null }}
+       */
+      function parseRelationFromLlmEvent(ev) {
+        if (ev.error) return { label: "ERROR", raw: null };
+        let r = ev.response;
+        if (r == null) return { label: "UNKNOWN", raw: null };
+        if (Array.isArray(r) && r.length) r = r[0];
+        if (typeof r === "object" && r !== null && typeof r.relation === "string") {
+          return { label: r.relation.trim().toUpperCase() || "UNKNOWN", raw: null };
+        }
+        if (typeof r === "string") {
+          try {
+            const j = JSON.parse(r);
+            if (j && typeof j.relation === "string") {
+              return { label: j.relation.trim().toUpperCase() || "UNKNOWN", raw: r };
+            }
+          } catch {
+            return { label: "UNKNOWN", raw: r };
+          }
+        }
+        return { label: "UNKNOWN", raw: null };
+      }
+
+      /**
+       * @param {any} ev
+       * @returns {{ label: string, m_old: string | null, m_new: string | null, interaction_id: string, scope_id: string } | null}
+       */
+      function parseRelmemRow(ev) {
+        if (ev.event_type !== "llm_interaction" || ev.purpose !== "relmem_classify_relation") return null;
+        const msgs = ev.request && ev.request.messages;
+        let userContent = "";
+        if (Array.isArray(msgs)) {
+          const u = msgs.find((m) => m && m.role === "user");
+          if (u && typeof u.content === "string") userContent = u.content;
+        }
+        const { m_old, m_new } = parseOldNewFromUser(userContent);
+        const { label } = parseRelationFromLlmEvent(ev);
+        return {
+          label,
+          m_old,
+          m_new,
+          interaction_id: ev.interaction_id || "",
+          scope_id: ev.scope_id || "",
+        };
+      }
+
+      /**
+       * Stream-parse one JSONL file; collect selected event types only (bounded memory).
+       * Always collects relmem_classify_relation rows into `relmem` for statistics.
+       * @param {File} file
+       */
+      async function parseTraceFile(file) {
+        const wantMem = fMem.checked;
+        const wantDedupe = fDedupe.checked;
+        const wantLlm = fLlm.checked;
+        const wantScope = fScope.checked;
+
+        const mem = [];
+        const llm = [];
+        const relmem = [];
+        const scopes = [];
+        let lines = 0;
+
+        const stream = file.stream().pipeThrough(new TextDecoderStream());
+        const reader = stream.getReader();
+        let buf = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += value;
+          const parts = buf.split("\n");
+          buf = parts.pop() || "";
+          for (const line of parts) {
+            if (!line.trim()) continue;
+            lines++;
+            let ev;
+            try {
+              ev = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            const t = ev.event_type;
+            if (t === "memory_operation") {
+              const op = (ev.operation || "").toUpperCase();
+              if (op === "DEDUPE_TEXT" && !wantDedupe) continue;
+              if (!wantMem) continue;
+              mem.push(ev);
+            } else if (t === "llm_interaction") {
+              if (ev.purpose === "relmem_classify_relation") {
+                const row = parseRelmemRow(ev);
+                if (row) relmem.push(row);
+              }
+              if (wantLlm) llm.push(ev);
+            } else if (t === "scope_start" || t === "scope_end") {
+              if (wantScope) scopes.push(ev);
+            }
+          }
+        }
+        if (buf.trim()) {
+          lines++;
+          try {
+            const ev = JSON.parse(buf);
+            const t = ev.event_type;
+            if (t === "memory_operation") {
+              const op = (ev.operation || "").toUpperCase();
+              if (!(op === "DEDUPE_TEXT" && !wantDedupe) && wantMem) mem.push(ev);
+            } else if (t === "llm_interaction") {
+              if (ev.purpose === "relmem_classify_relation") {
+                const row = parseRelmemRow(ev);
+                if (row) relmem.push(row);
+              }
+              if (wantLlm) llm.push(ev);
+            } else if ((t === "scope_start" || t === "scope_end") && wantScope) scopes.push(ev);
+          } catch (_) {}
+        }
+
+        function byTime(a, b) {
+          const ta = a.timestamp || "";
+          const tb = b.timestamp || "";
+          if (ta !== tb) return ta.localeCompare(tb);
+          return (a.event_id || "").localeCompare(b.event_id || "");
+        }
+        mem.sort(byTime);
+        llm.sort(byTime);
+        scopes.sort(byTime);
+
+        return { mem, llm, relmem, scopes, lineCount: lines };
+      }
+
+      /**
+       * @param {File[]} files
+       * @returns {Promise<{ counts: Record<string, number>, byRel: Record<string, any[]>, total: number }>}
+       */
+      async function aggregateGlobalRelationStats(files) {
+        const counts = {};
+        const byRel = {};
+        let total = 0;
+
+        for (const file of files) {
+          const stream = file.stream().pipeThrough(new TextDecoderStream());
+          const reader = stream.getReader();
+          let buf = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += value;
+            const parts = buf.split("\n");
+            buf = parts.pop() || "";
+            for (const line of parts) {
+              if (!line.trim()) continue;
+              let ev;
+              try {
+                ev = JSON.parse(line);
+              } catch {
+                continue;
+              }
+              if (ev.event_type !== "llm_interaction" || ev.purpose !== "relmem_classify_relation") continue;
+              const row = parseRelmemRow(ev);
+              if (!row) continue;
+              total++;
+              const lb = row.label;
+              counts[lb] = (counts[lb] || 0) + 1;
+              if (!byRel[lb]) byRel[lb] = [];
+              if (byRel[lb].length < MAX_PAIRS_PER_REL) {
+                const base = file.webkitRelativePath || file.name;
+                byRel[lb].push({
+                  ...row,
+                  episode: (base.split("/").pop() || file.name).replace(/\.jsonl$/i, ""),
+                });
+              }
+            }
+          }
+          if (buf.trim()) {
+            try {
+              const ev = JSON.parse(buf);
+              if (ev.event_type === "llm_interaction" && ev.purpose === "relmem_classify_relation") {
+                const row = parseRelmemRow(ev);
+                if (row) {
+                  total++;
+                  const lb = row.label;
+                  counts[lb] = (counts[lb] || 0) + 1;
+                  if (!byRel[lb]) byRel[lb] = [];
+                  if (byRel[lb].length < MAX_PAIRS_PER_REL) {
+                    const base = file.webkitRelativePath || file.name;
+                    byRel[lb].push({
+                      ...row,
+                      episode: (base.split("/").pop() || file.name).replace(/\.jsonl$/i, ""),
+                    });
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
+        return { counts, byRel, total };
+      }
+
+      function renderRelationBars(counts, total) {
+        if (!total) return '<p class="hint-small">未找到 relmem_classify_relation 事件。</p>';
+        const barColors = { IND: "#a78bfa", EQV: "#22d3ee", NSO: "#fb923c", OSN: "#4ade80", CON: "#f87171", UNKNOWN: "#6b7280", ERROR: "#9ca3af" };
+        const ordered = [...REL_ORDER].filter((k) => counts[k] > 0);
+        for (const k of Object.keys(counts)) {
+          if (!ordered.includes(k)) ordered.push(k);
+        }
+        ordered.sort((a, b) => (counts[b] || 0) - (counts[a] || 0));
+        let html = "";
+        for (const k of ordered) {
+          const n = counts[k] || 0;
+          const pct = ((n / total) * 100).toFixed(1);
+          const w = (n / total) * 100;
+          const cls = "rel-" + (["IND", "EQV", "NSO", "OSN", "CON", "UNKNOWN", "ERROR"].includes(k) ? k : "UNKNOWN");
+          const bg = barColors[k] || barColors.UNKNOWN;
+          html += `<div class="rel-bar-row"><span class="rel-tag ${cls}">${esc(k)}</span><div class="bar" title="${n} (${pct}%)"><i style="width:${w}%;background:${bg}"></i></div><span>${n} (${pct}%)</span></div>`;
+        }
+        return html;
+      }
+
+      function renderRelationDetailsTable(byRel, counts) {
+        const keys = Object.keys(counts).sort((a, b) => (counts[b] || 0) - (counts[a] || 0));
+        let html = "";
+        for (const k of keys) {
+          const n = counts[k] || 0;
+          const rows = byRel[k] || [];
+          const capNote = n > rows.length ? `（仅缓存 ${rows.length} 条，共 ${n} 条）` : `（${n} 条）`;
+          const tagCls = ["IND", "EQV", "NSO", "OSN", "CON", "UNKNOWN", "ERROR"].includes(k) ? k : "UNKNOWN";
+          html += `<details class="rel-pairs"><summary><span class="rel-tag rel-${tagCls}">${esc(k)}</span> ${esc(capNote)}</summary>`;
+          for (const r of rows) {
+            const ep = r.episode ? `${esc(r.episode)} · ` : "";
+            html += `<div class="pair-row">
+              <div class="lbl">${ep}${esc(r.interaction_id || "—")}</div>
+              <div class="lbl">OLD</div><div class="txt">${esc(r.m_old || "（无法解析）")}</div>
+              <div class="lbl" style="margin-top:0.35rem">NEW</div><div class="txt">${esc(r.m_new || "（无法解析）")}</div>
+            </div>`;
+          }
+          html += `</details>`;
+        }
+        return html || "";
+      }
+
+      function showGlobalRelationPanel(stats) {
+        const panel = $("globalRelPanel");
+        const bars = $("globalRelBars");
+        const det = $("globalRelDetails");
+        const hint = $("globalRelHint");
+        if (!stats || !stats.total) {
+          panel.style.display = "block";
+          bars.innerHTML = "";
+          det.innerHTML = "";
+          hint.textContent = "未在已选文件中发现 relmem_classify_relation（或文件尚未解析）。";
+          return;
+        }
+        panel.style.display = "block";
+        hint.textContent = `共 ${stats.total} 次关系分类（跨已选文件）。下表按类型展开可查看 OLD/NEW fact（每类最多缓存 ${MAX_PAIRS_PER_REL} 条）。`;
+        bars.innerHTML = renderRelationBars(stats.counts, stats.total);
+        det.innerHTML = renderRelationDetailsTable(stats.byRel, stats.counts);
+      }
+
+      async function refreshGlobalRelationStats() {
+        const panel = $("globalRelPanel");
+        if (!episodes.length) {
+          panel.style.display = "none";
+          return;
+        }
+        panel.style.display = "block";
+        $("globalRelBars").innerHTML = '<p class="hint-small">正在统计全部文件…</p>';
+        $("globalRelDetails").innerHTML = "";
+        $("globalRelHint").textContent = "扫描中…";
+        try {
+          const files = episodes.map((e) => e.file);
+          const stats = await aggregateGlobalRelationStats(files);
+          showGlobalRelationPanel(stats);
+        } catch (e) {
+          $("globalRelHint").textContent = "统计失败：" + String(e);
+        }
+      }
+
+      /**
+       * @param {any[]} rows
+       * @param {string} episodeLabel
+       */
+      function groupRelmemRows(rows, episodeLabel) {
+        const byRel = {};
+        const counts = {};
+        for (const r of rows) {
+          counts[r.label] = (counts[r.label] || 0) + 1;
+          if (!byRel[r.label]) byRel[r.label] = [];
+          if (byRel[r.label].length < MAX_PAIRS_PER_REL) {
+            byRel[r.label].push({ ...r, episode: episodeLabel });
+          }
+        }
+        return { byRel, counts };
+      }
+
+      function renderEvents(data, episodeName) {
+        const { mem, llm, scopes, relmem } = data;
+        let html = "";
+
+        const rm = relmem || [];
+        if (rm.length) {
+          const { byRel, counts } = groupRelmemRows(rm, episodeName);
+          const total = rm.length;
+          html += `<div class="rel-panel"><h3>本文件 · RelMem 关系分布</h3>`;
+          html += `<p class="hint-small">从 <code>relmem_classify_relation</code> 解析共 ${total} 次；按类型展开查看 OLD / NEW。</p>`;
+          html += `<div class="rel-bars">${renderRelationBars(counts, total)}</div>`;
+          html += `<div>${renderRelationDetailsTable(byRel, counts)}</div></div>`;
+        }
+
+        if (scopes.length) {
+          html += `<div class="subhead">Scope（${scopes.length}）</div>`;
+          for (const s of scopes) {
+            const pur = s.purpose || s.metadata?.purpose || "";
+            html += `<div class="scope-block"><strong>${s.event_type}</strong> · ${pur} · <span class="mono">${s.scope_id || ""}</span></div>`;
+          }
+        }
+
+        if (llm.length) {
+          html += `<div class="subhead">LLM（${llm.length}）</div>`;
+          for (const L of llm) {
+            const purpose = L.purpose || "";
+            const st = L.status || "";
+            html += `<div class="llm-block"><strong>${purpose}</strong> ${st ? "· " + st : ""}`;
+            html += `<details class="row-detail"><summary>request / response</summary><pre>${esc(fmt(L.request))}\n\n---\n\n${esc(fmt(L.response))}</pre></details></div>`;
+          }
+        }
+
+        html += `<div class="subhead">Memory 操作（${mem.length}）</div>`;
+        if (!mem.length) {
+          html += `<p class="hint">无匹配事件（请勾选「memory_operation」或放宽 DEDUPE 过滤）。</p>`;
+        } else {
+          html += `<table class="op-table"><thead><tr><th>操作</th><th>memory_id</th><th>状态</th><th>scope</th><th>摘要 / 元数据</th></tr></thead><tbody>`;
+          for (const ev of mem) {
+            const op = (ev.operation || "").toUpperCase();
+            const mid = ev.memory_id != null ? String(ev.memory_id) : "—";
+            const st = ev.status || "—";
+            const sid = ev.scope_id || "—";
+            const meta = ev.metadata && Object.keys(ev.metadata).length ? fmt(ev.metadata) : "";
+            const summ = ev.summary || "";
+            html += `<tr><td><span class="op-tag ${opClass(op)}">${esc(op)}</span></td><td class="mono">${esc(mid)}</td><td>${esc(st)}</td><td class="mono">${esc(sid)}</td><td>`;
+            if (summ) html += `<div>${esc(summ)}</div>`;
+            if (meta) html += `<details class="row-detail"><summary>metadata</summary><pre>${esc(meta)}</pre></details>`;
+            if (ev.before || ev.after) {
+              html += `<details class="row-detail"><summary>before / after</summary><pre>${esc(fmt({ before: ev.before, after: ev.after }))}</pre></details>`;
+            }
+            html += `</td></tr>`;
+          }
+          html += `</tbody></table>`;
+        }
+
+        content.innerHTML = `<h2 style="margin:0 0 0.5rem;font-size:1rem;">${esc(episodeName)}</h2>` + html;
+      }
+
+      function esc(s) {
+        if (s == null) return "";
+        const d = document.createElement("div");
+        d.textContent = String(s);
+        return d.innerHTML;
+      }
+
+      async function loadEpisode(idx) {
+        if (idx < 0 || idx >= episodes.length) return;
+        activeIdx = idx;
+        Array.from(epList.querySelectorAll("li")).forEach((el, i) => {
+          el.classList.toggle("active", i === idx);
+        });
+        const { name, file } = episodes[idx];
+        setStatus(`正在流式解析 ${name}…`);
+        content.innerHTML = "";
+        try {
+          const data = await parseTraceFile(file);
+          const rc = (data.relmem && data.relmem.length) || 0;
+          setStatus(`${name}：扫描约 ${data.lineCount} 行 → memory_op ${data.mem.length} 条` + (fLlm.checked ? `，LLM ${data.llm.length}` : "") + (fScope.checked ? `，scope ${data.scopes.length}` : "") + `，RelMem 关系 ${rc} 条`);
+          renderEvents(data, name);
+        } catch (e) {
+          setStatus(String(e), true);
+          content.innerHTML = "";
+        }
+      }
+
+      function buildEpisodeList(files) {
+        const list = [];
+        for (const f of files) {
+          if (!f.name.toLowerCase().endsWith(".jsonl")) continue;
+          const path = f.webkitRelativePath || f.name;
+          const base = path.split("/").pop() || f.name;
+          list.push({ name: base.replace(/\.jsonl$/i, ""), file: f, sortKey: path });
+        }
+        list.sort((a, b) => a.sortKey.localeCompare(b.sortKey, undefined, { numeric: true }));
+        episodes = list.map(({ name, file }) => ({ name, file }));
+      }
+
+      function refreshList() {
+        const q = (epFilter.value || "").trim().toLowerCase();
+        epList.innerHTML = "";
+        episodes.forEach((ep, i) => {
+          if (q && !ep.name.toLowerCase().includes(q)) return;
+          const li = document.createElement("li");
+          li.textContent = ep.name;
+          li.title = ep.file.name;
+          li.addEventListener("click", () => loadEpisode(i));
+          if (i === activeIdx) li.classList.add("active");
+          epList.appendChild(li);
+        });
+      }
+
+      $("folder").addEventListener("change", (e) => {
+        const inp = e.target;
+        const files = inp.files;
+        if (!files || !files.length) return;
+        buildEpisodeList(files);
+        epFilter.disabled = false;
+        activeIdx = -1;
+        refreshList();
+        setStatus(`已加载 ${episodes.length} 个 trace 文件，点击左侧 episode 查看。`);
+        content.innerHTML = "";
+        refreshGlobalRelationStats();
+      });
+
+      $("files").addEventListener("change", (e) => {
+        const inp = e.target;
+        const files = inp.files;
+        if (!files || !files.length) return;
+        buildEpisodeList(files);
+        epFilter.disabled = false;
+        activeIdx = -1;
+        refreshList();
+        setStatus(`已加载 ${episodes.length} 个 trace 文件。`);
+        content.innerHTML = "";
+        refreshGlobalRelationStats();
+      });
+
+      epFilter.addEventListener("input", () => refreshList());
+
+      function refilterReload() {
+        if (activeIdx < 0) return;
+        loadEpisode(activeIdx);
+      }
+      [fMem, fDedupe, fLlm, fScope].forEach((el) => el.addEventListener("change", refilterReload));
+    })();
+  </script>
+</body>
+</html>

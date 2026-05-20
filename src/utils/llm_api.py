@@ -32,6 +32,7 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		# deepseek
 		"deepseek-v3": "deepseek-chat",
 		"deepseek-r1": "deepseek-reasoner",
+		"deepseek-v4-flash": "deepseek-v4-flash",
 	}
 	model_name_openai = {
 		# openai
@@ -39,7 +40,8 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"gpt-4o": "gpt-4o",
 		"gpt-3.5-turbo": "gpt-3.5-turbo-0125",
 		"gpt-4.1": "gpt-4.1",
-		"gpt-4.1-nano": "gpt-4.1-nano"
+		"gpt-4.1-nano": "gpt-4.1-nano",
+		"gpt-5.4": "gpt-5.4",
 	}
 	model_name_01 = {
 		"yi-large": "yi-large",
@@ -57,17 +59,28 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"Qwen2.5-7B-Instruct": "Qwen2.5-7B-Instruct",
 		"qwen3-moe": "qwen3-moe",
 		"Qwen3-8B": "Qwen3-8B",
-		"qwen3-32b": "Qwen3-32B", 
+		"Qwen3-32B": "Qwen3-32B", 
 		"Qwen3-4B": "Qwen3-4B",
 		"qwen3-30b-moe": "qwen3-30b-moe",
 		"Qwen3.5-27B-FP8": "Qwen3.5-27B-FP8",
-		"Qwen3.5-27B": "Qwen3.5-27B"
+		"Qwen3.5-27B": "Qwen3.5-27B",
+		"Qwen3-30B": "Qwen3-30B-A3B-Thinking-2507",
+		"gemma4-26B": "gemma-4-26B-A4B-it",
+		"gemma4-31B": "gemma-4-31B-it",
 	}
 
 	if model_name in list(model_name_vllm.keys()):
+		model_orig_name = model_name
 		model_name = model_name_vllm[model_name]
-		api_key = _get_required_env("VLLM_API_KEY")
-		base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1/")
+		api_key = os.getenv("VLLM_API_KEY", "EMPTY")
+		
+		# Allow reading VLLM_{MODEL}_PORT or PORT_{MODEL} from .env for dynamic port assignment
+		env_model_name = model_orig_name.upper().replace("-", "_").replace(".", "_")
+		model_specific_port = os.getenv(f"PORT_{env_model_name}") or os.getenv(f"VLLM_{env_model_name}_PORT")
+		if model_specific_port:
+			base_url = f"http://localhost:{model_specific_port}/v1/"
+		else:
+			base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1/")
 	# elif model_name == "qwen3-32b":
 	#     api_key = "mem"
 	#     base_url = "http://10.0.2.219:1146/v1"

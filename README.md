@@ -1,19 +1,37 @@
 # easy-mem
 
-在长对话记忆评测基准上，统一对比多种记忆策略（RAG、全上下文、Mem0、AMem 等）的实验框架。流水线负责：**加载基准数据 → 写入/检索记忆 → 标准 Agent 答题 → 输出 JSONL**，并可选地用 LLM Judge 打分。
+在长对话记忆评测基准上，对比 **LME 候选记忆抽取 → 灌库 → 混合检索答题** 等流程的实验框架。完整实验通常由 **[`script/run_exp.sh`](script/run_exp.sh)** 编排（候选抽取 → 灌库 → 生成 → LLM Judge；脚本头部注明了可选 HTML 对照等步骤）。
+
+手工单步跑时，核心仍是：**加载基准数据 → 写入/检索记忆 → 标准 Agent 答题 → 输出 JSONL**，并可选用 LLM Judge 写回评分。
 
 ## 环境要求
 
 - **Python** ≥ 3.12  
-- 依赖见 [`pyproject.toml`](pyproject.toml)（FAISS、OpenAI 兼容客户端、Transformers、vLLM 等）  
-- 推荐使用 [uv](https://github.com/astral-sh/uv) 安装：
+- 依赖见 [`pyproject.toml`](pyproject.toml)（FAISS、OpenAI 兼容客户端、Transformers、Jinja2、**Graphiti + Kuzu**（Zep 灌库路径）、pytest 等）。对话/向量 **vLLM 服务在运行时按需单独部署**，不必写进 `pyproject.toml`。  
+- 推荐使用 [uv](https://github.com/astral-sh/uv)：
 
 ```bash
-cd easy_mem
+cd /path/to/fact_memory   # 仓库根目录（含 pyproject.toml）
 uv sync
+source .venv/bin/activate   # 可选；等价于对单次命令使用 uv run ...
 ```
 
-在项目根目录执行后续命令；生成/评测脚本通过 `python src/...` 运行，解释器会把 `src/` 加入模块搜索路径。
+运行时请将 **`PYTHONPATH` 包含 `src`**（`run_exp.sh` 已 `export PYTHONPATH=src`；手工执行时请 `export PYTHONPATH=src` 或使用 `python -m` 等在项目内约定的方式）。
+
+## 推荐入口：一键实验 `run_exp.sh`
+
+主入口为 **[`script/run_exp.sh`](script/run_exp.sh)**（配置 **[`script/run_exp.config.yaml`](script/run_exp.config.yaml)**）。典型用法：
+
+```bash
+# 仓库根目录
+./script/run_exp.sh
+RUN_EXP_CONFIG=/path/to/custom.yaml ./script/run_exp.sh
+./script/run_exp.sh --config script/run_exp.config.yaml   # 仍可附加参数，透传给生成阶段
+```
+
+脚本内可调变量（模型名、`benchmark`、`candidate_suffix`、检索与 Judge 等）见 `run_exp.sh` 注释；并行度、token 上限、Jinja 模板名等多在 YAML 中。
+
+**变体：** 若灌库已完成，只需在已有 Zep 库上生成 + Judge，可用 **[`script/run_exp_zep.sh`](script/run_exp_zep.sh)**（支持 `RUN_EXP_ZEP_SKIP_GENERATE=1` 等，见脚本头注释）。
 
 ## 配置与密钥
 
@@ -25,86 +43,93 @@ uv sync
 | 向量服务（OpenAI 兼容） | `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY` | 生成流水线里 embedding 调用；也可用 CLI `--embedding_base_url` / `--embedding_api_key` 覆盖 |
 | 通义千问等云端模型 | `DASHSCOPE_API_KEY` 等 | 见 `llm_api.py` 中各 provider 分支 |
 
-具体模型别名（如 `Qwen3.5-27B`、`qwen3-max`）以 `src/utils/llm_api.py` 为准。
+具体模型别名（如 `gemma4-26B`、`qwen3-max`）以 [`src/utils/llm_api.py`](src/utils/llm_api.py) 为准。
 
 ## 数据
 
-预处理后的 JSON 需放在 `data/preprocessed/`。[`pipeline_generate.py`](src/pipeline_generate.py) 内置的 `benchmark` 名称与默认文件对应关系包括：
+预处理/原始数据按 [`src/benchmark/datasets.py`](src/benchmark/datasets.py) 中 **`DEFAULT_BENCHMARK_DATASETS`** 解析。内置 `--benchmark` 与默认文件如下（也可用 `--benchmark_file` 指定任意兼容 JSON；语言可用 `--language zh|en` 覆盖默认值）。
 
-| `--benchmark` | 默认数据文件 | 语言 |
-|---------------|----------------|------|
+| `--benchmark` | 默认数据文件 | 默认语言 |
+|-----------------|--------------|----------|
 | `test` | `data/preprocessed/test.json` | zh |
-| `lme_oracle` | `data/preprocessed/longmemeval_oracle_converted.json` | en |
-| `lme_s` | `data/preprocessed/longmemeval_s_cleaned.json` | en |
-| `locomo` | `data/preprocessed/locomo10_converted.json` | en |
+| `lme_o` | `data/preprocessed/longmemeval_oracle_converted.json` | en |
+| `lme_s` | `data/preprocessed/longmemeval_s_cleaned_converted.json` | en |
+| `lme_m` | `data/preprocessed/longmemeval_m_cleaned_converted.json` | en |
+| `locomo` | `data/raw_data/locomo10.json` | en |
 | `lmb_event` | `data/preprocessed/LifeMemBench_event.json` | zh |
 | `emb_event` | `data/preprocessed/EgoMemBench_event_half.json` | en |
 
-也可用 `--benchmark_file` 指定任意兼容格式的 JSON 文件；语言可用 `--language zh|en` 覆盖。
+## 记忆方法与生成（`pipeline_generate.py`）
 
-## 记忆方法（`--method`）
+答题阶段当前通过 [`memory.get_memory_system`](src/memory/__init__.py) 仅注册 **`lme_prebuilt`**：在 **`ingest_candidates.py`** 等步骤预先写入向量与元数据后，由 **`pipeline_generate.py`** 以 **`--method lme_prebuilt --prebuilt-memory`**（及混合检索相关 flags）从 `--database_root` 读取。
 
-[`memory.get_memory_system`](src/memory/__init__.py) 支持：
+向量库存储路径由 `--database_root` 等参数决定；`run_exp.sh` 中与灌库脚本约定目录布局。详见 `pipeline_generate.py --help`。
 
-- **`rag`** — 按粒度切分后向量检索  
-- **`full_context`** — 全历史上下文  
-- **`only_query`** — 仅当前问题，无记忆  
-- **`mem0` / `amem`** — 需 `--manager_model`，由 LLM 管理记忆并配合向量库  
+## 启动模型服务（示例脚本）
 
-向量库存储根目录可由 `--database_root` 指定；默认按 benchmark 与方法名自动组织。`--rebuild-memory` 可强制清空并重灌。
+仓库内 shell 仅供参考，**路径、GPU、端口需按本机修改**：
 
-## 运行流程
+| 脚本 | 用途 |
+|------|------|
+| [`script/0_run_embedding.sh`](script/0_run_embedding.sh) | vLLM `--task embed`（示例） |
+| [`script/0_run_model.sh`](script/0_run_model.sh) | vLLM OpenAI 兼容对话服务（示例） |
+| [`script/0_run_embedding_ppu.sh`](script/0_run_embedding_ppu.sh) | 另一套 embedding 启动示例 |
+| [`script/0_run_model_ppu_*.sh`](script/) | 多模型规模对话服务示例 |
+| [`script/0_run_reranker_ppu.sh`](script/0_run_reranker_ppu.sh) | Qwen3 Reranker（`run_exp.sh` 中 `--rerank-qwen3-vllm` 时需先启动） |
 
-### 1. 启动模型服务（示例）
+## 手工调用（不跑 `run_exp.sh` 时）
 
-仓库内脚本仅为参考，路径与 GPU 需按本机修改：
+### 生成（`src/pipeline_generate.py`）
 
-- **Embedding**：[`script/0_run_embedding.sh`](script/0_run_embedding.sh) — vLLM `--task embed`  
-- **对话模型**：[`script/0_run_model.sh`](script/0_run_model.sh) — vLLM serve  
-
-### 2. 生成预测（`pipeline_generate.py`）
-
-示例见 [`script/1_generate.sh`](script/1_generate.sh)。核心参数：
-
-- `--benchmark`、`--output`  
-- `--method`、`--answer_model`  
-- `mem0`/`amem`：`--manager_model`  
-- `--embedding_model`、`--embedding_base_url`、`--embedding_api_key`  
-- `--retrieve_topk`、`--memory_token_limit`、`--memory_granularity`（`all` 或正整数，表示每 N 轮一组）  
-- `--parallel_episodes` 并行 episode 数；`--agent_trace_dir` 可传空字符串关闭 trace  
+常用参数包括：`--benchmark`、`--output`、`--method lme_prebuilt`、`--prebuilt-memory`、`--database_root`、`--answer_model`、`--embedding_model`、混合检索与 `--retrieve_topk`、`--memory_token_limit` 等。
 
 ```bash
+export PYTHONPATH=src
 uv run python src/pipeline_generate.py --help
 ```
 
-### 3. 评测（`pipeline_evaluate.py`）
+### 评测（`src/pipeline_evaluate.py`）
 
-对 JSONL 用 LLM Judge 判对错，示例见 [`script/2_evaluate.sh`](script/2_evaluate.sh)：
+对预测 JSONL 调用 LLM Judge，支持多个 `--input` 在同一进程内评测。
 
 ```bash
+export PYTHONPATH=src
 uv run python src/pipeline_evaluate.py \
   --input experiment/your_run.jsonl \
   --judge_model qwen3-max \
-  --benchmark lme \
+  --benchmark lme_s \
   --write_back
 ```
 
-`--benchmark` 可省略，脚本会尽量从样本或文件名推断（`lme` / `lmb` / `emb` / `locomo`）。
+`--benchmark` 可省略时由脚本尽量从样本或路径推断。汇总结果默认写入与输入同目录的 **`eval_judge.json`**（标准 JSON 数组；可用 **`--append_result`** 指定路径；若路径以 `.jsonl` 结尾则仍为每行一条 JSON）。需要表格可加 `--csv`。
 
-汇总结果默认追加到 `experiment/eval_judge.jsonl`（每行一条 JSON）；若需表格对比可加 `--csv experiment/eval_summary.csv`，与 F1 脚本共用同一 CSV 列结构。Token 级 F1/EM 使用 `src/pipeline_evaluate_f1.py`，默认写入 `experiment/eval_f1.jsonl`，同样支持 `--csv`。
+### 候选抽取与灌库（与 `run_exp.sh` 一致的子步骤）
+
+- [`src/pipeline/extract_candidates.py`](src/pipeline/extract_candidates.py) — 候选记忆抽取  
+- [`src/pipeline/ingest_candidates.py`](src/pipeline/ingest_candidates.py) — 多种 `--update-method`（如 `zep`；见 CLI `--help`）  
+- [`src/pipeline/fuse_lme_memory_bundles.py`](src/pipeline/fuse_lme_memory_bundles.py) — 关系包融合（完整流水线里部分步骤可按需启用）
 
 ## 项目结构（摘要）
 
 ```
 src/
-  agent/           # 标准答题 Agent
-  benchmark/       # LME、LoCoMo、事件类基准加载
-  memory/          # 记忆系统与本地 FAISS 存储
-  prompts/         # Judge 等模板
+  agent/              # 标准答题 Agent
+  benchmark/          # LME、LoCoMo、事件类基准与默认数据路径
+  memory/             # 记忆抽象与 lme_prebuilt 实现（baselines/ 等）
+  pipeline/           # extract_candidates、ingest_candidates、fuse 等
+  prompts/            # Jinja 模板（抽取 / Judge 等）
+  utils/              # llm_api、env、评测汇总等
   pipeline_generate.py
   pipeline_evaluate.py
-  pipeline_evaluate_f1.py
-script/            # 启动模型与批处理示例
-test/              # pytest
+viewer/               # 实验可视化 HTML 构建脚本（可选）
+script/               # run_exp.sh、模型启动示例、辅助脚本
+test/                 # pytest
+experiment/           # 实验输出（jsonl、eval_judge.json 等，按运行生成）
 ```
 
+## 测试
+
+```bash
+source .venv/bin/activate
+pytest
+```

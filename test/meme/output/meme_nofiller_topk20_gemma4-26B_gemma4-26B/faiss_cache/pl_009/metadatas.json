@@ -1,0 +1,146 @@
+[
+  {
+    "entity": "hobby",
+    "value": "cooking",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "vehicle",
+    "value": "Zyvanta Sedan",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "medication",
+    "value": "multivitamin",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "sleep_pattern",
+    "value": "irregular",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "planned_purchase",
+    "value": "new laptop",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "sports",
+    "value": "running club",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "vehicle",
+    "value": "Quorvel EV",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "health_condition",
+    "value": "tendinitis",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Xelvoria",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "club_membership",
+    "value": "book club",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "vehicle",
+    "value": "Vorantel SUV",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "regular_appointment",
+    "value": "tutoring session (weekly)",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "social_gathering",
+    "value": "brunch with college friends monthly",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "dietary_restriction",
+    "value": "low-sodium",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "exercise_routine",
+    "value": "pilates 3x/week",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "fitness_facility",
+    "value": "Zorathel Peak Gym",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "life_philosophy",
+    "value": "We are what we repeatedly do. Excellence, then, is not an act, but a habit. The whole is greater than the sum of its parts. We must become the change we wish to see in the world.",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "exercise_routine",
+    "value": "yoga 2x/week",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "dietary_restriction",
+    "value": "no alcohol",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "fitness_facility",
+    "value": "Crysthene Pool",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "health_condition",
+    "value": "chronic migraine",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "media_consumption",
+    "value": "The Quorath Codex (book)",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "regular_appointment",
+    "value": "tutoring session (weekly)",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "partner",
+    "value": "Jessica",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  }
+]

@@ -1,0 +1,24 @@
+---
+description: Primary experiment orchestration entry is script/run_exp.sh (LME pipeline)
+alwaysApply: true
+---
+
+# fact_memory：主入口 `script/run_exp.sh`
+
+本仓库的 **核心实验入口** 是根目录下的 **`script/run_exp.sh`**（LME 实验流水线：抽取 → 灌库 → 融合 → 生成 → Judge → HTML）。说明实验如何跑、改哪些参数时，应优先以该脚本及其配置为准，而不是只概括 `pipeline_generate.py` 等零散布命令。
+
+## 如何运行
+
+- 在仓库根目录（`repo_root`）：`./script/run_exp.sh`
+- 自定义配置：`RUN_EXP_CONFIG=/path/to/custom.yaml ./script/run_exp.sh`
+- 或：`./script/run_exp.sh --config script/run_exp.config.yaml` + 可透传给生成阶段的额外参数
+
+默认配置文件：`script/run_exp.config.yaml`（若未设置 `RUN_EXP_CONFIG` 且未传 `--config`）。
+
+## 与其它文档的关系
+
+根目录 `README.md` 描述通用流水线与示例脚本；**本仓库的实际「一键跑通 LME」路径以 `run_exp.sh` + YAML 配置为主**。改实验时优先改脚本内可调参数与 `run_exp.config.yaml`（并行、token、路径、Jinja 模板名等见 YAML 注释）。
+
+## 环境
+
+执行前仍遵守本仓库 **uv / `.venv`** 规则：先 `source .venv/bin/activate` 或在该目录使用 `uv run`，再运行上述脚本及其调用的 Python。

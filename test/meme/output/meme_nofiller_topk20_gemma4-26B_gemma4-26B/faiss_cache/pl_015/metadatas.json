@@ -1,0 +1,110 @@
+[
+  {
+    "entity": "hobby",
+    "value": "photography",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "relationship_status",
+    "value": "single",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "financial_goal",
+    "value": "paying off credit card debt",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "social_gathering",
+    "value": "pickup basketball Saturdays",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "sports",
+    "value": "running club",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "travel_plan",
+    "value": "visiting family in Corenth Hills",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "housing_type",
+    "value": "condo",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "media_consumption",
+    "value": "The Veldrakon Spiral (TV)",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "club_membership",
+    "value": "hiking club",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "dietary_restriction",
+    "value": "dairy-free",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "living_arrangement",
+    "value": "with parents",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "family_event",
+    "value": "sibling's wedding",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "life_philosophy",
+    "value": "Most people never run far enough on their first wind to find out they've got a second. Give your dreams all you've got and you'll be amazed at the energy that comes out of you.",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "living_arrangement",
+    "value": "with sibling",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "relationship_status",
+    "value": "married",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "upcoming_event",
+    "value": "concert",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "dietary_restriction",
+    "value": "dairy-free",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "meal kit (Kelvimeal)",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  }
+]

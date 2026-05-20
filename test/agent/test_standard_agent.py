@@ -23,7 +23,14 @@ class _DummyMemory:
             return render_prompt(t)
         unit = "agent_context_unit_zh.jinja" if language == "zh" else "agent_context_unit_en.jinja"
         return "\n\n".join(
-            render_prompt(unit, index=i + 1, text=r.text) for i, r in enumerate(retrieved)
+            render_prompt(
+                unit,
+                index=i + 1,
+                text=r.text,
+                time=r.time,
+                metadata=r.metadata or {},
+            )
+            for i, r in enumerate(retrieved)
         )
 
 
@@ -107,6 +114,74 @@ def test_standard_agent_sync_method_not_implemented():
             "u1",
             QuestionItem(question="q", answer="a", question_time="t"),
         )
+
+
+def test_agent_context_unit_omits_time_for_multi_member_fused():
+    """Non-single-bundle fused rows: no Time/时间 header; single-member fused and unfused keep it."""
+    from prompts import render_prompt
+
+    base_kw = dict(index=1, text="fused paragraph", time="2024-06-01")
+
+    zh_multi = render_prompt(
+        "agent_context_unit_zh.jinja",
+        **base_kw,
+        metadata={"lme_fused_bundle": True, "lme_fused_member_count": 2},
+    )
+    assert "- 时间：" not in zh_multi
+    assert "fused paragraph" in zh_multi
+
+    zh_single = render_prompt(
+        "agent_context_unit_zh.jinja",
+        **base_kw,
+        metadata={"lme_fused_bundle": True, "lme_fused_member_count": 1},
+    )
+    assert "- 时间：2024-06-01" in zh_single
+
+    zh_unfused = render_prompt(
+        "agent_context_unit_zh.jinja",
+        **base_kw,
+        metadata={},
+    )
+    assert "- 时间：2024-06-01" in zh_unfused
+
+    en_multi = render_prompt(
+        "agent_context_unit_en.jinja",
+        **base_kw,
+        metadata={"lme_fused_bundle": True, "lme_fused_member_count": 2},
+    )
+    assert "- Time:" not in en_multi
+
+    en_fallback_ids = render_prompt(
+        "agent_context_unit_en.jinja",
+        **base_kw,
+        metadata={"lme_fused_bundle": True, "lme_fused_member_ids": ["m1", "m2"]},
+    )
+    assert "- Time:" not in en_fallback_ids
+
+    en_no_time = render_prompt(
+        "agent_context_unit_en.jinja",
+        **base_kw,
+        metadata={},
+        show_time=False,
+    )
+    assert "- Time:" not in en_no_time
+    assert "fused paragraph" in en_no_time
+
+    zh_no_time = render_prompt(
+        "agent_context_unit_zh.jinja",
+        **base_kw,
+        metadata={},
+        show_time=False,
+    )
+    assert "- 时间：" not in zh_no_time
+
+    lme_zh = render_prompt(
+        "lme_memory_context_unit_zh.jinja",
+        **base_kw,
+        metadata={"lme_fused_bundle": True, "lme_fused_member_count": 3},
+        attached_evidence=[],
+    )
+    assert "- 时间：" not in lme_zh
 
 
 @pytest.mark.asyncio

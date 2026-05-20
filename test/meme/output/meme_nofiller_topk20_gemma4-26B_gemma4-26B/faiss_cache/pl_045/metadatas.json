@@ -1,0 +1,134 @@
+[
+  {
+    "entity": "hobby",
+    "value": "cooking",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Xelvoria",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "dietary_restriction",
+    "value": "no alcohol",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "relationship_status",
+    "value": "in a relationship",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "partner",
+    "value": "James",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "sports",
+    "value": "volleyball",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Zorvista Premium",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "housing_type",
+    "value": "one-bedroom apartment",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "family_event",
+    "value": "family reunion",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "media_consumption",
+    "value": "The Veldrakon Spiral (TV)",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "club_membership",
+    "value": "wine tasting club",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Daily Journal subscription",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "financial_goal",
+    "value": "building emergency fund",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "social_gathering",
+    "value": "game night with neighbors",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "living_arrangement",
+    "value": "with partner and child",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "travel_plan",
+    "value": "mountain ski trip",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "life_philosophy",
+    "value": "Most people never run far enough on their first wind to find out they've got a second. Give your dreams all you've got and you'll be amazed at the energy that comes out of you.",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "travel_plan",
+    "value": "no travel planned",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "relationship_status",
+    "value": "married",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "upcoming_event",
+    "value": "company offsite",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "dietary_restriction",
+    "value": "no alcohol",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "planned_purchase",
+    "value": "road bike",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  }
+]

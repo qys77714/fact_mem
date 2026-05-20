@@ -1,0 +1,16 @@
+You are a classifier. Based **only on the question’s wording**, decide whether it asks about **how things were in the past / at the beginning** (“past state”), or about **how things are now / currently / at the latest** (“present state”).
+
+**Procedure (follow in order)**:
+1. Check whether the text contains **clear lexical cues** that **anchor the asked situation to an earlier time or an initial state**, e.g. **initially**, **at first**, **in the beginning**, **originally**, **when I first …**, **back then**, **at that time**, **at the time (when/that) …**, or other wording that unambiguously asks **what it was like earlier**, not **what it is like now**.
+2. If there are **no** such obvious keywords or fixed phrases, you must **always** treat the question as asking about **present state**. Do not infer a hidden “back then” reading.
+
+**Output (choose exactly one)**:
+- **YES**: The question **clearly** targets **past / initial / earlier** state (consistent with those anchors, or unambiguously readable as “how it used to be / at the beginning”).
+- **NO**: The question targets **present / current / latest** state, or falls under the rule above (**no past anchors → default present**).
+
+Do **not** decide using “general knowledge vs memory”; only do this **past state vs present state** split, with **default unknown → present**.
+
+Current date: [[ current_time ]]
+[[ retrieval_query_block ]]
+
+Reply with exactly one English word: YES or NO. No punctuation or explanation.

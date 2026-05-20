@@ -22,7 +22,7 @@ class RetrievedMemory:
     time: str              # 该记忆代表的时间
     score: float           # 检索相似度得分
     metadata: Dict[str, Any] = field(default_factory=dict) # 其他相关元信息
-    # RelMem：检索到的 primary 上附带的 evidence（可嵌套；仅用于上下文拼装，不参与向量检索）
+    # 检索到的 primary 上附带的 evidence（可嵌套；仅用于上下文拼装，不参与向量检索）
     attached_evidence: List["RetrievedMemory"] = field(default_factory=list)
 
 class BaseMemorySystem:
@@ -34,7 +34,7 @@ class BaseMemorySystem:
         self, 
         embed_client=None, 
         embed_model_name: str = "default",
-        llm_client=None,                 # 有的Memory系统(如 amem)由于需要在存入前压缩反思，因此持有生成模型 client
+        llm_client=None,                 # LLM 管理类记忆系统在写入前调用 chat completion，需持有 client
         database_root: Optional[str] = None
     ):
         self.embed_client = embed_client
@@ -47,7 +47,7 @@ class BaseMemorySystem:
         接收一条新会话并将其结构化地存入记忆系统。
         不同系统有不同切分策略：
         - RAG系统：往往将每一次 turn 作为一条记录直接存入，或者每 N 个 turn 切分为一条块。
-        - AMem系统 / Mem0系统：调用 LLM 对 Session 进行反思，抽取出 Insight 之后再存入。
+        - 结构化记忆系统：可调用 LLM 从 Session 抽取事实后再写入向量库。
         
         :param history_name: 用户或该段对话历史的 ID (如: conv-26 或 user_1)
         :param session_idx: 该会话在整个对话生命周期中的序号
@@ -106,14 +106,12 @@ class BaseMemorySystem:
     ) -> str:
         """
         构建用于 embedding 的文本。子类可重写以自定义策略。
-        - mem0: 仅 text
-        - amem: text + metadata (context, keywords, tags, summary)
-        - RAG: 仅 text
+        默认仅使用 text；子类可附加 metadata 等。
         """
         return text
 
     def format_retrieved_for_context(
-        self, retrieved: List[RetrievedMemory], language: str = "zh"
+        self, retrieved: List[RetrievedMemory], language: str = "zh", show_time: bool = True
     ) -> str:
         """
         将检索到的记忆列表组装成用于回答问题的 context_block 字符串。
@@ -131,7 +129,14 @@ class BaseMemorySystem:
 
         unit_template = "agent_context_unit_zh.jinja" if language == "zh" else "agent_context_unit_en.jinja"
         context_lines = [
-            render_prompt(unit_template, index=idx + 1, text=item.text)
+            render_prompt(
+                unit_template,
+                index=idx + 1,
+                text=item.text,
+                time=item.time,
+                metadata=item.metadata or {},
+                show_time=show_time,
+            )
             for idx, item in enumerate(retrieved)
         ]
         return "\n\n".join(context_lines)

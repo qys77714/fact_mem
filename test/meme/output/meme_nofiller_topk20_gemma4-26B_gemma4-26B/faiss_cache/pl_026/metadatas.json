@@ -1,0 +1,128 @@
+[
+  {
+    "entity": "hobby",
+    "value": "guitar",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Thyranote",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "residence_location",
+    "value": "Zaravel Heights",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "regular_appointment",
+    "value": "tutoring session (weekly)",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "social_gathering",
+    "value": "trivia night Wednesdays",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "sports",
+    "value": "pickleball",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "meal kit (Kelvimeal)",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "commute_duration",
+    "value": "15 min",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "planned_purchase",
+    "value": "road bike",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "club_membership",
+    "value": "cycling club",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Pyrethon Plus",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "favorite_restaurant",
+    "value": "Quirenth Leaf Cafe",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "partner",
+    "value": "Jordan",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "commute_method",
+    "value": "bike",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "fitness_facility",
+    "value": "Thandrel YMCA",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "life_philosophy",
+    "value": "In three words I can sum up everything I've learned about life: it goes on. You'll have bad times, but it will always wake you up to the stuff you weren't paying attention to.",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "commute_method",
+    "value": "subway",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "residence_location",
+    "value": "Velturis Glen",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "media_consumption",
+    "value": "Thyrelion (anime)",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "regular_appointment",
+    "value": "tutoring session (weekly)",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "upcoming_event",
+    "value": "friend's wedding",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  }
+]

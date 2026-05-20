@@ -42,20 +42,32 @@ class StandardAgent(BaseAgent):
         memory_token_limit: int = 2048,
         language: str = "zh",
         trace_log_dir: Optional[str] = None,
+        trace_method: str = "agent",
         answer_concurrency: int = 2,
+        show_time: bool = True,
     ):
         self.memory_system = memory_system
         self.chat_model = chat_model
         self.memory_token_limit = memory_token_limit
         self.language = language
         self.answer_concurrency = max(1, int(answer_concurrency))
+        self.show_time = show_time
+        # Per-episode files under log_dir (e.g. ``{history_name}.jsonl``); resume/cleanup aligns with pred JSONL.
         self.trace: Optional[MemoryTraceLogger] = (
-            MemoryTraceLogger(method="agent", log_dir=trace_log_dir) if trace_log_dir else None
+            MemoryTraceLogger(
+                method=trace_method,
+                log_dir=trace_log_dir,
+                use_experiment_naming=True,
+            )
+            if trace_log_dir
+            else None
         )
 
         if AutoTokenizer is not None:
-            # 默认使用 Qwen tokenizer 近似统计
-            self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                "/mnt/data_oss/models/Qwen3-8B",
+                trust_remote_code=True,
+            )
         else:
             self.tokenizer = None
 
@@ -85,10 +97,8 @@ class StandardAgent(BaseAgent):
         trace_data: List[tuple] = []
 
         for q in questions:
-            # 1. 构造用于去数据库里检索的真实查询语句（可以带上时间增强）
-            q_for_retrieval = (
-                f"- 当前日期: {q.question_time}\n" if self.language == "zh" else f"- Current Date: {q.question_time}\n"
-            ) + (f"- 问题: {q.question}" if self.language == "zh" else f"- Question: {q.question}")
+            # 1. 检索 query：仅用问题正文
+            q_for_retrieval = q.question
 
             # 2. 调用具体的 memory subsystem 进行取回
             retrieved: List[RetrievedMemory] = self.memory_system.retrieve(
@@ -100,7 +110,7 @@ class StandardAgent(BaseAgent):
 
             # 3. 将取回的所有背景组合（由 memory_system 自定义组装方式，可包含 text/time/metadata）
             context_block = self.memory_system.format_retrieved_for_context(
-                retrieved, language=self.language
+                retrieved, language=self.language, show_time=self.show_time
             )
 
             # 4. 根据模型上限截断上下文（保险措施）
@@ -129,8 +139,9 @@ class StandardAgent(BaseAgent):
 
         # 7. 每道题一条日志（问题、检索记忆、prompt、response）
         if self.trace:
+            ep_trace = self.trace.get_logger_for(history_name)
             for (q, retrieved, prompt), resp in zip(trace_data, responses):
-                self.trace.log_question_answer(
+                ep_trace.log_question_answer(
                     history_name=history_name,
                     question_id=str(q.metadata.get("question_id", history_name)),
                     question=q.question,

@@ -1,0 +1,55 @@
+# Task
+
+Compare two facts.
+
+- `NEW FACT`: one atomic candidate fact extracted from a multi-turn dialogue.
+- `OLD FACT`: one existing memory that may or may not describe the same thing.
+
+## Label Set (Return Exactly One)
+
+- `EQV`: the two facts are semantically equivalent and have the same truth conditions.
+- `NSO`: `OLD FACT` strictly entails `NEW FACT`, so the new fact is weaker, broader, or less specific.
+- `OSN`: `NEW FACT` strictly entails `OLD FACT`, so the new fact is stronger, narrower, or more specific.
+- `CON`: the two facts cannot both be true in the same interpretation.
+- `IND`: the facts can both be true, are only loosely related, or have no entailment relation.
+
+## Decision Process
+
+1. Check whether the two facts are about the same entity, or about entities that can be clearly aligned. If not, choose `IND`.
+2. If they are about the same aligned entity and they are mutually inconsistent, choose `CON`.
+3. If they entail each other, choose `EQV`.
+4. If only `OLD FACT` entails `NEW FACT`, choose `NSO`.
+5. If only `NEW FACT` entails `OLD FACT`, choose `OSN`.
+6. Otherwise, choose `IND`.
+
+## Important Constraints
+
+- Use `NSO` and `OSN` only for strict entailment, not weak association or plausible implication.
+- Modest background knowledge is allowed when it is normally treated as factual entailment (for example, geographic containment, or tighter vs. looser versions of the same claim).
+- Do not treat broad commonsense relatedness as entailment.
+- If you are unsure whether entailment truly holds, choose `IND`.
+
+## Examples (Illustrative, Not Exhaustive)
+
+- `EQV`: OLD "Alice works at Google." / NEW "Alice is employed by Google." -> `EQV` (same truth conditions, rephrased).
+- `NSO`: OLD "Alice lives in Paris." / NEW "Alice lives in France." -> `NSO` (OLD is more specific; OLD entails NEW via geographic containment, so NEW is weaker).
+- `OSN`: OLD "Alice has a pet." / NEW "Alice has a golden retriever named Max." -> `OSN` (NEW is strictly more specific and entails OLD).
+- `CON`: OLD "Alice is single." / NEW "Alice is married to Bob." -> `CON` (cannot both hold for the same entity at the same time).
+- `IND` (same entity, no entailment): OLD "Alice likes jazz." / NEW "Alice has a sister named Sue." -> `IND` (both can hold; neither entails the other).
+- `IND` (negation vs adjacent domain, not contradiction): OLD "Alice does not drink coffee." / NEW "Alice drinks tea." -> `IND` (neither entails the other).
+- `IND` (related activities, no entailment): OLD "Alice studies computer science." / NEW "Alice is a software engineer." -> `IND` (one may make the other plausible, but neither strictly entails the other).
+- `IND` (preference vs behavior, no entailment): OLD "Alice likes Italian food." / NEW "Alice often eats pizza." -> `IND` (liking a cuisine does not strictly entail a specific eating habit).
+- `IND` (same topic, different attribute): OLD "Alice's brother lives in Boston." / NEW "Alice lives in Boston." -> `IND` (the aligned entity is different: Alice's brother vs Alice).
+- `IND` (overlapping location, no strict containment): OLD "Alice works in Manhattan." / NEW "Alice lives in New York City." -> `IND` (working in a place does not entail living there).
+- `NSO` (strict containment): OLD "Alice lives in Manhattan." / NEW "Alice lives in New York City." -> `NSO` (Manhattan is contained in New York City, so OLD entails NEW).
+- `OSN` (added identifying detail): OLD "Alice has a daughter." / NEW "Alice has a daughter named Emma." -> `OSN` (NEW is strictly more specific and entails OLD).
+- `CON` (same aligned entity, incompatible values): OLD "Alice's favorite color is blue." / NEW "Alice's favorite color is red." -> `CON` (a single favorite color cannot be both blue and red in the same interpretation).
+- `IND` (different time or context may avoid contradiction): OLD "Alice lived in Paris in 2020." / NEW "Alice lives in Berlin now." -> `IND` (different times can both be true).
+- `IND` (unknown uniqueness, no contradiction): OLD "Alice has a son named Max." / NEW "Alice has a son named Leo." -> `IND` (unless uniqueness is stated, Alice could have two sons).
+- `CON` (explicit uniqueness conflict): OLD "Alice has exactly one son, named Max." / NEW "Alice has a son named Leo." -> `CON` (if Leo is not Max, the facts cannot both hold).
+
+## Output Format
+
+- Return a JSON object with exactly one key: `"relation"`.
+- The value must be one of: `IND`, `EQV`, `NSO`, `OSN`, `CON`.
+- Do not output extra keys, explanation, or prose.

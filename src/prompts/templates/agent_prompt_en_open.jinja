@@ -3,7 +3,9 @@ You are a memory-augmented assistant. Use the retrieved memory units to provide 
 [[ context_block ]]
 
 ### Question Details
+{% if question_time %}
 - Current Date: [[ question_time ]]
+{% endif %}
 - Question: [[ question ]]
 
 Please give a short answer.

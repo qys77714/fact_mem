@@ -1,0 +1,170 @@
+[
+  {
+    "entity": "hobby",
+    "value": "cooking",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Xelvoria",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "vehicle",
+    "value": "Xylorim Scooter",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "job_title",
+    "value": "senior engineer",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "upcoming_event",
+    "value": "college reunion",
+    "session_index": 0,
+    "evidence_type": "Fact Introduction (Part 1a)"
+  },
+  {
+    "entity": "sports",
+    "value": "cycling",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "meal kit (Kelvimeal)",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "employer",
+    "value": "Thalwren Inc.",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "fitness_facility",
+    "value": "Kaelstrom Fitness",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "planned_purchase",
+    "value": "gaming PC",
+    "session_index": 1,
+    "evidence_type": "Fact Introduction (Part 1b)"
+  },
+  {
+    "entity": "club_membership",
+    "value": "board game group",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "subscription_service",
+    "value": "Dranthazon",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "commute_duration",
+    "value": "40 min",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "work_schedule",
+    "value": "shift work (night)",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "partner",
+    "value": "James",
+    "session_index": 2,
+    "evidence_type": "Fact Introduction (Part 1c)"
+  },
+  {
+    "entity": "insurance",
+    "value": "interim coverage plan",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "work_project",
+    "value": "backend migration",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "work_location",
+    "value": "Thornvale Crossing",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "commute_method",
+    "value": "walking",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "favorite_restaurant",
+    "value": "Zefiro's Kitchen",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "life_philosophy",
+    "value": "Try not to become a man of success, but rather try to become a man of value. Look around at how people want to get more out of life than they put in. A man of value will give more than he receives.",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "work_location",
+    "value": "Tesswick Bay",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "work_project",
+    "value": "marketing campaign",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "commute_method",
+    "value": "bus",
+    "session_index": 3,
+    "evidence_type": "Fact Introduction (Part 2)"
+  },
+  {
+    "entity": "employer",
+    "value": "Caeltura Systems",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "social_gathering",
+    "value": "pickup basketball Saturdays",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "vehicle",
+    "value": "Xylorim Scooter",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  },
+  {
+    "entity": "media_consumption",
+    "value": "Thyrelion (anime)",
+    "session_index": 4,
+    "evidence_type": "Change+Delete Event"
+  }
+]

@@ -36,6 +36,7 @@ class Mem0MemorySystem(BaseMemorySystem):
         embed_client: Optional["OpenAI"] = None,
         database_root: Optional[str] = None,
         related_memory_top_k: int = 5,
+        related_memory_aggregate_max: int = 10,
         language: str = "en",
         granularity: Union[str, int] = "all",
         trace_log_dir: Optional[str] = None,
@@ -56,6 +57,7 @@ class Mem0MemorySystem(BaseMemorySystem):
             raise ValueError("embed_client must be provided for Mem0MemorySystem.")
             
         self.related_memory_top_k = max(1, related_memory_top_k)
+        self.related_memory_aggregate_max = max(1, int(related_memory_aggregate_max))
         self.language = language
         df = (dialogue_format or "user_assistant").strip().lower()
         if df not in ("user_assistant", "named_speakers"):
@@ -310,7 +312,7 @@ class Mem0MemorySystem(BaseMemorySystem):
         return database.search(query_embedding[0], top_k)
 
     def format_retrieved_for_context(
-        self, retrieved: List[RetrievedMemory], language: str = "zh"
+        self, retrieved: List[RetrievedMemory], language: str = "zh", show_time: bool = True
     ) -> str:
         """Mem0 自定义组装：text + time + metadata（如 turn_start/turn_end）"""
         from prompts import render_prompt
@@ -327,6 +329,7 @@ class Mem0MemorySystem(BaseMemorySystem):
                 text=item.text,
                 time=item.time,
                 metadata=item.metadata or {},
+                show_time=show_time,
             )
             for idx, item in enumerate(retrieved)
         ]
@@ -410,10 +413,11 @@ class Mem0MemorySystem(BaseMemorySystem):
         if not aggregated:
             return None, {}
                 
-        if len(aggregated) > 20:
-            # 根据 memory.score 降序排序，取前20个
+        cap = self.related_memory_aggregate_max
+        if len(aggregated) > cap:
+            # 根据 memory.score 降序排序，取前 cap 个
             sorted_items = sorted(aggregated.items(), key=lambda item: item[1].score, reverse=True)
-            selected_items = sorted_items[:20]
+            selected_items = sorted_items[:cap]
             aggregated = OrderedDict(selected_items)
 
         temp_uuid_mapping = {str(idx): memory_id for idx, memory_id in enumerate(aggregated.keys())}

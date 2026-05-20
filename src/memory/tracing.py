@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import threading
-import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +13,63 @@ import numpy as np
 def _sanitize_for_filename(s: str) -> str:
     """Replace characters unsafe for filenames."""
     return s.replace("/", "_").replace("\\", "_").replace(":", "_")
+
+
+def remove_episode_trace_jsonl_files(
+    *,
+    log_dir: str | Path,
+    method: str,
+    history_name: str,
+    use_experiment_naming: bool = True,
+) -> list[Path]:
+    """Delete per-episode JSONL trace file(s) for ``history_name`` under ``log_dir``.
+
+    Removes the path returned by ``MemoryTraceLogger.get_trace_path`` plus glob
+    ``{safe}*.jsonl`` (experiment naming) or ``{method}_{safe}*.jsonl`` (legacy naming)
+    so variants like ``{safe}_abs.jsonl`` are cleared as well.
+    """
+    log_dir = Path(log_dir)
+    if not log_dir.is_dir():
+        return []
+    root = MemoryTraceLogger(
+        method=method,
+        log_dir=str(log_dir),
+        use_experiment_naming=use_experiment_naming,
+    )
+    primary = root.get_trace_path(history_name)
+    safe = _sanitize_for_filename(history_name)
+    candidates: set[Path] = set()
+    if primary.exists():
+        candidates.add(primary)
+    if use_experiment_naming:
+        for p in log_dir.glob(f"{safe}*.jsonl"):
+            if p.is_file():
+                candidates.add(p)
+    else:
+        for p in log_dir.glob(f"{method}_{safe}*.jsonl"):
+            if p.is_file():
+                candidates.add(p)
+    removed: list[Path] = []
+    for p in sorted(candidates):
+        try:
+            p.unlink()
+            removed.append(p)
+        except OSError:
+            pass
+    return removed
+
+
+def remove_episode_trace_jsonl_files_for_logger(
+    trace_root: "MemoryTraceLogger",
+    history_name: str,
+) -> list[Path]:
+    """Same as :func:`remove_episode_trace_jsonl_files` using a root logger's settings."""
+    return remove_episode_trace_jsonl_files(
+        log_dir=trace_root.log_dir,
+        method=trace_root.method,
+        history_name=history_name,
+        use_experiment_naming=trace_root.use_experiment_naming,
+    )
 
 
 class MemoryTraceLogger:
@@ -28,7 +84,7 @@ class MemoryTraceLogger:
         use_experiment_naming: bool = False,
     ) -> None:
         self.method = method
-        self.run_id = run_id or f"{method}-{uuid.uuid4().hex[:8]}"
+        self.run_id = run_id
         self._seq = 0
         self._llm_seq = 0
         self._memop_seq = 0
@@ -44,10 +100,11 @@ class MemoryTraceLogger:
             if use_experiment_naming:
                 self.log_path = self.log_dir / f"{safe_name}.jsonl"
             else:
-                self.log_path = self.log_dir / f"{method}_{safe_name}_{self.run_id}.jsonl"
+                suffix = f"_{self.run_id}" if self.run_id else ""
+                self.log_path = self.log_dir / f"{method}_{safe_name}{suffix}.jsonl"
         else:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.log_path = self.log_dir / f"{method}_{timestamp}_{self.run_id}.jsonl"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            self.log_path = self.log_dir / f"{method}_{timestamp}.jsonl"
 
         self._trace_cache: Dict[str, "MemoryTraceLogger"] = {}
         self._lock = threading.Lock()
@@ -58,9 +115,10 @@ class MemoryTraceLogger:
         base = {
             "event_id": self._next("evt"),
             "timestamp": datetime.now().isoformat(),
-            "run_id": self.run_id,
             "method": self.method,
         }
+        if self.run_id is not None:
+            base["run_id"] = self.run_id
         base.update(payload)
         line = json.dumps(self._to_jsonable(base), ensure_ascii=False) + "\n"
         with self.log_path.open("a", encoding="utf-8") as f:
@@ -83,7 +141,8 @@ class MemoryTraceLogger:
         """Return the trace file path for a given history_name (for cleanup)."""
         if not self.use_experiment_naming:
             safe_name = _sanitize_for_filename(history_name)
-            return self.log_dir / f"{self.method}_{safe_name}_{self.run_id}.jsonl"
+            suffix = f"_{self.run_id}" if self.run_id else ""
+            return self.log_dir / f"{self.method}_{safe_name}{suffix}.jsonl"
         safe_name = _sanitize_for_filename(history_name)
         return self.log_dir / f"{safe_name}.jsonl"
 

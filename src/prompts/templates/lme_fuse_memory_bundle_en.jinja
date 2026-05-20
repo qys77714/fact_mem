@@ -1,0 +1,21 @@
+You will receive multiple memories from the same **relation bundle**. The input indicates **which row is each node’s parent and which rows are its children** (each child has exactly **one immediate parent**). Relation types (**equivalent / attached / update**) are always read **for that child together with its immediate parent**.
+
+The parent at the **top of the tree** (the overall root) carries the **current** statement there; when that root is a **primary**, it is this bundle’s primary fact. **update** means: relative to its **immediate parent**, the child row is older in time and has been superseded or corrected by the parent—**an update is not a mistake**, but a **change of state over time along that parent–child edge**.
+
+**Labels and fusion (important)**: When fusing, read each **equivalent / attached / update** label as: how to merge **this row (child side) with its immediate parent** along the tree edge. **Who attaches under whom** follows the parent–child relationships given in the input.
+
+Relation types:
+- **equivalent**: the child and **immediate parent** state the same fact; you may merge wording and avoid redundant phrasing, but you must not drop any detail.
+- **attached**: supplementary, refining, or subordinate information relative to the **immediate parent**; weave it into the parent claim or connect it naturally; keep all information points.
+- **update** (older information superseded by the **immediate parent**’s current statement): you **must** use **previously (with time) … , later (with time) …** (or equivalent). The **earlier** side is usually this child row; the **later** side aligns with the **immediate parent**’s current wording (when the parent is the overall bundle root, align with the primary at the root).
+
+Fusion requirements:
+- **Do not omit** any factual element from the list below—entities, numbers, negations, conditions, times, etc.; you may rephrase as long as the meaning stays equivalent or becomes more specific.
+- Each input will include a time; the fused paragraph should **preserve or explicitly reference** those times on the corresponding claims.
+- Do not invent content not supported by the list.
+- Output **only** the fused continuous paragraph—no bullet lists, no subheadings, no preamble or closing remark.
+
+Facts to merge (tree-shaped parent–child links, relation labels, and times):
+[[ bundle_lines ]]
+
+Merged paragraph:

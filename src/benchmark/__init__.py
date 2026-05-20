@@ -1,7 +1,9 @@
 from .base import BaseBenchmark, MemoryEpisode, ChatSession, ChatTurn, QuestionItem
+from .datasets import DEFAULT_BENCHMARK_DATASETS, resolve_benchmark_data_path
 from .locomo import LocomoBenchmark
 from .lme import LMEBenchmark
 from .event_bench import EventBenchmark
+from .meme import MEMEBenchmark
 
 def get_benchmark(task_name: str, file_path: str, lang: str = "en") -> BaseBenchmark:
     """
@@ -9,7 +11,9 @@ def get_benchmark(task_name: str, file_path: str, lang: str = "en") -> BaseBench
     """
     task_name = task_name.lower()
     
-    if task_name.startswith("lme"):
+    if task_name.startswith("meme"):
+        return MEMEBenchmark(file_path, lang=lang)
+    elif task_name.startswith("lme"):
         return LMEBenchmark(file_path, lang=lang)
     elif "locomo" in task_name:
         return LocomoBenchmark(file_path, lang=lang)
@@ -28,5 +32,8 @@ __all__ = [
     "get_benchmark",
     "LocomoBenchmark",
     "LMEBenchmark",
-    "EventBenchmark"
+    "EventBenchmark",
+    "MEMEBenchmark",
+    "DEFAULT_BENCHMARK_DATASETS",
+    "resolve_benchmark_data_path",
 ]

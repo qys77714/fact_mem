@@ -14,6 +14,7 @@ class ChatSession:
     """单次对话会话 (Session)"""
     session_date: str
     turns: List[ChatTurn]
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class QuestionItem:

@@ -17,19 +17,21 @@ from benchmark.base import MemoryEpisode, QuestionItem
 from agent.standard_agent import StandardAgent
 from memory import get_memory_system
 from memory.base import BaseMemorySystem
-from memory.tracing import _sanitize_for_filename
+from memory.tracing import (
+    MemoryTraceLogger,
+    _sanitize_for_filename,
+    remove_episode_trace_jsonl_files,
+    remove_episode_trace_jsonl_files_for_logger,
+)
 from utils.env import load_env
 from utils.llm_api import load_api_chat_completion
+from utils.question_filter import (
+    filter_question_items,
+    parse_question_types_arg,
+    stratified_sample_by_question_type,
+)
 
-
-BENCHMARK_TO_DATASET: Dict[str, Tuple[str, str]] = {
-    "test": ("data/preprocessed/test.json", "zh"),
-    "lme_o": ("data/preprocessed/longmemeval_oracle_converted.json", "en"),
-    "lme_s": ("data/preprocessed/longmemeval_s_cleaned_converted.json", "en"),
-    "locomo": ("data/raw_data/locomo10.json", "en"),
-    "lmb_event": ("data/preprocessed/LifeMemBench_event.json", "zh"),
-    "emb_event": ("data/preprocessed/EgoMemBench_event_half.json", "en"),
-}
+from benchmark.datasets import DEFAULT_BENCHMARK_DATASETS
 
 
 @dataclass
@@ -52,11 +54,30 @@ class GenerateConfig:
     agent_trace_dir: Optional[str]
     parallel_episodes: int
     rebuild_memory: bool
-    mem0_dialogue_format: str
+    dialogue_format: str
     manager_max_new_tokens: int
-    mem0_extract_concurrency: int
-    relmem_relation_concurrency: int
+    fact_extract_concurrency: int
     answer_concurrency: int
+    question_types: Optional[Set[str]]
+    prebuilt_memory: bool
+    agent_trace_label: Optional[str]
+    hybrid_bm25_dense: bool
+    hybrid_dense_weight: float
+    hybrid_bm25_weight: float
+    hybrid_pool_mult: int
+    hybrid_full_corpus_pool: bool
+    unfused_rank_database_root: Optional[str]
+    rerank_qwen3_vllm: bool
+    rerank_qwen3_vllm_base_url: Optional[str]
+    rerank_qwen3_vllm_api_key: Optional[str]
+    rerank_qwen3_vllm_model: str
+    rerank_qwen3_vllm_timeout_s: float
+    rerank_top_k: Optional[int]
+    answer_stratified_sample: int
+    answer_sample_seed: int
+    show_memory_time: bool
+    require_lme_ingest_marker: bool
+    ingest_marker_update_method: str
 
 
 def _normalize_memory_granularity(value: str) -> str:
@@ -79,13 +100,13 @@ def parse_args() -> GenerateConfig:
     parser.add_argument(
         "--method",
         required=True,
-        help="记忆方法，如 amem / mem0 / mem0_nodel / relmem / append_only / recency_only / rag / full_context",
+        help="记忆方法：lme_prebuilt（预灌向量库，需配合 --prebuilt-memory）",
     )
     parser.add_argument("--extractor_model", default=None, help="记忆抽取模型（预留，当前优先使用 manager_model）")
     parser.add_argument(
         "--manager_model",
         default=None,
-        help="记忆管理模型（amem / mem0 / mem0_nodel / relmem / append_only 必填其一）",
+        help="记忆管理 LLM（预留；预灌库评测通常不需要）",
     )
     parser.add_argument("--answer_model", required=True, help="回答问题模型")
     parser.add_argument("--embedding_model", required=True, help="向量模型")
@@ -93,19 +114,52 @@ def parse_args() -> GenerateConfig:
     parser.add_argument("--retrieve_topk", type=int, default=5)
     parser.add_argument("--memory_token_limit", type=int, default=8192)
     parser.add_argument(
+        "--hybrid-bm25-dense",
+        action="store_true",
+        help="答题检索：BM25 + dense（FAISS）线性融合（仅 lme_prebuilt 预灌路径）",
+    )
+    parser.add_argument("--hybrid-dense-weight", type=float, default=0.5, help="混合检索 dense 权重（与 bm25 归一后和为 1）")
+    parser.add_argument("--hybrid-bm25-weight", type=float, default=0.5, help="混合检索 BM25 权重")
+    parser.add_argument(
+        "--hybrid-pool-mult",
+        type=int,
+        default=4,
+        help="混合检索每路候选数：max(retrieve_topk * mult, 50)，上限为库内条数（与 --hybrid-full-corpus-pool 互斥语义：后者为全库）",
+    )
+    parser.add_argument(
+        "--hybrid-full-corpus-pool",
+        action="store_true",
+        help="混合检索时 dense/BM25 候选池为全库所有记忆（再按分数取 retrieve_topk），不设 top_k*mult 上限",
+    )
+    parser.add_argument(
         "--memory_granularity",
         default="all",
         help="记忆粒度：'all' 或正整数（如 1/2/3，表示每 N turn 一组）",
     )
 
     parser.add_argument("--database_root", default=None, help="向量库根目录，默认自动拼接")
+    parser.add_argument(
+        "--unfused-rank-database-root",
+        default=None,
+        metavar="DIR",
+        help="预灌库评测：在未融合向量库上 hybrid/dense 排序，映射到 --database-root 融合库（去重）",
+    )
     parser.add_argument("--embedding_base_url", default=os.getenv("EMBEDDING_BASE_URL", "http://localhost:7110/v1/"))
     parser.add_argument("--embedding_api_key", default=os.getenv("EMBEDDING_API_KEY"))
     parser.add_argument("--language", default=None, help="可选覆盖语言: zh/en")
     parser.add_argument(
         "--agent_trace_dir",
         default="logs/agent_trace",
-        help="Agent 答题 tracing 根目录，实际写入 {该目录}/{experiment_name}/（与 logs/memory_trace 子目录同名）；传空字符串可禁用",
+        help="Agent 答题 tracing 目录，直接在该路径下写 JSONL（不再自动追加子目录）；传空字符串可禁用",
+    )
+    parser.add_argument(
+        "--agent-trace-label",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Agent trace 日志文件名前缀（传给 MemoryTraceLogger.method）。"
+            "缺省时：若 --output 为 pred_<name>.jsonl 则用 <name>，否则用 --method。"
+        ),
     )
     parser.add_argument(
         "--parallel_episodes",
@@ -119,28 +173,30 @@ def parse_args() -> GenerateConfig:
         help="忽略 .memory_ready.json，强制 clear + 全量重灌向量库",
     )
     parser.add_argument(
-        "--mem0-dialogue-format",
+        "--prebuilt-memory",
+        action="store_true",
+        help=(
+            "跳过写库：不向 memory 灌入 episode 对话（向量库须已存在，如候选 ingest 产物）。"
+            "需同时指定 --method lme_prebuilt 且显式 --database-root。"
+        ),
+    )
+    parser.add_argument(
+        "--dialogue-format",
         default="auto",
         choices=["auto", "user_assistant", "named_speakers"],
-        help="mem0/append_only：对话转写与事实抽取模板；auto 对 locomo benchmark 使用 named_speakers",
+        help="对话转写模板；auto 对 locomo benchmark 使用 named_speakers",
     )
     parser.add_argument(
         "--manager_max_new_tokens",
         type=int,
         default=2048,
-        help="amem/mem0/append_only 记忆管理或事实抽取 LLM 的 max_new_tokens（传给 OpenAI 兼容 API 的 max_tokens）",
+        help="记忆管理 / 事实抽取 LLM 的 max_new_tokens（OpenAI 兼容 API；预灌库评测多未使用）",
     )
     parser.add_argument(
-        "--mem0-extract-concurrency",
+        "--fact-extract-concurrency",
         type=int,
         default=8,
-        help="mem0/mem0_nodel/relmem/append_only：episode 内事实抽取 LLM 的最大并发（1=串行）；与 --parallel-episodes 相乘影响总 QPS",
-    )
-    parser.add_argument(
-        "--relmem-relation-concurrency",
-        type=int,
-        default=8,
-        help="relmem：每条新事实下成对关系分类 LLM 调用的最大并发",
+        help="episode 内事实抽取 LLM 的最大并发（1=串行）；与 --parallel-episodes 相乘影响总 QPS",
     )
     parser.add_argument(
         "--answer-concurrency",
@@ -148,9 +204,110 @@ def parse_args() -> GenerateConfig:
         default=2,
         help="答题阶段：同一 episode 内多道问题并发调用回答模型的上限（传给 get_response_chat 的 max_concurrency）",
     )
+    parser.add_argument(
+        "--no-memory-time",
+        action="store_true",
+        default=False,
+        help="召回记忆不展示时间信息（对应模板变量 show_time=False）",
+    )
+    parser.add_argument(
+        "--question-types",
+        default=None,
+        metavar="TYPES",
+        help=(
+            "可选：只评测这些 question_type（逗号分隔，与数据字段一致）。"
+            "例 LongMemEval: knowledge-update,temporal-reasoning,multi-session 等"
+        ),
+    )
+    parser.add_argument(
+        "--rerank-qwen3-vllm",
+        action="store_true",
+        help=(
+            "答题检索：粗排（dense/BM25 混合或 dense）取 --retrieve_topk 条后，"
+            "用本地 vLLM Qwen3-Reranker /v1/score 精排（需 RERANKER_BASE_URL / RERANKER_API_KEY，"
+            "见 script/0_run_reranker_ppu.sh）"
+        ),
+    )
+    parser.add_argument(
+        "--rerank-qwen3-vllm-base-url",
+        default=os.getenv("RERANKER_BASE_URL", "http://localhost:7114/v1/"),
+        help="精排服务 OpenAI 兼容 base URL（默认读 RERANKER_BASE_URL）",
+    )
+    parser.add_argument(
+        "--rerank-qwen3-vllm-api-key",
+        default=os.getenv("RERANKER_API_KEY"),
+        help="精排 API Key（默认读 RERANKER_API_KEY）",
+    )
+    parser.add_argument(
+        "--rerank-qwen3-vllm-model",
+        default=os.getenv("RERANKER_MODEL", "Qwen3-Reranker-0.6B"),
+        help="精排 served-model-name（默认读 RERANKER_MODEL）",
+    )
+    parser.add_argument(
+        "--rerank-qwen3-vllm-timeout-s",
+        type=float,
+        default=120.0,
+        help="单次精排 HTTP 超时（秒）",
+    )
+    parser.add_argument(
+        "--rerank-top-k",
+        type=int,
+        default=None,
+        metavar="K",
+        help="精排后保留条数；默认与 --retrieve_topk 相同（粗排 topK → 精排 topK）",
+    )
+    parser.add_argument(
+        "--answer-stratified-sample",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "可选：只评测 N 道题，按 question_type 在题库中的比例分层抽样（最大余数法 + 各层随机）。"
+            "0 表示不限制。与 --question-types 同时使用时，先按题型过滤再抽样。"
+        ),
+    )
+    parser.add_argument(
+        "--answer-sample-seed",
+        type=int,
+        default=42,
+        help="--answer-stratified-sample 的随机种子（默认可复现）",
+    )
+    parser.add_argument(
+        "--require-lme-ingest-marker",
+        action="store_true",
+        help=(
+            "仅在与 --prebuilt-memory / --database-root 连用时生效："
+            "只对 ingest_candidates.py 已成功写入的 episode（目录下存在合法的 "
+            ".memory_ready.json，kind=lme_candidate_apply）生成答题预测；"
+            "未完成灌库的 episode 跳过（可与分层抽样等筛选同时使用）。"
+        ),
+    )
+    parser.add_argument(
+        "--ingest-marker-update-method",
+        default="zep",
+        metavar="METHOD",
+        help=(
+            "配合 --require-lme-ingest-marker：匹配的 ingest Candidates update_method "
+            "（默认 zep，须与灌库时 --update-method 一致）。"
+        ),
+    )
 
     args = parser.parse_args()
     granularity = _normalize_memory_granularity(args.memory_granularity)
+
+    if args.prebuilt_memory:
+        if args.method != "lme_prebuilt":
+            raise ValueError("--prebuilt-memory 仅支持与 --method lme_prebuilt 连用")
+        if not args.database_root:
+            raise ValueError("--prebuilt-memory 时必须显式传入 --database_root（预灌库根目录）")
+        if args.rebuild_memory:
+            raise ValueError("--prebuilt-memory 与 --rebuild-memory 互斥")
+
+    ingest_marker_method = str(args.ingest_marker_update_method or "").strip()
+    if not ingest_marker_method:
+        raise ValueError("--ingest-marker-update-method 不能为空")
+    if args.require_lme_ingest_marker and not args.prebuilt_memory:
+        raise ValueError("--require-lme-ingest-marker 仅支持与 --prebuilt-memory 连用")
 
     return GenerateConfig(
         benchmark=args.benchmark,
@@ -171,11 +328,40 @@ def parse_args() -> GenerateConfig:
         agent_trace_dir=args.agent_trace_dir.strip() or None,
         parallel_episodes=args.parallel_episodes,
         rebuild_memory=bool(args.rebuild_memory),
-        mem0_dialogue_format=str(args.mem0_dialogue_format),
+        dialogue_format=str(args.dialogue_format),
         manager_max_new_tokens=int(args.manager_max_new_tokens),
-        mem0_extract_concurrency=max(1, int(args.mem0_extract_concurrency)),
-        relmem_relation_concurrency=max(1, int(args.relmem_relation_concurrency)),
+        fact_extract_concurrency=max(1, int(args.fact_extract_concurrency)),
         answer_concurrency=max(1, int(args.answer_concurrency)),
+        question_types=parse_question_types_arg(args.question_types),
+        prebuilt_memory=bool(args.prebuilt_memory),
+        agent_trace_label=(args.agent_trace_label.strip() or None) if args.agent_trace_label else None,
+        hybrid_bm25_dense=bool(args.hybrid_bm25_dense),
+        hybrid_dense_weight=float(args.hybrid_dense_weight),
+        hybrid_bm25_weight=float(args.hybrid_bm25_weight),
+        hybrid_pool_mult=max(1, int(args.hybrid_pool_mult)),
+        hybrid_full_corpus_pool=bool(args.hybrid_full_corpus_pool),
+        unfused_rank_database_root=(args.unfused_rank_database_root.strip() or None)
+        if args.unfused_rank_database_root
+        else None,
+        rerank_qwen3_vllm=bool(args.rerank_qwen3_vllm),
+        rerank_qwen3_vllm_base_url=(
+            str(args.rerank_qwen3_vllm_base_url).strip() or None
+        )
+        if args.rerank_qwen3_vllm_base_url
+        else None,
+        rerank_qwen3_vllm_api_key=(
+            str(args.rerank_qwen3_vllm_api_key).strip() or None
+        )
+        if args.rerank_qwen3_vllm_api_key
+        else None,
+        rerank_qwen3_vllm_model=str(args.rerank_qwen3_vllm_model or "Qwen3-Reranker-0.6B").strip(),
+        rerank_qwen3_vllm_timeout_s=float(args.rerank_qwen3_vllm_timeout_s),
+        rerank_top_k=int(args.rerank_top_k) if args.rerank_top_k is not None else None,
+        answer_stratified_sample=max(0, int(args.answer_stratified_sample)),
+        answer_sample_seed=int(args.answer_sample_seed),
+        show_memory_time=not bool(args.no_memory_time),
+        require_lme_ingest_marker=bool(args.require_lme_ingest_marker),
+        ingest_marker_update_method=ingest_marker_method,
     )
 
 
@@ -183,41 +369,45 @@ def _resolve_benchmark(cfg: GenerateConfig) -> Tuple[str, str]:
     if cfg.benchmark_file:
         return cfg.benchmark_file, (cfg.language or "en")
 
-    if cfg.benchmark not in BENCHMARK_TO_DATASET:
-        supported = ", ".join(sorted(BENCHMARK_TO_DATASET.keys()))
+    if cfg.benchmark not in DEFAULT_BENCHMARK_DATASETS:
+        supported = ", ".join(sorted(DEFAULT_BENCHMARK_DATASETS.keys()))
         raise ValueError(
             f"Unknown benchmark '{cfg.benchmark}'. Please provide --benchmark_file, "
             f"or choose one of: {supported}"
         )
 
-    file_path, default_lang = BENCHMARK_TO_DATASET[cfg.benchmark]
+    file_path, default_lang = DEFAULT_BENCHMARK_DATASETS[cfg.benchmark]
     return file_path, (cfg.language or default_lang)
 
 
 def _build_experiment_name(cfg: GenerateConfig) -> str:
     """Build experiment dir name: {benchmark}_gran{gran}_{method}_{model}."""
-    if cfg.method in {"amem", "mem0", "mem0_nodel", "relmem", "append_only"}:
-        model = cfg.manager_model or cfg.extractor_model or "default"
-    else:
-        model = cfg.answer_model
+    model = cfg.answer_model
     safe_model = _sanitize_for_filename(str(model))
     return f"{cfg.benchmark}_gran{cfg.memory_granularity}_{cfg.method}_{safe_model}"
 
 
-def _build_memory_trace_dir(cfg: GenerateConfig) -> str:
-    """Build memory trace dir: logs/memory_trace/{experiment_name}."""
-    return f"logs/memory_trace/{_build_experiment_name(cfg)}"
-
-
 def _resolve_agent_trace_dir(cfg: GenerateConfig) -> Optional[str]:
-    """Same subdirectory name as memory_trace: {agent_trace_dir}/{experiment_name}/."""
+    """Resolve directory for StandardAgent JSONL traces (writes directly under ``agent_trace_dir``)."""
     if not cfg.agent_trace_dir:
         return None
-    return str(Path(cfg.agent_trace_dir) / _build_experiment_name(cfg))
+    return str(Path(cfg.agent_trace_dir))
 
 
-def _resolve_mem0_dialogue_format(cfg: GenerateConfig) -> str:
-    choice = (cfg.mem0_dialogue_format or "auto").strip().lower()
+def _resolve_agent_trace_method(cfg: GenerateConfig) -> str:
+    """Filename prefix for agent JSONL trace (MemoryTraceLogger.method)."""
+    label = (cfg.agent_trace_label or "").strip()
+    if label:
+        return _sanitize_for_filename(label)
+    stem = Path(cfg.output).stem
+    pred_prefix = "pred_"
+    if stem.startswith(pred_prefix) and len(stem) > len(pred_prefix):
+        return _sanitize_for_filename(stem[len(pred_prefix) :])
+    return _sanitize_for_filename(cfg.method)
+
+
+def _resolve_dialogue_format(cfg: GenerateConfig) -> str:
+    choice = (cfg.dialogue_format or "auto").strip().lower()
     if choice in ("user_assistant", "named_speakers"):
         return choice
     b = cfg.benchmark.strip().lower()
@@ -229,7 +419,15 @@ def _resolve_mem0_dialogue_format(cfg: GenerateConfig) -> str:
 def _build_memory_system(cfg: GenerateConfig, language: str):
     method = cfg.method
 
-    database_root = cfg.database_root or f"MemDB/{_build_experiment_name(cfg)}"
+    if cfg.unfused_rank_database_root and not cfg.prebuilt_memory:
+        raise ValueError("--unfused-rank-database-root requires --prebuilt-memory")
+
+    if cfg.prebuilt_memory:
+        if not cfg.database_root:
+            raise ValueError("prebuilt_memory requires database_root")
+        database_root = cfg.database_root
+    else:
+        database_root = cfg.database_root or f"MemDB/{_build_experiment_name(cfg)}"
 
     if not cfg.embedding_api_key:
         raise ValueError("EMBEDDING_API_KEY must be set (via env or --embedding_api_key)")
@@ -238,38 +436,32 @@ def _build_memory_system(cfg: GenerateConfig, language: str):
 
     embed_client = OpenAI(api_key=cfg.embedding_api_key, base_url=cfg.embedding_base_url)
 
-    llm_client = None
-    trace_log_dir = None
-    if method in {"amem", "mem0", "mem0_nodel", "relmem", "append_only"}:
-        manager_or_extractor_model = cfg.manager_model or cfg.extractor_model
-        if not manager_or_extractor_model:
-            raise ValueError(
-                "For method 'amem'/'mem0'/'mem0_nodel'/'relmem'/'append_only', please provide --manager_model (or --extractor_model)."
-            )
-        llm_client = load_api_chat_completion(manager_or_extractor_model, async_=False)
-        trace_log_dir = _build_memory_trace_dir(cfg)
-
     kwargs: Dict[str, Any] = {
         "granularity": cfg.memory_granularity,
-        "llm_client": llm_client,
+        "llm_client": None,
         "related_memory_top_k": cfg.retrieve_topk,
         "retrieve_topk": cfg.retrieve_topk,
-        "language": language,
-        "trace_log_dir": trace_log_dir,
+        "trace_log_dir": None,
     }
-    if method in ("mem0", "mem0_nodel", "relmem", "append_only"):
-        kwargs["dialogue_format"] = _resolve_mem0_dialogue_format(cfg)
-        kwargs["extract_concurrency"] = cfg.mem0_extract_concurrency
-    if method == "relmem":
-        kwargs["relation_concurrency"] = cfg.relmem_relation_concurrency
-    if method in {"amem", "mem0", "mem0_nodel", "relmem", "append_only"}:
-        kwargs["manager_max_new_tokens"] = cfg.manager_max_new_tokens
 
     return get_memory_system(
         method_name=method,
         embed_model_name=cfg.embedding_model,
         embed_client=embed_client,
         database_root=database_root,
+        use_hybrid_retrieval=cfg.hybrid_bm25_dense,
+        hybrid_dense_weight=cfg.hybrid_dense_weight,
+        hybrid_bm25_weight=cfg.hybrid_bm25_weight,
+        hybrid_pool_mult=cfg.hybrid_pool_mult,
+        hybrid_full_corpus_pool=cfg.hybrid_full_corpus_pool,
+        unfused_rank_database_root=cfg.unfused_rank_database_root,
+        language=language,
+        rerank_qwen3_vllm=cfg.rerank_qwen3_vllm,
+        rerank_qwen3_vllm_base_url=cfg.rerank_qwen3_vllm_base_url,
+        rerank_qwen3_vllm_api_key=cfg.rerank_qwen3_vllm_api_key,
+        rerank_qwen3_vllm_model=cfg.rerank_qwen3_vllm_model,
+        rerank_qwen3_vllm_timeout_s=cfg.rerank_qwen3_vllm_timeout_s,
+        rerank_top_k=cfg.rerank_top_k,
         **kwargs,
     )
 
@@ -301,6 +493,31 @@ def _read_memory_ready_marker(marker_path: Path) -> Optional[Dict[str, Any]]:
         return json.loads(marker_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
+
+
+# ingest_candidates.py 灌库成功后写入的标记（LME_APPLY_*）；与此保持校验字段一致。
+_LME_INGEST_MARKER_EXPECT_VERSION = 1
+_LME_INGEST_MARKER_EXPECT_KIND = "lme_candidate_apply"
+
+
+def _episode_has_lme_ingest_marker(
+    database_root: Path,
+    history_name: str,
+    *,
+    update_method: str,
+) -> bool:
+    """True iff candidate ingest wrote a valid ``.memory_ready.json`` for this episode."""
+    marker_path = database_root / history_name / ".memory_ready.json"
+    data = _read_memory_ready_marker(marker_path)
+    if not data:
+        return False
+    if int(data.get("version", -1)) != _LME_INGEST_MARKER_EXPECT_VERSION:
+        return False
+    if str(data.get("kind", "")) != _LME_INGEST_MARKER_EXPECT_KIND:
+        return False
+    if str(data.get("update_method", "")).strip() != update_method.strip():
+        return False
+    return str(data.get("history_name", "")).strip() == str(history_name).strip()
 
 
 def _write_memory_ready_marker_atomic(marker_path: Path, payload: Dict[str, Any]) -> None:
@@ -363,10 +580,51 @@ def _cleanup_interrupted_episode(
     """Clear MemDB and memory trace for an interrupted episode (do not touch Agent trace)."""
     if hasattr(memory_system, "clear"):
         memory_system.clear(history_name)
-    if hasattr(memory_system, "trace") and hasattr(memory_system.trace, "get_trace_path"):
-        trace_path = memory_system.trace.get_trace_path(history_name)
-        if trace_path.exists():
-            trace_path.unlink()
+    if hasattr(memory_system, "trace"):
+        remove_episode_trace_jsonl_files_for_logger(memory_system.trace, history_name)
+
+
+def _should_clear_agent_trace_for_resume(
+    cfg: GenerateConfig,
+    history_name: str,
+    episode: MemoryEpisode,
+    pending_qas: List[QuestionItem],
+    answered: Set[Tuple[str, str]],
+    scope_keys: Optional[Set[Tuple[str, str]]] = None,
+) -> bool:
+    """True if this episode should drop existing agent JSONL before answering pending questions."""
+    if not (cfg.agent_trace_dir or "").strip():
+        return False
+    h = str(history_name)
+    all_qs = filter_question_items(episode.qas, cfg.question_types)
+    if scope_keys is not None:
+        all_qs = [
+            q for q in all_qs if (h, _question_id_for_episode(h, q)) in scope_keys
+        ]
+    if not all_qs or not pending_qas:
+        return False
+    answered_in_scope = [
+        q
+        for q in all_qs
+        if (h, _question_id_for_episode(h, q)) in answered
+    ]
+    if len(answered_in_scope) > 0:
+        return True
+    agent_trace_dir = Path(cfg.agent_trace_dir)
+    method = _resolve_agent_trace_method(cfg)
+    root = MemoryTraceLogger(
+        method=method,
+        log_dir=str(agent_trace_dir),
+        use_experiment_naming=True,
+    )
+    primary = root.get_trace_path(history_name)
+    if primary.exists() and primary.stat().st_size > 0:
+        return True
+    safe = _sanitize_for_filename(history_name)
+    for p in agent_trace_dir.glob(f"{safe}*.jsonl"):
+        if p.is_file() and p.stat().st_size > 0:
+            return True
+    return False
 
 
 def _build_record(benchmark_name: str, history_name: str, question, model_answer: Optional[str]) -> Dict:
@@ -449,12 +707,26 @@ async def _process_episode(
     output_path: Path,
     output_lock: threading.Lock,
     pending_qas: List[QuestionItem],
+    answered: Set[Tuple[str, str]],
+    scope_keys: Optional[Set[Tuple[str, str]]] = None,
 ) -> None:
     """Store sessions when memory not ready (or --rebuild-memory), then answer pending questions only."""
     history_name = str(episode.history_name)
-    need_store = cfg.rebuild_memory or not _is_memory_ready(memory_system, episode)
+    if cfg.prebuilt_memory:
+        need_store = False
+    else:
+        need_store = cfg.rebuild_memory or not _is_memory_ready(memory_system, episode)
 
     async with semaphore:
+        if _should_clear_agent_trace_for_resume(
+            cfg, history_name, episode, pending_qas, answered, scope_keys
+        ):
+            remove_episode_trace_jsonl_files(
+                log_dir=Path(cfg.agent_trace_dir),
+                method=_resolve_agent_trace_method(cfg),
+                history_name=history_name,
+                use_experiment_naming=True,
+            )
         if need_store:
             _cleanup_interrupted_episode(memory_system, history_name)
             await loop.run_in_executor(
@@ -502,12 +774,55 @@ async def run_pipeline(cfg: GenerateConfig) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     answered = _load_answered_keys(output_path)
+    sample_keys: Optional[Set[Tuple[str, str]]] = None
+    if cfg.answer_stratified_sample > 0:
+        keyed: List[Tuple[Tuple[str, str], Optional[str]]] = []
+        for episode in benchmark:
+            h = str(episode.history_name)
+            for q in filter_question_items(episode.qas, cfg.question_types):
+                qid = _question_id_for_episode(h, q)
+                keyed.append(((h, qid), q.question_type))
+        sample_keys = stratified_sample_by_question_type(
+            keyed,
+            cfg.answer_stratified_sample,
+            cfg.answer_sample_seed,
+        )
+
     episodes_to_process: List[Tuple[int, MemoryEpisode, List[QuestionItem]]] = []
     for idx, episode in enumerate(benchmark):
         h = str(episode.history_name)
         pending_qas = [q for q in episode.qas if (h, _question_id_for_episode(h, q)) not in answered]
+        pending_qas = filter_question_items(pending_qas, cfg.question_types)
+        if sample_keys is not None:
+            pending_qas = [
+                q
+                for q in pending_qas
+                if (h, _question_id_for_episode(h, q)) in sample_keys
+            ]
         if pending_qas:
             episodes_to_process.append((idx, episode, pending_qas))
+
+    if cfg.require_lme_ingest_marker:
+        root_str = (cfg.database_root or "").strip()
+        if not root_str:
+            raise ValueError(
+                "--require-lme-ingest-marker 需要有效的 --database_root（预灌库根目录）"
+            )
+        db_root = Path(root_str)
+        meth = cfg.ingest_marker_update_method
+        n_before = len(episodes_to_process)
+        episodes_to_process = [
+            item
+            for item in episodes_to_process
+            if _episode_has_lme_ingest_marker(db_root, str(item[1].history_name), update_method=meth)
+        ]
+        n_skip = n_before - len(episodes_to_process)
+        if n_skip:
+            print(
+                f"Generating: skipped {n_skip} episode(s) without LME ingest marker "
+                f"({meth!r}) under {db_root}",
+                flush=True,
+            )
 
     if not episodes_to_process:
         return
@@ -521,7 +836,9 @@ async def run_pipeline(cfg: GenerateConfig) -> None:
         memory_token_limit=cfg.memory_token_limit,
         language=language,
         trace_log_dir=_resolve_agent_trace_dir(cfg),
+        trace_method=_resolve_agent_trace_method(cfg),
         answer_concurrency=cfg.answer_concurrency,
+        show_time=cfg.show_memory_time,
     )
 
     loop = asyncio.get_running_loop()
@@ -551,6 +868,8 @@ async def run_pipeline(cfg: GenerateConfig) -> None:
                 output_path=output_path,
                 output_lock=output_lock,
                 pending_qas=pending_qas,
+                answered=answered,
+                scope_keys=sample_keys,
             )
             for idx, episode, pending_qas in episodes_to_process
         ]

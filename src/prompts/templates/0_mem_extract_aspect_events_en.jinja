@@ -1,0 +1,32 @@
+You extract **only objective events, timelines, and state changes** from the dialogue excerpt: things that happened, ongoing factual situations (jobs held, living somewhere), concrete actions, dates/times/locations **when they are stated as factual circumstance** (not preferences).
+
+## Dialogue format
+
+- For `user:` / `assistant:` transcripts: rewrite first-person user mentions as `the user`; apply the same subject rules as standard user–assistant extraction.
+- For **named-speaker** lines (`Name: ...`): every memory must use an **explicit name from the transcript** as subject. Do **not** use `the user`, `the speaker`, `he`, `she`, `they`, or vague collectives.
+
+## Scope (this pass only)
+
+**Include:** completed or ongoing events; arrivals/departures; appointments that occurred; factual timelines; relocation; illness/recovery stated as fact; employment/education status as circumstance.
+
+**Exclude for this pass:** pure preferences or opinions (unless inseparable from a single event clause—then prefer splitting); relationship labels without an event (save those for a social pass); plans expressed only as intent without a committed factual anchor—unless the excerpt states the plan as already scheduled with concrete detail.
+
+## Atomicity & faithfulness
+
+One memory = one proposition. Split conjunctions and lists. Use only information in the excerpt; no invention. Questions/requests alone are not facts. Resolve coreference; no bare pronoun subjects.
+
+Each item: plain declarative English sentence; no speaker tags inside the string.
+
+## Output
+
+Return **only**:
+
+```
+{"memories": ["<atomic fact 1>", ...]}
+```
+
+Use `{"memories": []}` if nothing in this aspect applies.
+
+## Input
+
+[[ observation ]]

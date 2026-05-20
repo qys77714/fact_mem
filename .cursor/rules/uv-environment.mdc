@@ -1,0 +1,34 @@
+---
+description: Activate the local uv/.venv environment before running Python, deps, tests, or scripts in this repo
+alwaysApply: true
+---
+
+# fact_memory：先激活 uv 虚拟环境
+
+在 **fact_memory 仓库内** 通过终端执行 **Python、`uv` / `pip`、pytest、或 `script/` 下的脚本** 时，必须先使用该目录下的虚拟环境，避免用到系统 Python 或错误环境。
+
+## 标准做法
+
+在项目根目录（含 `pyproject.toml` 与 `.venv`）：
+
+```bash
+cd /mnt/data/zjj/project/fact_memory   # 或你的工作区中本仓库根路径
+source .venv/bin/activate
+```
+
+然后再运行例如 `python ...`、`pytest`、`uv sync`、`uv pip ...` 等。
+
+## 等价方式
+
+在仓库根目录也可用（无需先 `source activate`）：
+
+```bash
+uv run python ...
+uv run pytest ...
+```
+
+若用户明确要求「先激活环境」，优先用 `source .venv/bin/activate` 再执行命令，与上述约定一致。
+
+## 不要
+
+- 在未激活 `.venv`（且未使用 `uv run`）的情况下，假定 `python` / `pip` 已指向本项目的依赖。

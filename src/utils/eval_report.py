@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[misc, assignment]
+
 CSV_FIELDNAMES: List[str] = [
     "timestamp",
     "eval_type",
@@ -36,6 +41,44 @@ def append_jsonl(path: Path, record: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(dict(record), ensure_ascii=False) + "\n")
+
+
+def _flock_lock(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def _flock_unlock(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def append_eval_json(path: Path, record: Mapping[str, Any]) -> None:
+    """Append one run to a JSON array file (pretty-printed). Safe for concurrent writers on Unix (flock)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text("[]\n", encoding="utf-8")
+
+    with path.open("r+", encoding="utf-8") as f:
+        _flock_lock(f.fileno())
+        try:
+            raw = f.read()
+            if not raw.strip():
+                data: List[Any] = []
+            else:
+                data = json.loads(raw)
+                if not isinstance(data, list):
+                    raise ValueError(
+                        f"Expected a JSON array at top level in {path}, got {type(data).__name__}"
+                    )
+            data.append(dict(record))
+            out = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+            f.seek(0)
+            f.truncate()
+            f.write(out)
+        finally:
+            _flock_unlock(f.fileno())
 
 
 def _csv_cell(value: Any) -> str:

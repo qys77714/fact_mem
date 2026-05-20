@@ -1,6 +1,8 @@
 import json
 import logging
+import os
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,14 +17,14 @@ from memory.base import RetrievedMemory
 logger = logging.getLogger(__name__)
 
 
-def _memory_entry_is_valid(metadata: Dict[str, Any]) -> bool:
-    """Invalidated entries use metadata['memory_status'] == 'invalid' (RelMem). Missing key means valid."""
-    return metadata.get("memory_status") != "invalid"
-
-
 def _memory_entry_is_primary(metadata: Dict[str, Any]) -> bool:
     """Evidence rows use metadata['memory_role'] == 'evidence'. Missing key means primary (backward compatible)."""
     return metadata.get("memory_role") != "evidence"
+
+
+def _tokenize_bm25(text: str) -> List[str]:
+    """Whitespace tokenization + lowercasing; for CJK-heavy corpora consider a dedicated tokenizer."""
+    return text.lower().split()
 
 
 @dataclass
@@ -34,6 +36,8 @@ class _HistoryStore:
     times: List[str]           # 存储"代表时间"
     metadatas: List[Dict[str, Any]]
     embeddings: List[np.ndarray]
+    # FAISS 第 i 行向量对应 memory_id；与 ids 列表顺序无关（允许存在无向量的记忆行）
+    indexed_memory_ids: List[str]
 
 class LocalFaissDatabase:
     """
@@ -51,7 +55,29 @@ class LocalFaissDatabase:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         
         self._store_loaded = False
+        self._bm25_revision: int = 0
+        self._bm25_cache_revision: Optional[int] = None
+        self._bm25_okapi: Any = None
         self._reset_store()
+
+    def _bump_bm25_revision(self) -> None:
+        self._bm25_revision += 1
+
+    def _get_bm25_okapi(self):
+        """Lazy BM25 over ``store.texts``; invalidated when store mutates or reloads."""
+        from rank_bm25 import BM25Okapi
+
+        self._ensure_loaded()
+        store = self._store
+        n = len(store.texts)
+        if n == 0:
+            return None
+        if self._bm25_cache_revision == self._bm25_revision and self._bm25_okapi is not None:
+            return self._bm25_okapi
+        corpus = [_tokenize_bm25(t) for t in store.texts]
+        self._bm25_okapi = BM25Okapi(corpus)
+        self._bm25_cache_revision = self._bm25_revision
+        return self._bm25_okapi
 
     def add(self, text: str, source_index: str, time: str, metadata: Dict[str, Any], embedding: Optional[np.ndarray] = None) -> str:
         """
@@ -84,13 +110,26 @@ class LocalFaissDatabase:
         
         if normalized is not None:
             store.embeddings.append(normalized[0].copy())
+            store.indexed_memory_ids.append(memory_id)
 
+        self._bump_bm25_revision()
         self._persist()
         return memory_id
 
+    def list_primary_texts_ordered(self) -> List[str]:
+        """Primary rows in insertion order (excludes ``memory_role=evidence``)."""
+        self._ensure_loaded()
+        store = self._store
+        out: List[str] = []
+        n = min(len(store.ids), len(store.texts), len(store.metadatas))
+        for i in range(n):
+            if _memory_entry_is_primary(store.metadatas[i]):
+                out.append(store.texts[i])
+        return out
+
     def invalidate_memory(self, memory_id: str) -> bool:
-        """Soft-delete: mark entry as invalid; keeps row for audit. RelMem CON updates."""
-        return self.update_memory(memory_id, metadata_updates={"memory_status": "invalid"})
+        """从索引中移除条目（与 delete 同语义，保留方法名供调用方）。"""
+        return self.delete(memory_id)
 
     def delete(self, memory_id: str) -> bool:
         self._ensure_loaded()
@@ -105,13 +144,16 @@ class LocalFaissDatabase:
         store.source_indices.pop(idx)
         store.times.pop(idx)
         store.metadatas.pop(idx)
-        if len(store.embeddings) > idx:
-            store.embeddings.pop(idx)
+        if memory_id in store.indexed_memory_ids:
+            emb_idx = store.indexed_memory_ids.index(memory_id)
+            store.indexed_memory_ids.pop(emb_idx)
+            store.embeddings.pop(emb_idx)
 
         if not store.ids:
             self._clear_dataset()
         else:
             self._rebuild_index()
+            self._bump_bm25_revision()
             self._persist()
         return True
 
@@ -140,15 +182,17 @@ class LocalFaissDatabase:
         if new_embedding is not None and new_embedding.size > 0:
             if new_embedding.ndim == 1:
                 new_embedding = new_embedding.reshape(1, -1)
-                
+
             normalized = np.ascontiguousarray(new_embedding.astype(np.float32))
             faiss.normalize_L2(normalized)
-            
-            # 补齐长度如果前面没有 embedding 却中途更新了
-            while len(store.embeddings) <= idx:
-                store.embeddings.append(np.zeros_like(normalized[0]))
-                
-            store.embeddings[idx] = normalized[0].copy()
+            row = normalized[0].copy()
+
+            if memory_id in store.indexed_memory_ids:
+                emb_idx = store.indexed_memory_ids.index(memory_id)
+                store.embeddings[emb_idx] = row
+            else:
+                store.embeddings.append(row)
+                store.indexed_memory_ids.append(memory_id)
             self._rebuild_index()
 
         if new_source_index is not None:
@@ -158,21 +202,54 @@ class LocalFaissDatabase:
         if metadata_updates:
             store.metadatas[idx].update(metadata_updates)
 
+        self._bump_bm25_revision()
         self._persist()
         return True
+
+    def _faiss_row_to_list_row(self, store: _HistoryStore, fidx: int) -> Optional[int]:
+        """Map FAISS internal row index → parallel lists (ids/texts/...) index."""
+        if fidx < 0 or fidx >= len(store.indexed_memory_ids):
+            logger.warning(
+                "FAISS row %s out of range for indexed_memory_ids (len=%s)",
+                fidx,
+                len(store.indexed_memory_ids),
+            )
+            return None
+        memory_id = store.indexed_memory_ids[fidx]
+        try:
+            row = store.ids.index(memory_id)
+        except ValueError:
+            logger.warning("indexed_memory_ids[%s]=%r missing from ids", fidx, memory_id)
+            return None
+        n = min(
+            len(store.ids),
+            len(store.texts),
+            len(store.source_indices),
+            len(store.times),
+            len(store.metadatas),
+        )
+        if row < 0 or row >= n:
+            logger.warning(
+                "parallel lists out of sync: row=%s n_parallel=%s (ids=%s texts=%s metadatas=%s)",
+                row,
+                n,
+                len(store.ids),
+                len(store.texts),
+                len(store.metadatas),
+            )
+            return None
+        return row
 
     def search(
         self,
         query_embedding: np.ndarray,
         top_k: int,
         *,
-        only_valid: bool = False,
         only_primary: bool = False,
     ) -> List[RetrievedMemory]:
         """
         直接接收 query_embedding (1D 或 2D numpy array) 并召回最近似的 K 条结果。
-        only_valid=True 时跳过 metadata['memory_status'] == 'invalid' 的条目（RelMem），必要时扩大检索深度。
-        only_primary=True 时跳过 metadata['memory_role'] == 'evidence'（RelMem 主检索路径）。
+        only_primary=True 时跳过 metadata['memory_role'] == 'evidence'（主检索路径）。
         """
         if top_k <= 0 or query_embedding is None or query_embedding.size == 0:
             return []
@@ -189,28 +266,29 @@ class LocalFaissDatabase:
         faiss.normalize_L2(normalized_query)
 
         def _passes_filters(meta: Dict[str, Any]) -> bool:
-            if only_valid and not _memory_entry_is_valid(meta):
-                return False
             if only_primary and not _memory_entry_is_primary(meta):
                 return False
             return True
 
         total = store.index.ntotal
-        if not only_valid and not only_primary:
+        if not only_primary:
             k = min(top_k, total)
             scores, indices = store.index.search(normalized_query, k)
             results: List[RetrievedMemory] = []
-            for score, idx in zip(scores[0], indices[0]):
-                if idx == -1:
+            for score, fidx in zip(scores[0], indices[0]):
+                if fidx == -1:
+                    continue
+                row = self._faiss_row_to_list_row(store, int(fidx))
+                if row is None:
                     continue
                 results.append(
                     RetrievedMemory(
-                        memory_id=store.ids[idx],
-                        text=store.texts[idx],
-                        source_index=store.source_indices[idx],
-                        time=store.times[idx],
+                        memory_id=store.ids[row],
+                        text=store.texts[row],
+                        source_index=store.source_indices[row],
+                        time=store.times[row],
                         score=float(score),
-                        metadata=store.metadatas[idx],
+                        metadata=store.metadatas[row],
                     )
                 )
             return results
@@ -223,18 +301,21 @@ class LocalFaissDatabase:
             seen_rounds += 1
             k_req = min(total, fetch_k)
             scores, indices = store.index.search(normalized_query, k_req)
-            for score, idx in zip(scores[0], indices[0]):
-                if idx == -1:
+            for score, fidx in zip(scores[0], indices[0]):
+                if fidx == -1:
                     continue
-                meta = store.metadatas[idx]
+                row = self._faiss_row_to_list_row(store, int(fidx))
+                if row is None:
+                    continue
+                meta = store.metadatas[row]
                 if not _passes_filters(meta):
                     continue
                 results.append(
                     RetrievedMemory(
-                        memory_id=store.ids[idx],
-                        text=store.texts[idx],
-                        source_index=store.source_indices[idx],
-                        time=store.times[idx],
+                        memory_id=store.ids[row],
+                        text=store.texts[row],
+                        source_index=store.source_indices[row],
+                        time=store.times[row],
                         score=float(score),
                         metadata=meta,
                     )
@@ -246,10 +327,135 @@ class LocalFaissDatabase:
             fetch_k = min(total, max(fetch_k * 2, top_k * 4))
         return results
 
+    def search_hybrid(
+        self,
+        query_text: str,
+        query_embedding: np.ndarray,
+        top_k: int,
+        *,
+        dense_weight: float = 0.5,
+        bm25_weight: float = 0.5,
+        only_primary: bool = False,
+        pool_mult: int = 4,
+        return_full_ranked_pool: bool = False,
+        full_corpus_pool: bool = False,
+    ) -> List[RetrievedMemory]:
+        """BM25 + dense (FAISS inner product) linear fusion with per-modality max normalization.
+
+        If ``return_full_ranked_pool`` is True, return all candidates in the fusion pool sorted by
+        combined score (not truncated to ``top_k``), for downstream mapping (e.g. unfused rank → fused rows).
+
+        If ``full_corpus_pool`` is True, dense/BM25 each consider every indexed row when building the
+        fusion pool (then truncate to ``top_k``), instead of capping at
+        ``min(n, max(top_k * pool_mult, 50))``.
+        """
+        if only_primary:
+            return self.search(query_embedding, top_k, only_primary=True)
+
+        w_d = max(0.0, float(dense_weight))
+        w_b = max(0.0, float(bm25_weight))
+        w_sum = w_d + w_b
+        if w_sum <= 0:
+            return self.search(query_embedding, top_k, only_primary=False)
+
+        w_d /= w_sum
+        w_b /= w_sum
+
+        self._ensure_loaded()
+        store = self._store
+        n_all = len(store.ids)
+        if n_all == 0 or top_k <= 0:
+            return []
+
+        pm = max(1, int(pool_mult))
+        if full_corpus_pool:
+            M = n_all
+        else:
+            M = min(n_all, max(top_k * pm, 50))
+
+        dense_scores: Dict[str, float] = {}
+        if (
+            w_d > 0
+            and query_embedding is not None
+            and query_embedding.size > 0
+            and store.index is not None
+            and store.index.ntotal > 0
+        ):
+            qe = query_embedding
+            if qe.ndim == 1:
+                qe = qe.reshape(1, -1)
+            normalized_query = np.ascontiguousarray(qe.astype(np.float32))
+            faiss.normalize_L2(normalized_query)
+            k_d = min(M, store.index.ntotal)
+            scores, indices = store.index.search(normalized_query, k_d)
+            for score, fidx in zip(scores[0], indices[0]):
+                if fidx == -1:
+                    continue
+                row = self._faiss_row_to_list_row(store, int(fidx))
+                if row is None:
+                    continue
+                dense_scores[store.ids[row]] = float(score)
+
+        bm25_top: Dict[str, float] = {}
+        if w_b > 0:
+            bm25 = self._get_bm25_okapi()
+            if bm25 is not None:
+                q_tokens = _tokenize_bm25(query_text)
+                raw = np.asarray(bm25.get_scores(q_tokens), dtype=np.float64)
+                take_m = min(M, len(raw))
+                if take_m > 0:
+                    if len(raw) <= take_m:
+                        top_ix = np.argsort(-raw)[:take_m]
+                    else:
+                        part = np.argpartition(-raw, take_m - 1)[:take_m]
+                        top_ix = part[np.argsort(-raw[part])]
+                    for i in top_ix:
+                        ii = int(i)
+                        bm25_top[store.ids[ii]] = float(raw[ii])
+
+        max_d = max(dense_scores.values()) if dense_scores else 0.0
+        max_b = max(bm25_top.values()) if bm25_top else 0.0
+
+        pool_ids = set(dense_scores) | set(bm25_top)
+        if not pool_ids:
+            return []
+
+        scored: List[tuple[float, float, float, str]] = []
+        for mid in pool_ids:
+            rd = dense_scores.get(mid, 0.0)
+            rb = bm25_top.get(mid, 0.0)
+            nd = (rd / max_d) if max_d > 0 else 0.0
+            nb = (rb / max_b) if max_b > 0 else 0.0
+            comb = w_d * nd + w_b * nb
+            scored.append((comb, rb, rd, mid))
+
+        # Tie-break combined scores with raw BM25 / dense so near-zero ties are deterministic.
+        scored.sort(key=lambda t: (-t[0], -t[1], -t[2], t[3]))
+        rank_cap = len(scored) if return_full_ranked_pool else top_k
+        scored = scored[:rank_cap]
+
+        out: List[RetrievedMemory] = []
+        for comb, _rb, _rd, mid in scored:
+            try:
+                row = store.ids.index(mid)
+            except ValueError:
+                continue
+            out.append(
+                RetrievedMemory(
+                    memory_id=mid,
+                    text=store.texts[row],
+                    source_index=store.source_indices[row],
+                    time=store.times[row],
+                    score=float(comb),
+                    metadata=dict(store.metadatas[row]),
+                )
+            )
+        return out
+
     def collect_evidence_descendants(self, root_primary_id: str) -> List[RetrievedMemory]:
         """
         从某条 primary 出发，按 parent_primary 链收集所有 evidence（BFS，支持 evidence 再挂子 evidence）。
-        仅包含 valid 且 memory_role == evidence 的条目；返回顺序为 BFS。metadata 中写入 evidence_depth（1 起）。
+        仅包含 memory_role == evidence 的条目；返回顺序为 BFS。metadata 中写入 evidence_depth（1 起）。
         """
         self._ensure_loaded()
         store = self._store
@@ -259,8 +465,6 @@ class LocalFaissDatabase:
         children: Dict[str, List[int]] = {}
         for i in range(len(store.ids)):
             meta = store.metadatas[i]
-            if not _memory_entry_is_valid(meta):
-                continue
             if _memory_entry_is_primary(meta):
                 continue
             pid = meta.get("parent_primary")
@@ -293,6 +497,11 @@ class LocalFaissDatabase:
                 )
                 queue.append((mid, depth))
         return out
+
+    def memory_row_count(self) -> int:
+        """Number of memory rows in this namespace (including rows without embeddings)."""
+        self._ensure_loaded()
+        return len(self._store.ids)
 
     def list_all_memories(self, sort_by_time: bool = True, descending: bool = False) -> List[RetrievedMemory]:
         """
@@ -358,13 +567,16 @@ class LocalFaissDatabase:
             return 0
 
         for idx in sorted(remove_idx, reverse=True):
+            memory_id = store.ids[idx]
             store.ids.pop(idx)
             store.texts.pop(idx)
             store.source_indices.pop(idx)
             store.times.pop(idx)
             store.metadatas.pop(idx)
-            if len(store.embeddings) > idx:
-                store.embeddings.pop(idx)
+            if memory_id in store.indexed_memory_ids:
+                emb_idx = store.indexed_memory_ids.index(memory_id)
+                store.indexed_memory_ids.pop(emb_idx)
+                store.embeddings.pop(emb_idx)
 
         if not store.ids:
             self._clear_dataset()
@@ -387,6 +599,70 @@ class LocalFaissDatabase:
         index.add(np.ascontiguousarray(embeddings))
         store.index = index
 
+    def _align_parallel_lists_to_ids(self) -> None:
+        """Ensure ids/texts/source_indices/times/metadatas have the same length (on-disk JSON can diverge)."""
+        store = self._store
+        n = len(store.ids)
+        if n == 0:
+            store.texts = []
+            store.source_indices = []
+            store.times = []
+            store.metadatas = []
+            return
+        for name, default in (
+            ("texts", ""),
+            ("source_indices", "unknown"),
+            ("times", "unknown_time"),
+            ("metadatas", None),
+        ):
+            lst: List[Any] = getattr(store, name)
+            if len(lst) < n:
+                while len(lst) < n:
+                    lst.append({} if name == "metadatas" else default)
+                setattr(store, name, lst)
+            elif len(lst) > n:
+                setattr(store, name, lst[:n])
+
+    def _repair_indexed_memory_ids_after_load(self) -> None:
+        """Align indexed_memory_ids with embeddings; migrate legacy layouts where FAISS row == ids index."""
+        store = self._store
+        ne = len(store.embeddings)
+        ni = len(store.indexed_memory_ids)
+        nid = len(store.ids)
+
+        if ne == 0:
+            store.indexed_memory_ids = []
+            return
+
+        if ni == 0:
+            if ne == nid:
+                store.indexed_memory_ids = list(store.ids)
+            elif ne <= nid:
+                store.indexed_memory_ids = list(store.ids[:ne])
+            else:
+                logger.warning(
+                    "More embeddings (%s) than ids (%s); truncating embeddings to ids length",
+                    ne,
+                    nid,
+                )
+                store.embeddings = store.embeddings[:nid]
+                store.indexed_memory_ids = list(store.ids)
+                ne = len(store.embeddings)
+
+        if ne != len(store.indexed_memory_ids):
+            m = min(ne, len(store.indexed_memory_ids))
+            store.embeddings = store.embeddings[:m]
+            store.indexed_memory_ids = store.indexed_memory_ids[:m]
+            logger.warning(
+                "Truncated embeddings/indexed_memory_ids to %s to recover consistent store",
+                m,
+            )
+            ne = len(store.embeddings)
+
+        n_idx = store.index.ntotal if store.index is not None else 0
+        if store.index is not None and n_idx != ne:
+            self._rebuild_index()
+
     def _dataset_dir(self) -> Path:
         return self.base_dir / self.namespace
 
@@ -398,7 +674,8 @@ class LocalFaissDatabase:
             source_indices=[],
             times=[],
             metadatas=[],
-            embeddings=[]
+            embeddings=[],
+            indexed_memory_ids=[],
         )
 
     def _ensure_loaded(self) -> None:
@@ -422,17 +699,40 @@ class LocalFaissDatabase:
                     logger.warning("Failed to load %s from %s: %s", name, path, e)
                     setattr(store, name, [])
 
+        im_path = dataset_dir / "indexed_memory_ids.json"
+        if im_path.exists():
+            try:
+                raw_im = json.loads(im_path.read_text(encoding="utf-8"))
+                store.indexed_memory_ids = raw_im if isinstance(raw_im, list) else []
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Failed to load indexed_memory_ids from %s: %s", im_path, e)
+                store.indexed_memory_ids = []
+        else:
+            store.indexed_memory_ids = []
+
         index_path = dataset_dir / "index.faiss"
         emb_path = dataset_dir / "embeddings.npy"
         if index_path.exists():
-            store.index = faiss.read_index(str(index_path))
+            try:
+                store.index = faiss.read_index(str(index_path))
+            except Exception as e:
+                logger.warning("Failed to load FAISS index from %s: %s", index_path, e)
+                store.index = None
         if emb_path.exists():
-            arr = np.load(emb_path, allow_pickle=False)
-            store.embeddings = [row.astype(np.float32) for row in arr]
+            try:
+                arr = np.load(emb_path, allow_pickle=False)
+                store.embeddings = [row.astype(np.float32) for row in arr]
+            except (EOFError, ValueError, OSError) as e:
+                logger.warning("Failed to load embeddings from %s: %s – starting with empty embeddings", emb_path, e)
+                store.embeddings = []
         if store.index is None and store.embeddings:
             self._rebuild_index()
 
-        # 兼容补齐老数据
+        self._align_parallel_lists_to_ids()
+
+        self._repair_indexed_memory_ids_after_load()
+
+        # 兼容补齐老数据（times 可从 metadatas 推断）
         total_len = len(store.ids)
         if len(store.source_indices) != total_len:
             store.source_indices = ["unknown"] * total_len
@@ -443,25 +743,84 @@ class LocalFaissDatabase:
 
         self._store_loaded = True
 
+    @staticmethod
+    def _atomic_write_bytes(target: Path, data: bytes) -> None:
+        """Write *data* to *target* via temp-file + rename to avoid partial / corrupt files."""
+        fd, tmp = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+            os.close(fd)
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _atomic_write_text(target: Path, text: str) -> None:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+        try:
+            os.write(fd, text.encode("utf-8"))
+            os.fsync(fd)
+            os.close(fd)
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
     def _persist(self) -> None:
         store = self._store
         dataset_dir = self._dataset_dir()
         dataset_dir.mkdir(parents=True, exist_ok=True)
 
         if store.index is not None and store.embeddings:
-            faiss.write_index(store.index, str(dataset_dir / "index.faiss"))
-            np.save(dataset_dir / "embeddings.npy", np.vstack(store.embeddings).astype(np.float32))
+            # FAISS index → atomic write via temp file
+            fd, tmp = tempfile.mkstemp(dir=dataset_dir, suffix=".tmp")
+            os.close(fd)
+            try:
+                faiss.write_index(store.index, tmp)
+                os.replace(tmp, dataset_dir / "index.faiss")
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            import io
+            buf = io.BytesIO()
+            np.save(buf, np.vstack(store.embeddings).astype(np.float32))
+            self._atomic_write_bytes(dataset_dir / "embeddings.npy", buf.getvalue())
 
         for name in ["ids", "texts", "source_indices", "times", "metadatas"]:
             path = dataset_dir / f"{name}.json"
             val = getattr(store, name)
-            path.write_text(json.dumps(val, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._atomic_write_text(path, json.dumps(val, ensure_ascii=False, indent=2))
+
+        self._atomic_write_text(
+            dataset_dir / "indexed_memory_ids.json",
+            json.dumps(store.indexed_memory_ids, ensure_ascii=False, indent=2),
+        )
 
     def _clear_dataset(self) -> None:
         dataset_dir = self._dataset_dir()
         if dataset_dir.exists():
             shutil.rmtree(dataset_dir)
         self._reset_store()
+        self._bump_bm25_revision()
         self._store_loaded = True
 
     def clear_all(self) -> None:

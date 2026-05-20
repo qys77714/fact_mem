@@ -1,7 +1,7 @@
 [project]
 name = "easy-mem"
 version = "0.1.0"
-description = "Unified benchmark pipeline for comparing long-context memory methods (RAG, Mem0, AMem, etc.)"
+description = "Unified benchmark pipeline for comparing long-context memory methods (RAG, LME candidate ingest, etc.)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,12 +11,17 @@ dependencies = [
     "pytest-asyncio>=1.3.0",
     "python-dotenv>=1.1.1",
     "transformers>=4.45.2",
-    "vllm>=0.17.0",
     "jinja2>=3.1.0",
     "openai>=1.0.0",
     "tqdm>=4.0.0",
+    "rank-bm25>=0.2.2",
+    "pyyaml>=6.0",
+    "graphiti-core[kuzu]>=0.29.0",
+    "kuzu>=0.11.3",
+    "rouge-score>=0.1.2",
 ]
 
 [[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+# TUNA 偶发对直链返回 403；与 uv.lock 中已有源一致用阿里云
+url = "https://mirrors.aliyun.com/pypi/simple"
 default = true

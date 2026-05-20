@@ -1,144 +1,64 @@
 from .base import BaseMemorySystem, RetrievedMemory
-from .baselines.full_context import FullContextMemorySystem
-from .baselines.rag import RagMemorySystem
-from .baselines.only_query import OnlyQueryMemorySystem
-from .baselines.append_recency import AppendOnlyMemorySystem, RecencyOnlyMemorySystem
-from .amem import AMemMemorySystem
-from .mem0 import Mem0MemorySystem
-from .relmem import RelMemMemorySystem
+
 
 def get_memory_system(
     method_name: str,
     embed_model_name: str,
     embed_client=None,
     database_root: str = None,
-    **kwargs
+    *,
+    use_hybrid_retrieval: bool = False,
+    hybrid_dense_weight: float = 0.5,
+    hybrid_bm25_weight: float = 0.5,
+    hybrid_pool_mult: int = 4,
+    hybrid_full_corpus_pool: bool = False,
+    unfused_rank_database_root: str | None = None,
+    language: str = "en",
+    rerank_qwen3_vllm: bool = False,
+    rerank_qwen3_vllm_base_url: str | None = None,
+    rerank_qwen3_vllm_api_key: str | None = None,
+    rerank_qwen3_vllm_model: str = "Qwen3-Reranker-0.6B",
+    rerank_qwen3_vllm_timeout_s: float = 120.0,
+    rerank_top_k: int | None = None,
+    **kwargs,
 ) -> BaseMemorySystem:
-    """
-    根据 method_name 获取不同的记忆系统实例
-    """
-    if method_name == "full_context":
-        return FullContextMemorySystem(
-            embed_model_name=embed_model_name,
-            embed_client=embed_client,
-            database_root=database_root
-        )
-    elif method_name == "rag":
-        granularity = kwargs.get("granularity", 1)
-        return RagMemorySystem(
-            granularity=granularity,
-            embed_model_name=embed_model_name,
-            embed_client=embed_client,
-            database_root=database_root
-        )
-    elif method_name == "append_only":
-        llm_client = kwargs.get("llm_client")
-        if llm_client is None:
-            raise ValueError("append_only requires llm_client (via kwargs)")
-        return AppendOnlyMemorySystem(
-            embed_model_name=embed_model_name,
-            llm_client=llm_client,
-            embed_client=embed_client,
-            database_root=database_root,
-            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
-            language=kwargs.get("language"),
-            granularity=kwargs.get("granularity", "all"),
-            trace_log_dir=kwargs.get("trace_log_dir"),
-            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
-            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
-            extract_concurrency=kwargs.get("extract_concurrency", 8),
-        )
-    elif method_name == "recency_only":
-        return RecencyOnlyMemorySystem(
+    """Return a memory system for ``pipeline_generate`` (prebuilt dense retrieval only)."""
+    from .baselines.lme_prebuilt import LmePrebuiltMemorySystem
+
+    if method_name == "lme_prebuilt":
+        return LmePrebuiltMemorySystem(
             embed_model_name=embed_model_name,
             embed_client=embed_client,
             database_root=database_root,
+            use_hybrid_retrieval=use_hybrid_retrieval,
+            hybrid_dense_weight=hybrid_dense_weight,
+            hybrid_bm25_weight=hybrid_bm25_weight,
+            hybrid_pool_mult=hybrid_pool_mult,
+            hybrid_full_corpus_pool=hybrid_full_corpus_pool,
+            unfused_rank_database_root=unfused_rank_database_root,
+            language=language,
+            rerank_qwen3_vllm=rerank_qwen3_vllm,
+            rerank_qwen3_vllm_base_url=rerank_qwen3_vllm_base_url,
+            rerank_qwen3_vllm_api_key=rerank_qwen3_vllm_api_key,
+            rerank_qwen3_vllm_model=rerank_qwen3_vllm_model,
+            rerank_qwen3_vllm_timeout_s=rerank_qwen3_vllm_timeout_s,
+            rerank_top_k=rerank_top_k,
+            **kwargs,
         )
-    elif method_name == "only_query":
-        return OnlyQueryMemorySystem()
-    elif method_name == "amem":
-        llm_client = kwargs.get("llm_client")
-        if llm_client is None:
-            raise ValueError("amem requires llm_client (via kwargs)")
-        return AMemMemorySystem(
-            embed_model_name=embed_model_name,
-            llm_client=llm_client,
-            embed_client=embed_client,
-            database_root=database_root,
-            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
-            language=kwargs.get("language"),
-            granularity=kwargs.get("granularity", "all"),
-            trace_log_dir=kwargs.get("trace_log_dir"),
-            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
-        )
-    elif method_name == "mem0":
-        llm_client = kwargs.get("llm_client")
-        if llm_client is None:
-            raise ValueError("mem0 requires llm_client (via kwargs)")
-        return Mem0MemorySystem(
-            embed_model_name=embed_model_name,
-            llm_client=llm_client,
-            embed_client=embed_client,
-            database_root=database_root,
-            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
-            language=kwargs.get("language"),
-            granularity=kwargs.get("granularity", "all"),
-            trace_log_dir=kwargs.get("trace_log_dir"),
-            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
-            allow_memory_delete=True,
-            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
-            extract_concurrency=kwargs.get("extract_concurrency", 8),
-        )
-    elif method_name == "mem0_nodel":
-        llm_client = kwargs.get("llm_client")
-        if llm_client is None:
-            raise ValueError("mem0_nodel requires llm_client (via kwargs)")
-        return Mem0MemorySystem(
-            embed_model_name=embed_model_name,
-            llm_client=llm_client,
-            embed_client=embed_client,
-            database_root=database_root,
-            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
-            language=kwargs.get("language"),
-            granularity=kwargs.get("granularity", "all"),
-            trace_log_dir=kwargs.get("trace_log_dir"),
-            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
-            allow_memory_delete=False,
-            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
-            extract_concurrency=kwargs.get("extract_concurrency", 8),
-        )
-    elif method_name == "relmem":
-        llm_client = kwargs.get("llm_client")
-        if llm_client is None:
-            raise ValueError("relmem requires llm_client (via kwargs)")
-        return RelMemMemorySystem(
-            embed_model_name=embed_model_name,
-            llm_client=llm_client,
-            embed_client=embed_client,
-            database_root=database_root,
-            related_memory_top_k=kwargs.get("related_memory_top_k", kwargs.get("retrieve_topk", 5)),
-            language=kwargs.get("language"),
-            granularity=kwargs.get("granularity", "all"),
-            trace_log_dir=kwargs.get("trace_log_dir"),
-            dialogue_format=kwargs.get("dialogue_format", "user_assistant"),
-            manager_max_new_tokens=kwargs.get("manager_max_new_tokens", 2048),
-            extract_concurrency=kwargs.get("extract_concurrency", 8),
-            relation_concurrency=kwargs.get("relation_concurrency", 8),
-            relation_max_new_tokens=kwargs.get("relation_max_new_tokens", 256),
-        )
-    else:
-        raise ValueError(f"Unknown memory method: {method_name}")
+    raise ValueError(f"Unknown memory method: {method_name}")
+
+
+def __getattr__(name: str):
+    if name == "LmePrebuiltMemorySystem":
+        from .baselines.lme_prebuilt import LmePrebuiltMemorySystem
+
+        return LmePrebuiltMemorySystem
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "BaseMemorySystem",
     "RetrievedMemory",
     "get_memory_system",
-    "FullContextMemorySystem",
-    "RagMemorySystem",
-    "AppendOnlyMemorySystem",
-    "RecencyOnlyMemorySystem",
-    "OnlyQueryMemorySystem",
-    "AMemMemorySystem",
-    "Mem0MemorySystem",
-    "RelMemMemorySystem",
+    "LmePrebuiltMemorySystem",
 ]

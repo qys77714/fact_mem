@@ -1,3 +1,4 @@
+import json
 import sys
 import shutil
 from pathlib import Path
@@ -89,6 +90,131 @@ def test_local_faiss():
     print("\n==== 所有的增删改查测试通过! ====")
     # 扫尾清理
     # shutil.rmtree(test_db_dir)
+
+def test_align_parallel_lists_when_metadatas_shorter_than_ids(tmp_path):
+    """On-disk JSON can have fewer metadatas than ids; load must pad before search."""
+    root = tmp_path / "db"
+    ns = root / "ep1"
+    ns.mkdir(parents=True)
+    emb = np.eye(3, dtype=np.float32)
+    ids_list = ["m1", "m2"]
+    (ns / "ids.json").write_text(json.dumps(ids_list), encoding="utf-8")
+    (ns / "texts.json").write_text(json.dumps(["a", "b"]), encoding="utf-8")
+    (ns / "source_indices.json").write_text(json.dumps(["s1", "s2"]), encoding="utf-8")
+    (ns / "times.json").write_text(json.dumps(["t1", "t2"]), encoding="utf-8")
+    (ns / "metadatas.json").write_text(json.dumps([{"k": 1}]), encoding="utf-8")
+    (ns / "indexed_memory_ids.json").write_text(json.dumps(ids_list), encoding="utf-8")
+    np.save(ns / "embeddings.npy", emb[:2])
+    import faiss
+
+    index = faiss.IndexFlatIP(3)
+    index.add(np.ascontiguousarray(emb[:2]))
+    faiss.write_index(index, str(ns / "index.faiss"))
+
+    db = LocalFaissDatabase(namespace="ep1", database_root=str(root))
+    q = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    out = db.search(q, top_k=2)
+    assert len(out) >= 1
+
+
+def test_search_maps_faiss_row_via_indexed_memory_ids(tmp_path):
+    """When some memories have no vector, FAISS row i is not ids[i]; use indexed_memory_ids."""
+    db = LocalFaissDatabase(namespace="mix", database_root=str(tmp_path))
+    emb = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    db.add("no embedding row", "s1", "t1", {"k": 1}, embedding=None)
+    mid = db.add("with embedding", "s2", "t2", {"k": 2}, embedding=emb)
+    out = db.search(emb, top_k=1)
+    assert len(out) == 1
+    assert out[0].memory_id == mid
+    assert "with embedding" in out[0].text
+
+
+def test_search_hybrid_dense_only_matches_search(tmp_path):
+    db = LocalFaissDatabase(namespace="hyb", database_root=str(tmp_path))
+    e1 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    e2 = np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32)
+    db.add("aaa", "s1", "t1", {}, embedding=e1)
+    db.add("bbb", "s2", "t2", {}, embedding=e2)
+    q = np.array([0.99, 0.1, 0.0, 0.0], dtype=np.float32)
+    h = db.search_hybrid("zzz", q, top_k=1, dense_weight=1.0, bm25_weight=0.0, pool_mult=4)
+    s = db.search(q, top_k=1)
+    assert len(h) == 1 and len(s) == 1
+    assert h[0].memory_id == s[0].memory_id
+
+
+def test_search_hybrid_bm25_only_matches_bm25_top1(tmp_path):
+    """With dense_weight=0 the keyword hit must win (validates BM25 arm + fusion path)."""
+    db = LocalFaissDatabase(namespace="hyb2", database_root=str(tmp_path))
+    e1 = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    e2 = np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32)
+    enoise = np.array([0.1, 0.1, 0.1, 0.1], dtype=np.float32)
+    # rank_bm25 returns all-zero scores on a 2-doc corpus for this query; add noise so IDF is meaningful.
+    for i in range(30):
+        db.add(
+            f"noise document {i} cats dogs park walking unrelated",
+            f"sn{i}",
+            "t0",
+            {},
+            embedding=enoise.reshape(1, -1),
+        )
+    db.add("broad vocabulary", "s1", "t1", {}, embedding=e1)
+    mid_kw = db.add("raretoken xyzzy answer", "s2", "t2", {}, embedding=e2)
+    q_emb = np.array([0.99, 0.01, 0.0, 0.0], dtype=np.float32)
+    out = db.search_hybrid("raretoken xyzzy", q_emb, top_k=1, dense_weight=0.0, bm25_weight=1.0, pool_mult=4)
+    assert len(out) == 1
+    assert out[0].memory_id == mid_kw
+    assert 0.0 <= out[0].score <= 1.0
+
+
+def test_search_hybrid_return_full_ranked_pool(tmp_path):
+    db = LocalFaissDatabase(namespace="hyb3", database_root=str(tmp_path))
+    for i in range(5):
+        e = np.zeros((4,), dtype=np.float32)
+        e[i % 4] = 1.0
+        db.add(f"t{i}", f"s{i}", "t", {}, embedding=e.reshape(1, -1))
+    q = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    short = db.search_hybrid("q", q, top_k=2, dense_weight=1.0, bm25_weight=0.0, pool_mult=2)
+    full = db.search_hybrid(
+        "q", q, top_k=2, dense_weight=1.0, bm25_weight=0.0, pool_mult=2, return_full_ranked_pool=True
+    )
+    assert len(short) == 2
+    assert len(full) == 5
+    assert [m.memory_id for m in short] == [m.memory_id for m in full[:2]]
+
+
+def test_search_hybrid_full_corpus_pool_expands_pool(tmp_path):
+    """With default M cap, dense only sees top-M vectors; full_corpus_pool scores all rows."""
+    db = LocalFaissDatabase(namespace="hyb4", database_root=str(tmp_path))
+    d = 4
+    for i in range(120):
+        e = np.zeros((d,), dtype=np.float32)
+        e[0] = 1.0
+        e[1] = float(i) * 0.0001
+        db.add(f"t{i}", f"s{i}", "t", {}, embedding=e.reshape(1, -1))
+    q = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    capped = db.search_hybrid(
+        "qqq",
+        q,
+        top_k=10,
+        dense_weight=1.0,
+        bm25_weight=0.0,
+        pool_mult=1,
+        return_full_ranked_pool=True,
+        full_corpus_pool=False,
+    )
+    whole = db.search_hybrid(
+        "qqq",
+        q,
+        top_k=10,
+        dense_weight=1.0,
+        bm25_weight=0.0,
+        pool_mult=1,
+        return_full_ranked_pool=True,
+        full_corpus_pool=True,
+    )
+    assert len(capped) == 50
+    assert len(whole) == 120
+
 
 if __name__ == "__main__":
     test_local_faiss()

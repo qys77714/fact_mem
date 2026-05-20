@@ -9,6 +9,31 @@ from utils.date_utils import parse_chat_time as _parse_chat_time
 
 logger = logging.getLogger(__name__)
 
+
+def _maybe_raw_from_missing_preprocessed(file_path: Path) -> Path:
+    """
+    若指向 preprocessed 的 *_converted.json 尚不存在，则尝试同目录树下的
+    ``raw_data/<stem 去掉 _converted>.json``（例如仅放了 ``longmemeval_oracle.json`` 时）。
+    """
+    if file_path.exists() or "preprocessed" not in file_path.parts:
+        return file_path
+    parts = list(file_path.parts)
+    idx = parts.index("preprocessed")
+    parts[idx] = "raw_data"
+    stem = file_path.stem
+    if stem.endswith("_converted"):
+        stem = stem[: -len("_converted")]
+    candidate = Path(*parts).with_name(f"{stem}.json")
+    if candidate.exists():
+        logger.info(
+            "Preprocessed file missing (%s); loading and converting from raw %s",
+            file_path,
+            candidate,
+        )
+        return candidate
+    return file_path
+
+
 class LMEBenchmark(BaseBenchmark):
     """
     针对 LongMemEval 系列数据集的 Loader
@@ -18,7 +43,7 @@ class LMEBenchmark(BaseBenchmark):
     
     def __init__(self, file_path: str, lang: str = "en"):
         # 拦截 file_path 检查并在有需要时进行预处理
-        raw_path = Path(file_path)
+        raw_path = _maybe_raw_from_missing_preprocessed(Path(file_path))
         
         # 匹配到 raw_data，自动导向到 preprocessed 目录
         if "raw_data" in raw_path.parts:

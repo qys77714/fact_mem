@@ -2,7 +2,7 @@ import csv
 import json
 from pathlib import Path
 
-from utils.eval_report import CSV_FIELDNAMES, append_csv_row, append_jsonl, utc_timestamp_iso
+from utils.eval_report import CSV_FIELDNAMES, append_csv_row, append_eval_json, append_jsonl, utc_timestamp_iso
 
 
 def test_utc_timestamp_iso_format():
@@ -17,6 +17,16 @@ def test_append_jsonl_roundtrip(tmp_path: Path):
     lines = p.read_text(encoding="utf-8").strip().splitlines()
     assert json.loads(lines[0]) == {"a": 1, "b": "x"}
     assert json.loads(lines[1]) == {"a": 2}
+
+
+def test_append_eval_json_array_and_indent(tmp_path: Path):
+    p = tmp_path / "eval_judge.json"
+    append_eval_json(p, {"run": 1, "x": "a"})
+    append_eval_json(p, {"run": 2})
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data == [{"run": 1, "x": "a"}, {"run": 2}]
+    text = p.read_text(encoding="utf-8")
+    assert "\n" in text and "  " in text
 
 
 def test_append_csv_row_header_and_merge(tmp_path: Path):

@@ -1,0 +1,49 @@
+You are given a short excerpt from a long-running dialogue between **two named people** (LoCoMo-style). Neither participant is a "user" or an "assistant".
+
+This pass extracts **only objective events, timelines, and ongoing factual circumstances**: things that happened, stable situational facts (job held, lives somewhere), concrete actions, dates/times/locations when stated as **factual circumstance** (not mere preference or opinion).
+
+## Subjects (who the fact is about)
+
+- Every memory must begin with (or be clearly about) an **explicit named subject** taken from the transcript: the speaker's own name, or a third party they discuss (e.g., "Caroline's brother Joe").
+- Do **not** use vague subjects such as "the user", "the speaker", "he", "she", "they", "one of them", or "both".
+- If you cannot tell which named entity a statement is about, **do not record it**.
+
+## Attribution rule (two-speaker dialogues)
+
+- When a speaker describes their **own** actions or experiences, the fact is about **that speaker**.
+- When a speaker reports a **concrete fact about another named person**, the fact is about **that other person** (see LoCoMo-style examples in the full protocol).
+- **Do not** record a speaker's **subjective belief, opinion, feeling, or guess** in this pass — those belong to a separate preferences/stance pass (e.g., skip "Caroline thinks Joe is lonely" here).
+- Rumor, hearsay, jokes, hypotheticals: skip unless clearly stated as committed objective fact; otherwise omit.
+- Questions and requests alone are not facts; only record committed factual content (e.g., a stated appointment that occurred or will occur as a concrete arrangement).
+
+## Atomicity
+
+One memory = one proposition. Split conjunctions, lists, and multi-clause sentences. Split an **event** from **time / location / detail** when each can stand alone. Do not bundle multiple updates into one sentence.
+
+## Coreference & clarity
+
+Resolve pronouns to transcript names; drop if unresolved. Use session header dates only when grounding stated relative time. Do not invent names, places, or relationships.
+
+## Scope for THIS pass only
+
+**Include:** completed or ongoing events; relocations; appointments or occurrences with factual anchors; illness/recovery stated as fact; employment or education as **current circumstance** when asserted as fact.
+
+**Exclude:** pure preferences or evaluations; plans expressed **only** as intent without a factual anchor (unless the excerpt fixes a concrete scheduled fact); **standalone relationship labels** without an event (e.g., "Joe is Caroline's father" — omit here; use social pass); subjective stance sentences.
+
+## Usually omit
+
+Greetings, filler, fleeting moods, meta-chat, near-duplicates in the same chunk, anything not confidently attributable to a named subject.
+
+## Output
+
+Return **only**:
+
+```
+{"memories": ["<atomic fact 1>", ...]}
+```
+
+Each string: one English declarative sentence, explicit named subject, no speaker tags inside the string. If nothing qualifies, `{"memories": []}`.
+
+## Input
+
+[[ observation ]]

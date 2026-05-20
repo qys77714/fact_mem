@@ -1,0 +1,32 @@
+You extract **only interpersonal, identity, and social-context facts** from the dialogue excerpt: who people are to each other (family, friends, colleagues), roles, titles, how they address each other, group membership, and stable relational labels **as factual claims** in the dialogue.
+
+## Dialogue format
+
+- For `user:` / `assistant:` transcripts: rewrite first-person user mentions as `the user`; named third parties must be explicit (same rules as standard extraction).
+- For **named-speaker** lines (`Name: ...`): subjects must be **explicit names from the transcript**. Do **not** use `the user`, `the speaker`, `he`, `she`, `they`, or vague collectives.
+
+## Scope (this pass only)
+
+**Include:** kinship; friendship/coworker labels when stated as fact; names tied to roles (`Caroline's father Joe`); household composition; stable relational descriptors committed as factual.
+
+**Exclude for this pass:** one-off events with no relational information; pure preferences without relational content; generic opinions not stating who someone is to someone else.
+
+## Atomicity & faithfulness
+
+One memory = one proposition. Split distinct relationships. Do not invent ties not supported by the excerpt. Resolve coreference to names.
+
+Each item: plain declarative English sentence; no speaker tags inside the string.
+
+## Output
+
+Return **only**:
+
+```
+{"memories": ["<atomic fact 1>", ...]}
+```
+
+Use `{"memories": []}` if nothing in this aspect applies.
+
+## Input
+
+[[ observation ]]

@@ -1,0 +1,47 @@
+You are given a short excerpt from a long-running dialogue between **two named people** (LoCoMo-style). Neither participant is a "user" or an "assistant".
+
+This pass extracts **only interpersonal, identity, and social-structure facts**: who is related or connected to whom, roles, titles, household composition, and stable relational labels **asserted as factual** in the dialogue.
+
+## Subjects (who the fact is about)
+
+- Every memory must use an **explicit named subject** from the transcript (people or named entities like pets when named).
+- Do **not** use vague subjects such as "the user", "the speaker", "he", "she", "they", "one of them", or "both".
+
+## Attribution rule (two-speaker dialogues)
+
+- When a speaker states a **factual tie** between named entities (e.g., kinship, friendship, coworker), record it with **clear direction** (e.g., `Joe is Caroline's father.` / `Caroline's father Joe ...` as appropriate for clarity).
+- When a speaker reports a relationship fact **about another**, attribute the proposition to the correct entities per LoCoMo rules (relationship target vs speaker).
+- **Subjective** opinions about relationships are **not** this pass — use a preferences/stance pass instead.
+- Questions alone are not facts.
+
+## Atomicity
+
+One memory = one relational proposition. Split distinct relationships (e.g., sibling vs parent). Do not merge unrelated ties.
+
+## Coreference & clarity
+
+Resolve pronouns to names. Do not invent relatives or roles not supported by the excerpt.
+
+## Scope for THIS pass only
+
+**Include:** kinship; friendship or colleague labels stated as fact; named roles (`Caroline's father Joe`); household membership when factual.
+
+**Exclude:** one-off events with no relational information (events pass); pure preferences without relational content (preferences pass).
+
+## Usually omit
+
+Greetings, filler, meta-chat, duplicates, unattributable content.
+
+## Output
+
+Return **only**:
+
+```
+{"memories": ["<atomic fact 1>", ...]}
+```
+
+Each string: one English declarative sentence; explicit named entities; direction of relationship clear. If nothing qualifies, `{"memories": []}`.
+
+## Input
+
+[[ observation ]]

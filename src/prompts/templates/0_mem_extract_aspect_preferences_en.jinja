@@ -1,0 +1,36 @@
+You extract **only preferences, plans, goals, intentions, and subjective attitudes** from the dialogue excerpt: likes/dislikes, wants, hopes, evaluations, beliefs attributed to speakers, and stated intentions (including tentative plans).
+
+## Dialogue format
+
+- For `user:` / `assistant:` transcripts: rewrite first-person user mentions as `the user`; apply standard attribution (assistant turns only if clearly restating user-committed content).
+- For **named-speaker** lines (`Name: ...`): use **explicit names from the transcript** as subjects. Do **not** use `the user`, `the speaker`, `he`, `she`, `they`, or vague collectives. Subjective beliefs about another named person should name whose belief it is (e.g., `Melinda believes that ...`).
+
+## Scope (this pass only)
+
+**Include:** preferences; goals and plans (including modal wording); opinions and judgments; comparative likes; stated motivations **as subjective** when appropriate.
+
+**Exclude for this pass:** purely factual events with no evaluative or intentional layer (capture those in an events-focused pass); bare relationship definitions without preference/opinion (e.g., "X is Y's brother" → omit here unless tied to an attitude).
+
+## Modality
+
+Use explicit modals for intents (`plans to`, `wants to`, `prefers`, `hopes`). Do not state a wish or plan as a completed past fact unless the excerpt confirms it happened.
+
+## Atomicity & faithfulness
+
+One memory = one proposition. Split preference from reason. No fabrication. Questions alone are not memories.
+
+Each item: plain declarative English sentence; no speaker tags inside the string.
+
+## Output
+
+Return **only**:
+
+```
+{"memories": ["<atomic fact 1>", ...]}
+```
+
+Use `{"memories": []}` if nothing in this aspect applies.
+
+## Input
+
+[[ observation ]]

@@ -1,0 +1,30 @@
+You will compare two facts.
+
+`NEW FACT` is one atomic candidate fact extracted from a multi-turn dialogue.
+`OLD FACT` is one existing memory that may or may not describe the same thing.
+
+Return exactly one of these labels:
+- `EQV`: the two facts are semantically equivalent and have the same truth conditions.
+- `NSO`: `OLD FACT` strictly entails `NEW FACT`, so the new fact is weaker, broader, or less specific.
+- `OSN`: `NEW FACT` strictly entails `OLD FACT`, so the new fact is stronger, narrower, or more specific.
+- `CON`: the two facts cannot both be true in the same interpretation.
+- `IND`: the facts can both be true, are only loosely related, or have no entailment relation.
+
+Use this decision process:
+1. First, check whether the two facts are about the same entity or about entities that can be clearly aligned. If not, choose `IND`.
+2. If they are about the same aligned entity and they are mutually inconsistent, choose `CON`.
+3. If they entail each other, choose `EQV`.
+4. If only `OLD FACT` entails `NEW FACT`, choose `NSO`.
+5. If only `NEW FACT` entails `OLD FACT`, choose `OSN`.
+6. Otherwise, choose `IND`.
+
+Important constraints:
+- Use `NSO` and `OSN` only for strict entailment, not for weak association or plausible implication.
+- Modest background knowledge is allowed when it is normally treated as factual entailment, such as geographic containment or a tighter vs. looser version of the same claim.
+- Do not use broad commonsense relatedness as entailment.
+- If you are unsure whether entailment really holds, choose `IND`.
+
+Output format:
+- Return a JSON object with exactly one key: `"relation"`.
+- The value must be one of `IND`, `EQV`, `NSO`, `OSN`, `CON`.
+- Do not output any extra keys, explanation, or prose.

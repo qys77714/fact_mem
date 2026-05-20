@@ -83,6 +83,32 @@ def test_lme_loader_converts_raw_and_sorts_sessions(tmp_path: Path):
     assert expected_preprocessed.exists()
 
 
+def test_lme_resolves_raw_when_only_preprocessed_path_given(tmp_path: Path):
+    """仅存在 raw_data/longmemeval_x.json 时，可直接传 preprocessed 路径触发转换。"""
+    raw_dir = tmp_path / "data" / "raw_data"
+    raw_fp = raw_dir / "longmemeval_x.json"
+    raw_data = [
+        {
+            "question_id": "qid_2",
+            "question": "q?",
+            "answer": "a",
+            "question_date": "2024/01/01 10:00",
+            "question_type": "knowledge-update",
+            "haystack_dates": ["2024/01/01 (Mon) 10:00"],
+            "haystack_sessions": [[{"role": "user", "content": "hi", "has_answer": False}]],
+        }
+    ]
+    _write_json(raw_fp, raw_data)
+
+    missing_pre = tmp_path / "data" / "preprocessed" / "longmemeval_x_converted.json"
+    assert not missing_pre.exists()
+
+    bm = LMEBenchmark(str(missing_pre), lang="en")
+    assert len(bm) == 1
+    assert bm.episodes[0].history_name == "qid_2"
+    assert missing_pre.exists()
+
+
 def test_event_loader_basic(tmp_path: Path):
     fp = tmp_path / "event.json"
     _write_json(

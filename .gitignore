@@ -19,4 +19,5 @@ src/generate/openai_chat_batch_azure.py
 
 # Secrets
 .env
+viewer/
 

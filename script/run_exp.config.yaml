@@ -31,7 +31,7 @@ parallel:
   ingest_add_all_episode_concurrency: 100
   ingest_zep_episode_concurrency: 8
   ingest_amac_episode_concurrency: 20
-  ingest_evermemos_episode_concurrency: 10
+  ingest_evermemos_episode_concurrency: 1
   fuse_relation_decision_fused_episode_concurrency: 30
   fuse_relation_decision_fused_package_concurrency: 20
   generate_lme_prebuilt_parallel_episodes: 100

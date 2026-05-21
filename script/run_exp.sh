@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_exp.sh — LME 实验流水线（抽取 → 灌库 → 融合 → 生成 → Judge → HTML）
+# run_exp.sh — LME 实验流水线（抽取 → 灌库 → 生成 → Judge → HTML）
+# 说明：关系包融合是 relation_decision 灌库方法的后续子步骤，不是与灌库并列的通用阶段。
 #
 # 用法:
 #   ./script/run_exp.sh
@@ -116,10 +117,10 @@ relation_related_top_k=3
 mem0_related_top_k=3
 mem0_related_aggregate_max=10
 
-# --- 3) 关系包融合（默认与 manager 一致；可单独覆盖；融合模板在 YAML prompts）---
+# relation_decision 专用：关系包融合模型（默认与 manager 一致；融合模板在 YAML prompts）
 fusion_model="${manager_model}"
 
-# --- 4) 生成 / 答题（混合检索）---
+# --- 3) 生成 / 答题（混合检索）---
 # 仅答题与 Judge：按题库中 question_type 比例分层抽样（0=全量；与 --question-types 可同时用）
 answer_stratified_sample=500
 answer_sample_seed=43
@@ -136,7 +137,7 @@ answer_hybrid_dense_weight=0.8
 answer_hybrid_bm25_weight=0.2
 answer_hybrid_pool_mult=4
 
-# --- 5) Judge（Qwen3 Judge 服务端思考链；模板在 YAML prompts）---
+# --- 4) Judge（Qwen3 Judge 服务端思考链；模板在 YAML prompts）---
 # judge_pipeline_opts=()
 # if [[ "$judge_model" == "Qwen3-32B" ]]; then
 #   judge_pipeline_opts+=(--judge-qwen-thinking)
@@ -178,7 +179,7 @@ fi
 judge_pipeline_opts+=(--stratified-sample-n "${judge_stratified_sample}" --stratified-sample-seed "${judge_sample_seed}")
 
 # =============================================================================
-# 流水线：抽取 → 灌库（relation / mem0 / zep / add_all / amac）→ 融合 → 生成 → Judge
+# 流水线：抽取 → 灌库（relation_decision 含关系包融合 / mem0 / zep / add_all / amac）→ 生成 → Judge
 # =============================================================================
 extract_py_args=(
   --benchmark "$benchmark"
@@ -251,7 +252,8 @@ if [[ -n "${relation_classification_user:-}" ]]; then
   ingest_relation_decision_prompt_args+=(--relation-user-template "${relation_classification_user}")
 fi
 
-_run_step "灌库 relation_decision → ${dir_memdb_ingest_relation_decision}"
+# ----- relation_decision（关系分类写库 → 关系包融合；仅此灌库策略含融合）-----
+_run_step "relation_decision（1/2 关系分类写库）→ ${dir_memdb_ingest_relation_decision}"
 python -u src/pipeline/ingest_candidates.py \
   --update-method relation_decision \
   --trust-apply-marker \
@@ -268,7 +270,8 @@ python -u src/pipeline/ingest_candidates.py \
 #   --out "${repo_root}/viewer/${viewer_run_tag}/relation_decision_special_relations.html"
 
 # 从 relation_decision 只读拷贝各 episode 到 relation_decision_fused 再融合；已融合 episode 自动跳过
-_run_step "关系包融合: ${dir_memdb_ingest_relation_decision} → ${dir_memdb_ingest_relation_decision_fused}"
+_run_step "relation_decision（2/2 关系包融合）→ ${dir_memdb_ingest_relation_decision_fused}"
+_run_sub "自 ${dir_memdb_ingest_relation_decision} 只读拷贝后融合；非 mem0/zep/add_all/amac 的通用步骤"
 fuse_cli_extra=()
 if [[ -n "${fusion_bundle_template_en}" ]]; then
   fuse_cli_extra+=(--fusion-bundle-template-en "${fusion_bundle_template_en}")

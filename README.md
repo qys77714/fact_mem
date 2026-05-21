@@ -1,6 +1,6 @@
 # easy-mem
 
-在长对话记忆评测基准上，对比 **LME 候选记忆抽取 → 灌库 → 混合检索答题** 等流程的实验框架。完整实验通常由 **[`script/run_exp.sh`](script/run_exp.sh)** 编排（候选抽取 → 灌库 → 融合 → 生成 → LLM Judge；脚本头部注明了可选 HTML 对照等步骤）。
+在长对话记忆评测基准上，对比 **LME 候选记忆抽取 → 灌库 → 混合检索答题** 等流程的实验框架。完整实验通常由 **[`script/run_exp.sh`](script/run_exp.sh)** 编排（候选抽取 → 灌库 → 生成 → LLM Judge；其中 **`relation_decision` 灌库含关系包融合子步骤**，非与灌库并列的通用阶段；脚本头部注明了可选 HTML 对照等步骤）。
 
 手工单步跑时，核心仍是：**加载基准数据 → 写入/检索记忆 → 标准 Agent 答题 → 输出 JSONL**，并可选用 LLM Judge 写回评分。
 
@@ -72,6 +72,8 @@ RUN_EXP_CONFIG=/path/to/custom.yaml ./script/run_exp.sh
 
 ## 完整流水线步骤
 
+通用阶段为四步：**候选抽取 → 灌库 → 生成 → 评测**。关系包融合**不是**与灌库并列的通用阶段，而是 **`relation_decision` 方法在关系分类写库之后的内置后处理**（[`src/pipeline/fuse_lme_memory_bundles.py`](src/pipeline/fuse_lme_memory_bundles.py)）；`mem0` / `zep` / `add_all` / `amac` 等其它灌库策略不含此步骤。
+
 ### 1. 候选抽取（`src/pipeline/extract_candidates.py`）
 
 从对话历史中用 LLM 抽取候选记忆片段，输出写入 `MemDB/candidates/`。支持三方面模板（事件/偏好/社交关系）与主模板两种抽取模式，由 `run_exp.config.yaml` 的 `prompts.mem_extract_aspects_only` 控制。
@@ -82,17 +84,13 @@ RUN_EXP_CONFIG=/path/to/custom.yaml ./script/run_exp.sh
 
 | `--update-method` | 说明 |
 |-------------------|------|
-| `relation_decision` | 成对五类关系分类（IND/EQV/NSO/OSN/CON）后写弱边，桶内聚合 |
+| `relation_decision` | 成对五类关系分类（IND/EQV/NSO/OSN/CON）后写弱边，桶内聚合；随后对关系包做 LLM 融合，产出 `relation_decision_fused` 库供检索（融合脚本见 [`fuse_lme_memory_bundles.py`](src/pipeline/fuse_lme_memory_bundles.py)） |
 | `add_all` | 全量写入，不做关系判断 |
 | `mem0` | Mem0 风格：LLM 判断增/改/删 |
 | `zep` | 基于 Graphiti + Kuzu 的知识图谱写入 |
 | `amac` | A-MAC 风格：五维准入评分（效用 U / 置信 C / 新颖 N / 时效 R / 类型先验 T）过滤后写入 |
 
-### 3. 融合（`src/pipeline/fuse_lme_memory_bundles.py`）
-
-对 `relation_decision` 库内的关系包执行 LLM 融合，生成 `relation_decision_fused` 库。可选步骤，适用于完整流水线。
-
-### 4. 生成（`src/pipeline_generate.py`）
+### 3. 生成（`src/pipeline_generate.py`）
 
 以 `--method lme_prebuilt --prebuilt-memory` 从预建库检索，经标准 Agent 答题后输出 JSONL。支持混合检索（BM25 + 稠密）、Qwen3 Reranker、`--memory_token_limit` 等。
 
@@ -101,7 +99,7 @@ export PYTHONPATH=src
 uv run python src/pipeline_generate.py --help
 ```
 
-### 5. 评测（`src/pipeline_evaluate.py`）
+### 4. 评测（`src/pipeline_evaluate.py`）
 
 对预测 JSONL 调用 LLM Judge，支持多个 `--input` 在同一进程内评测。
 
@@ -138,7 +136,7 @@ src/
     baselines/        # lme_prebuilt（检索阶段 memory system）
     admission/        # A-MAC 五维准入评分（U/C/N/R/T）
     candidate_ingest/ # relation_decision、add_all、mem0、amac 写库逻辑
-    fusion/           # LME 关系包融合（bundle prompt render + LME bundle fusion）
+    fusion/           # relation_decision 专用：关系包融合（bundle prompt render + LME bundle fusion）
     mem0/             # Mem0 风格增量更新
     zep/              # Graphiti + Kuzu 知识图谱适配
     storage/          # LocalFaiss 向量库封装

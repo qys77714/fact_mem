@@ -29,8 +29,9 @@ parallel:
   ingest_relation_decision_episode_concurrency: 20
   ingest_mem0_episode_concurrency: 50
   ingest_add_all_episode_concurrency: 100
-  ingest_zep_episode_concurrency: 4
+  ingest_zep_episode_concurrency: 8
   ingest_amac_episode_concurrency: 20
+  ingest_evermemos_episode_concurrency: 10
   fuse_relation_decision_fused_episode_concurrency: 30
   fuse_relation_decision_fused_package_concurrency: 20
   generate_lme_prebuilt_parallel_episodes: 100
@@ -109,18 +110,21 @@ paths:
   dir_memdb_ingest_add_all: "${dir_memdb_ingest_run_root}/add_all"
   dir_memdb_ingest_zep: "${dir_memdb_ingest_run_root}/zep"
   dir_memdb_ingest_amac: "${dir_memdb_ingest_run_root}/amac"
+  dir_memdb_ingest_evermemos: "${dir_memdb_ingest_run_root}/evermemos"
   dir_logs_memory_trace_run_root: "logs/memory_trace/${benchmark}_cand${candidate_suffix}_${manager_model}_tl${tok_generate_lme_prebuilt_memory_token_limit}_${exp_suffix}"
   dir_logs_memory_trace_relation_decision: "${dir_logs_memory_trace_run_root}/relation_decision"
   dir_logs_memory_trace_mem0: "${dir_logs_memory_trace_run_root}/mem0"
   dir_logs_memory_trace_add_all: "${dir_logs_memory_trace_run_root}/add_all"
   dir_logs_memory_trace_zep: "${dir_logs_memory_trace_run_root}/zep"
   dir_logs_memory_trace_amac: "${dir_logs_memory_trace_run_root}/amac"
+  dir_logs_memory_trace_evermemos: "${dir_logs_memory_trace_run_root}/evermemos"
   dir_logs_agent_trace_run_root: "logs/agent_trace/${benchmark}_cand${candidate_suffix}_${manager_model}_${answer_model}_tl${tok_generate_lme_prebuilt_memory_token_limit}_${exp_suffix}"
   dir_logs_agent_trace_relation_decision: "${dir_logs_agent_trace_run_root}/relation_decision"
   dir_logs_agent_trace_mem0: "${dir_logs_agent_trace_run_root}/mem0"
   dir_logs_agent_trace_add_all: "${dir_logs_agent_trace_run_root}/add_all"
   dir_logs_agent_trace_zep: "${dir_logs_agent_trace_run_root}/zep"
   dir_logs_agent_trace_amac: "${dir_logs_agent_trace_run_root}/amac"
+  dir_logs_agent_trace_evermemos: "${dir_logs_agent_trace_run_root}/evermemos"
   dir_experiment_run_root: "experiment/${benchmark}_cand${candidate_suffix}_${manager_model}_${answer_model}_tl${tok_generate_lme_prebuilt_memory_token_limit}_${exp_suffix}"
   viewer_run_tag: "${benchmark}_cand${candidate_suffix}_${manager_model}_${answer_model}_tl${tok_generate_lme_prebuilt_memory_token_limit}_${exp_suffix}"
   file_experiment_pred_relation_decision_jsonl: "${dir_experiment_run_root}/pred_relation_decision.jsonl"
@@ -128,3 +132,4 @@ paths:
   file_experiment_pred_add_all_jsonl: "${dir_experiment_run_root}/pred_add_all.jsonl"
   file_experiment_pred_zep_jsonl: "${dir_experiment_run_root}/pred_zep.jsonl"
   file_experiment_pred_amac_jsonl: "${dir_experiment_run_root}/pred_amac.jsonl"
+  file_experiment_pred_evermemos_jsonl: "${dir_experiment_run_root}/pred_evermemos.jsonl"

@@ -35,6 +35,7 @@ class MemoryEpisode:
     history_name: str  # 对应原代码的 question_id 或 history_name
     sessions: List[ChatSession]  # 按时间线排列的记忆块
     qas: List[QuestionItem]      # 需要模型回答的问题列表
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 class BaseBenchmark:
     """所有 Benchmark 的基类"""

@@ -91,7 +91,7 @@ fi
 # MEME 说明: evidence 会话直接使用 gold_facts 作为候选记忆（无 LLM 抽取），
 #            filler 会话走 LLM 三方面抽取（与 lme_s 相同 0_mem_extract_v2.jinja）；
 #            评测题来自 after_questions（ER/Agg/Tr/Del/Cas/Abs 六类任务）。
-benchmark=meme_filler32k
+benchmark=lme_s
 question_types=""
 # 须与 YAML prompts.mem_extract_aspect_template_* 的 *_en / *_zh 一致（三方面抽取时尤需注意）
 apply_language="en"
@@ -100,12 +100,12 @@ apply_language="en"
 extract_model="gemma4-26B"
 manager_model="gemma4-26B"
 answer_model="gemma4-26B"
-judge_model="gpt-5.4"
+judge_model="gpt-4o-mini"
 embedding_model="qwen3-embedding-8b"
 
 # --- 版本标签（换抽取策略时请改 candidate_suffix，否则会沿用 extract_progress.state 跳过已标记 episode）---
-candidate_suffix="0519_as3"
-exp_suffix="0519"
+candidate_suffix="0507_as3"
+exp_suffix="0521"
 
 # --- 1) 候选抽取（粗粒度、窗口；模板名在 run_exp.config.yaml -> prompts）---
 memory_granularity=4
@@ -116,6 +116,7 @@ extract_turn_overlap=0
 relation_related_top_k=3
 mem0_related_top_k=3
 mem0_related_aggregate_max=10
+amac_threshold=0.3
 
 # relation_decision 专用：关系包融合模型（默认与 manager 一致；融合模板在 YAML prompts）
 fusion_model="${manager_model}"
@@ -297,6 +298,15 @@ python -u src/pipeline/fuse_lme_memory_bundles.py \
 #   --fused-root "${dir_memdb_ingest_relation_decision_fused}" \
 #   --out "${repo_root}/viewer/${viewer_run_tag}/relation_decision_to_fusion.html"
 
+_run_step "灌库 add_all → ${dir_memdb_ingest_add_all}"
+python -u src/pipeline/ingest_candidates.py \
+  --update-method add_all \
+  --trust-apply-marker \
+  --database-root "${dir_memdb_ingest_add_all}" \
+  --trace-log-dir "${dir_logs_memory_trace_add_all}" \
+  "${ingest_shared[@]}" \
+  --add-all-episode-concurrency "${ingest_add_all_episode_concurrency}"
+
 _run_step "灌库 mem0 → ${dir_memdb_ingest_mem0}"
 python -u src/pipeline/ingest_candidates.py \
   --update-method mem0 \
@@ -308,25 +318,14 @@ python -u src/pipeline/ingest_candidates.py \
   --mem0-related-aggregate-max "${mem0_related_aggregate_max}" \
   --mem0-episode-concurrency "${ingest_mem0_episode_concurrency}"
 
-_run_step "灌库 zep → ${dir_memdb_ingest_zep}"
-python -u src/pipeline/ingest_candidates.py \
-  --update-method zep \
-  --trust-apply-marker \
-  --database-root "${dir_memdb_ingest_zep}" \
-  --trace-log-dir "${dir_logs_memory_trace_zep}" \
-  "${ingest_shared[@]}" \
-  --zep-episode-concurrency "${ingest_zep_episode_concurrency}"
-
-
-
-_run_step "灌库 add_all → ${dir_memdb_ingest_add_all}"
-python -u src/pipeline/ingest_candidates.py \
-  --update-method add_all \
-  --trust-apply-marker \
-  --database-root "${dir_memdb_ingest_add_all}" \
-  --trace-log-dir "${dir_logs_memory_trace_add_all}" \
-  "${ingest_shared[@]}" \
-  --add-all-episode-concurrency "${ingest_add_all_episode_concurrency}"
+# _run_step "灌库 zep → ${dir_memdb_ingest_zep}"
+# python -u src/pipeline/ingest_candidates.py \
+#   --update-method zep \
+#   --trust-apply-marker \
+#   --database-root "${dir_memdb_ingest_zep}" \
+#   --trace-log-dir "${dir_logs_memory_trace_zep}" \
+#   "${ingest_shared[@]}" \
+#   --zep-episode-concurrency "${ingest_zep_episode_concurrency}"
 
 _run_step "灌库 amac → ${dir_memdb_ingest_amac}"
 ingest_amac_cli=(
@@ -338,12 +337,22 @@ ingest_amac_cli=(
   --ingest-obs-granularity "${memory_granularity}"
   --ingest-obs-turn-overlap "${extract_turn_overlap}"
   --amac-episode-concurrency "${ingest_amac_episode_concurrency}"
+  --amac-threshold "${amac_threshold}"
 )
 case "${benchmark,,}" in
   locomo*) ingest_amac_cli+=(--ingest-obs-dialogue-format named_speakers) ;;
   meme*)   : ;;
 esac
 python -u src/pipeline/ingest_candidates.py "${ingest_amac_cli[@]}"
+
+_run_step "灌库 evermemos → ${dir_memdb_ingest_evermemos}"
+python -u src/pipeline/ingest_candidates.py \
+  --update-method evermemos \
+  --trust-apply-marker \
+  --database-root "${dir_memdb_ingest_evermemos}" \
+  --trace-log-dir "${dir_logs_memory_trace_evermemos}" \
+  "${ingest_shared[@]}" \
+  --evermemos-episode-concurrency "${ingest_evermemos_episode_concurrency}"
 
 # MEME：~694 道题全量评测（不分层抽样），覆盖 6 种任务类型
 case "${benchmark,,}" in
@@ -420,6 +429,14 @@ python -u "${common_py[@]}" \
   --output "${file_experiment_pred_add_all_jsonl}" \
   "${eval_forward[@]}"
 
+_run_step "生成预测: evermemos → ${file_experiment_pred_evermemos_jsonl}"
+_run_sub "agent trace: ${dir_logs_agent_trace_evermemos}"
+python -u "${common_py[@]}" \
+  --agent_trace_dir "${dir_logs_agent_trace_evermemos}" \
+  --database_root "${dir_memdb_ingest_evermemos}" \
+  --output "${file_experiment_pred_evermemos_jsonl}" \
+  "${eval_forward[@]}"
+
 _run_step "LLM Judge（多文件并行，写回预测 JSONL）"
 judge_inputs=()
 for pred_file in \
@@ -427,7 +444,8 @@ for pred_file in \
     "${file_experiment_pred_mem0_jsonl}" \
     "${file_experiment_pred_zep_jsonl}" \
     "${file_experiment_pred_amac_jsonl}" \
-    "${file_experiment_pred_add_all_jsonl}"; do
+    "${file_experiment_pred_add_all_jsonl}" \
+    "${file_experiment_pred_evermemos_jsonl}"; do
   if [[ -f "$pred_file" ]]; then
     judge_inputs+=("$pred_file")
   fi
@@ -472,6 +490,7 @@ _run_sub "  mem0:                    ${file_experiment_pred_mem0_jsonl}"
 _run_sub "  zep:                     ${file_experiment_pred_zep_jsonl}"
 _run_sub "  amac:                    ${file_experiment_pred_amac_jsonl}"
 _run_sub "  add_all:                 ${file_experiment_pred_add_all_jsonl}"
+_run_sub "  evermemos:               ${file_experiment_pred_evermemos_jsonl}"
 echo ""
 # _run_sub "viewer/${viewer_run_tag}/relation_decision_special_relations.html"
 # _run_sub "viewer/${viewer_run_tag}/relation_decision_to_fusion.html"

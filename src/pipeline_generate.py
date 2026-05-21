@@ -645,6 +645,18 @@ def _build_record(benchmark_name: str, history_name: str, question, model_answer
     if "golden_option" in question.metadata:
         record["golden_option"] = question.metadata["golden_option"]
 
+    # MEME protocol fields (optional)
+    if "phase" in question.metadata:
+        record["phase"] = question.metadata["phase"]
+    if "entity_key" in question.metadata:
+        record["entity_key"] = question.metadata["entity_key"]
+    if "entity_values" in question.metadata:
+        record["entity_values"] = question.metadata["entity_values"]
+    if "max_session_index" in question.metadata:
+        record["max_session_index"] = question.metadata["max_session_index"]
+    if "hop" in question.metadata:
+        record["hop"] = question.metadata["hop"]
+
     return record
 
 

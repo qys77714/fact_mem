@@ -27,6 +27,7 @@ LmeCandidateRelMemMemorySystem = LmeCandidateRelationDecisionMemorySystem
 from .memory_system_add_all import LmeCandidateAddAllMemorySystem
 from .memory_system_amac import LmeCandidateAmacMemorySystem
 from .memory_system_base import LmeCandidateMemorySystemBase
+from .memory_system_evermemos import EverMemOSMemorySystem
 from .prompts import (
     build_lme_relation_classification_user_prompt,
     lme_relation_system_prompt_for_language,
@@ -40,6 +41,7 @@ __all__ = [
     "LmeCandidateMemorySystemBase",
     "LmeCandidateRelationDecisionMemorySystem",
     "LmeCandidateRelMemMemorySystem",
+    "EverMemOSMemorySystem",
     "apply_candidate_episode_json",
     "apply_candidate_episode_mem0",
     "apply_candidate_episode_zep",

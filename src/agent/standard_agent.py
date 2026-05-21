@@ -108,6 +108,26 @@ class StandardAgent(BaseAgent):
                 top_k=top_k
             )
 
+            max_sess = q.metadata.get("max_session_index")
+            if max_sess is not None:
+                try:
+                    cutoff = int(max_sess)
+                    filtered: List[RetrievedMemory] = []
+                    for mem in retrieved:
+                        meta = mem.metadata or {}
+                        sess_idx = meta.get("lme_session_index")
+                        if sess_idx is None:
+                            filtered.append(mem)
+                            continue
+                        try:
+                            if int(sess_idx) <= cutoff:
+                                filtered.append(mem)
+                        except (TypeError, ValueError):
+                            filtered.append(mem)
+                    retrieved = filtered
+                except (TypeError, ValueError):
+                    pass
+
             # 3. 将取回的所有背景组合（由 memory_system 自定义组装方式，可包含 text/time/metadata）
             context_block = self.memory_system.format_retrieved_for_context(
                 retrieved, language=self.language, show_time=self.show_time

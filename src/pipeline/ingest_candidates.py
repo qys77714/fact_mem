@@ -40,6 +40,7 @@ from memory.candidate_ingest import (
     apply_candidate_file_zep,
     load_candidate_json,
     LmeCandidateAmacMemorySystem,
+    EverMemOSMemorySystem,
 )
 from memory.mem0 import Mem0MemorySystem
 from memory.zep import ZepMemorySystem
@@ -165,6 +166,11 @@ def _apply_config_fingerprint_block(args: argparse.Namespace) -> dict[str, Any]:
         block["ingest_obs_dialogue_format"] = str(getattr(args, "ingest_obs_dialogue_format", "user_assistant"))
         if max(1, int(args.amac_episode_concurrency)) != 1:
             block["amac_episode_concurrency"] = args.amac_episode_concurrency
+    if args.update_method == "evermemos":
+        block["evermemos_similarity_threshold"] = float(getattr(args, "evermemos_similarity_threshold", 0.65))
+        block["evermemos_max_time_gap_days"] = float(getattr(args, "evermemos_max_time_gap_days", 7.0))
+        if max(1, int(args.evermemos_episode_concurrency)) != 1:
+            block["evermemos_episode_concurrency"] = args.evermemos_episode_concurrency
     return block
 
 
@@ -306,10 +312,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--update-method",
-        choices=("relation_decision", "mem0", "add_all", "zep", "amac"),
+        choices=("relation_decision", "mem0", "add_all", "zep", "amac", "evermemos"),
         default="relation_decision",
         help="relation_decision：五类关系+桶聚合；mem0：Mem0 更新管线；add_all：候选全量直接入库；zep：graphiti；"
-        "amac：A-MAC 加权准入后 add_all 式写 primary",
+        "amac：A-MAC 加权准入后 add_all 式写 primary；evermemos：EverMemOS 增量语义聚类+LLM合并",
     )
     parser.add_argument(
         "--candidates-dir",
@@ -423,6 +429,27 @@ def main() -> int:
         type=int,
         default=64,
         help="Novelty 最多与最近 N 条已入库 primary 比嵌入",
+    )
+    parser.add_argument(
+        "--evermemos-similarity-threshold",
+        type=float,
+        default=0.65,
+        dest="evermemos_similarity_threshold",
+        help="evermemos：聚类匹配余弦相似度阈值（默认 0.65）",
+    )
+    parser.add_argument(
+        "--evermemos-max-time-gap-days",
+        type=float,
+        default=7.0,
+        dest="evermemos_max_time_gap_days",
+        help="evermemos：同一聚类的最大时间跨度天数（默认 7 天；无日期信息则忽略时间约束）",
+    )
+    parser.add_argument(
+        "--evermemos-episode-concurrency",
+        type=int,
+        default=10,
+        dest="evermemos_episode_concurrency",
+        help="evermemos：跨 episode 并行灌库线程数（默认 10）",
     )
     parser.add_argument(
         "--ingest-obs-granularity",
@@ -601,7 +628,7 @@ def main() -> int:
 
     embed_client = OpenAI(api_key=api_key, base_url=_default_embedding_base_url())
     llm_client = None
-    if args.update_method in ("relation_decision", "mem0", "add_all", "zep", "amac"):
+    if args.update_method in ("relation_decision", "mem0", "add_all", "zep", "amac", "evermemos"):
         if not str(args.relation_llm or "").strip():
             print(
                 "ERROR: --relation-llm / --manager-model is required for this --update-method.",
@@ -661,6 +688,14 @@ def main() -> int:
             dialogue_format="user_assistant",
             manager_max_new_tokens=args.manager_max_new_tokens,
         )
+    elif args.update_method == "evermemos":
+        memory = EverMemOSMemorySystem(
+            **lme_candidate_base_kw,
+            related_memory_top_k=_ADD_ALL_RELATED_TOP_K_PLACEHOLDER,
+            manager_max_new_tokens=args.manager_max_new_tokens,
+            similarity_threshold=float(args.evermemos_similarity_threshold),
+            max_time_gap_days=float(args.evermemos_max_time_gap_days),
+        )
     else:
         # Candidate ingest only uses retrieve / decide / apply; it does not call _extract_facts.
         # extract_concurrency applies to dialogue-driven store_episode only.
@@ -700,6 +735,10 @@ def main() -> int:
                 overlap_turns=int(args.ingest_obs_overlap_norm),
             )
             apply_candidate_file(memory, path, observation_by_chunk_index=obs_map)
+        elif args.update_method == "evermemos":
+            memory._reset_episode_state()
+            apply_candidate_file(memory, path)
+            memory.finalize_episode(db, history_name)
         else:
             apply_candidate_file(memory, path)
         _write_apply_marker_atomic(
@@ -845,6 +884,33 @@ def main() -> int:
                         n_errors += 1
         if n_errors > 0:
             return 1
+    elif args.update_method == "evermemos":
+        workers = min(max(1, args.evermemos_episode_concurrency), len(to_process))
+        if workers <= 1:
+            for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
+                try:
+                    _apply_one_episode(path, history_name)
+                except Exception as e:
+                    _print_apply_error(path, e)
+                    return 1
+        else:
+            future_to_path = {}
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for path, history_name in to_process:
+                    fut = pool.submit(_apply_one_episode, path, history_name)
+                    future_to_path[fut] = path
+                for fut in tqdm(
+                    as_completed(future_to_path),
+                    total=len(future_to_path),
+                    desc=desc,
+                    unit="ep",
+                ):
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        path = future_to_path[fut]
+                        _print_apply_error(path, e)
+                        return 1
     else:
         raise AssertionError(f"unexpected update_method: {args.update_method!r}")
     return 0

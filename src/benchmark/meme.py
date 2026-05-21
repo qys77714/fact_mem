@@ -12,8 +12,10 @@ Session metadata written into ChatSession.metadata:
     "gold_facts": [{"fact_id", "entity", "value", "fact_text", ...}, ...],  # None for filler
   }
 
-Evaluation questions (qas) come from after_questions only; before_questions are stored
-in episode-level metadata for optional trivial-pass filtering by downstream steps.
+Evaluation questions include both before_questions and after_questions (MEME-public protocol):
+  - phase=before: asked after sessions up to before position (pre-change state check)
+  - phase=after:  asked after all sessions including change/delete events
+  QuestionItem.metadata carries phase, max_session_index (1-based), entity_key, hop, etc.
 """
 
 from __future__ import annotations
@@ -21,11 +23,48 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseBenchmark, ChatSession, ChatTurn, MemoryEpisode, QuestionItem
 
 logger = logging.getLogger(__name__)
+
+TRIVIAL_PASS_TASKS = frozenset({"Cas", "Abs", "Del"})
+
+
+def _task_base(task_type: str) -> str:
+    return str(task_type or "").split(" (")[0]
+
+
+def _entity_key_from_question(q: Dict[str, Any]) -> str:
+    ev = q.get("entity_values") or {}
+    if isinstance(ev, dict) and ev:
+        return str(next(iter(ev.keys())))
+    ent = q.get("entity")
+    if isinstance(ent, list) and ent:
+        return str(ent[0])
+    if isinstance(ent, str) and ent:
+        return ent
+    return ""
+
+
+def _resolve_gold_answer(
+    q: Dict[str, Any],
+    gold_answer_lookup: Dict[Tuple[str, str], str],
+    phase: str,
+) -> str:
+    """Before questions use expected_answer; after questions match tasks by question text."""
+    ref = q.get("expected_answer")
+    if ref is not None and str(ref).strip():
+        return str(ref)
+    task_type = str(q.get("task_type", ""))
+    question_text = str(q.get("question", ""))
+    return gold_answer_lookup.get((task_type, question_text), "")
+
+
+def _max_session_index_1based(position_after_session: int) -> int:
+    """MEME position_after_session is 0-based last included session → 1-based inclusive cutoff."""
+    return int(position_after_session) + 1
 
 
 class MEMEBenchmark(BaseBenchmark):
@@ -55,7 +94,6 @@ class MEMEBenchmark(BaseBenchmark):
     def _convert_episode(self, ep: Dict[str, Any]) -> MemoryEpisode:
         episode_id: str = ep["episode_id"]
 
-        # --- sessions ---
         sessions: List[ChatSession] = []
         for raw_sess in ep.get("sessions", []):
             sess_type: str = raw_sess.get("type", "filler")
@@ -70,9 +108,10 @@ class MEMEBenchmark(BaseBenchmark):
                 for turn in conversation
             ]
 
-            # gold_facts is a list for evidence sessions, None for filler
             raw_gold_facts = raw_sess.get("gold_facts")
-            gold_facts: List[Dict[str, Any]] = raw_gold_facts if isinstance(raw_gold_facts, list) else []
+            gold_facts: List[Dict[str, Any]] = (
+                raw_gold_facts if isinstance(raw_gold_facts, list) else []
+            )
 
             session_meta: Dict[str, Any] = {
                 "type": sess_type,
@@ -86,38 +125,57 @@ class MEMEBenchmark(BaseBenchmark):
                 )
             )
 
-        # Build gold_answer lookup from tasks: (task_type, question_template) → gold_answer.
-        # after_questions[].expected_answer is always None in the dataset; the authoritative
-        # answer is stored in tasks[].gold_answer and matched via question text.
         gold_answer_lookup: Dict[tuple, str] = {}
         for task in ep.get("tasks", []):
             key = (task.get("type", ""), task.get("question_template", ""))
             gold_answer_lookup[key] = str(task.get("gold_answer", ""))
 
-        # --- after_questions → qas ---
         qas: List[QuestionItem] = []
-        after_q_block = ep.get("after_questions", {})
-        after_timestamp = after_q_block.get("timestamp", "")
-        for q in after_q_block.get("questions", []):
-            task_type: str = q.get("task_type", "")
-            question_text: str = q.get("question", "")
-            # Look up gold_answer from tasks by (type, question_template)
-            answer = gold_answer_lookup.get((task_type, question_text), "")
-            qi_meta: Dict[str, Any] = {}
-            if "hop" in q:
-                qi_meta["hop"] = q["hop"]
-            qas.append(
-                QuestionItem(
-                    question=question_text,
-                    answer=answer,
-                    question_time=after_timestamp,
-                    question_type=task_type,
-                    metadata=qi_meta,
+        phase_blocks: Dict[str, Any] = {}
+
+        for phase in ("before", "after"):
+            block = ep.get(f"{phase}_questions", {})
+            if not block or not isinstance(block, dict):
+                continue
+            pos = int(block.get("position_after_session", -1))
+            q_time = str(block.get("timestamp", ""))
+            max_sess = _max_session_index_1based(pos) if pos >= 0 else len(sessions)
+            phase_blocks[phase] = {
+                "position_after_session": pos,
+                "max_session_index": max_sess,
+                "timestamp": q_time,
+            }
+            for idx, q in enumerate(block.get("questions") or []):
+                task_type: str = str(q.get("task_type", ""))
+                question_text: str = str(q.get("question", ""))
+                answer = _resolve_gold_answer(q, gold_answer_lookup, phase)
+                entity_key = _entity_key_from_question(q)
+                qi_meta: Dict[str, Any] = {
+                    "phase": phase,
+                    "question_id": f"{phase}:{_task_base(task_type)}:{idx}",
+                    "max_session_index": max_sess,
+                    "entity_key": entity_key,
+                    "entity_values": q.get("entity_values") or {},
+                }
+                if "hop" in q:
+                    qi_meta["hop"] = q["hop"]
+                qas.append(
+                    QuestionItem(
+                        question=question_text,
+                        answer=answer,
+                        question_time=q_time,
+                        question_type=task_type,
+                        metadata=qi_meta,
+                    )
                 )
-            )
 
         return MemoryEpisode(
             history_name=episode_id,
             sessions=sessions,
             qas=qas,
+            metadata={
+                "domain": ep.get("domain", ""),
+                "phase_blocks": phase_blocks,
+                "root": ep.get("root", ""),
+            },
         )

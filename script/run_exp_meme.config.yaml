@@ -14,9 +14,10 @@ parallel:
   meme_4phase_parallel_episodes_relation_decision: 20
   meme_4phase_parallel_episodes_mem0: 4
   meme_4phase_parallel_episodes_add_all: 20
-  meme_4phase_parallel_episodes_zep: 2
-  meme_4phase_parallel_episodes_amac: 4
-  meme_4phase_parallel_episodes_evermemos: 1
+  meme_4phase_parallel_episodes_zep: 10
+  meme_4phase_parallel_episodes_amac: 10
+  meme_4phase_parallel_episodes_evermemos: 4
+  evermemos_cluster_concurrency: 8
   meme_4phase_answer_concurrency: 10
   # fusion（per-episode 内 package 级并发）
   fuse_package_concurrency: 4

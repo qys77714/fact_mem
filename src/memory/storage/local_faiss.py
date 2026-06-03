@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -58,6 +59,9 @@ class LocalFaissDatabase:
         self._bm25_revision: int = 0
         self._bm25_cache_revision: Optional[int] = None
         self._bm25_okapi: Any = None
+        # Reentrant lock: serialises all mutations (add/delete/update/dedup/clear)
+        # and protects _ensure_loaded + _persist from concurrent access.
+        self._lock = threading.RLock()
         self._reset_store()
 
     def _bump_bm25_revision(self) -> None:
@@ -84,37 +88,38 @@ class LocalFaissDatabase:
         向数据库中添加一条记忆。
         如果传入了 embedding，则会进行向量索引存储。
         """
-        self._ensure_loaded()
-        store = self._store
-        normalized: Optional[np.ndarray] = None
+        with self._lock:
+            self._ensure_loaded()
+            store = self._store
+            normalized: Optional[np.ndarray] = None
 
-        if embedding is not None and embedding.size > 0:
-            # 确保 embedding 是 2D 以符合 faiss 要求 (1, dim)
-            if embedding.ndim == 1:
-                embedding = embedding.reshape(1, -1)
+            if embedding is not None and embedding.size > 0:
+                # 确保 embedding 是 2D 以符合 faiss 要求 (1, dim)
+                if embedding.ndim == 1:
+                    embedding = embedding.reshape(1, -1)
 
-            if store.index is None:
-                self._initialize_history(embedding.shape[1])
+                if store.index is None:
+                    self._initialize_history(embedding.shape[1])
 
-            normalized = np.ascontiguousarray(embedding.astype(np.float32))
-            faiss.normalize_L2(normalized)
-            store.index.add(normalized)
+                normalized = np.ascontiguousarray(embedding.astype(np.float32))
+                faiss.normalize_L2(normalized)
+                store.index.add(normalized)
 
-        memory_id = str(uuid.uuid4())
+            memory_id = str(uuid.uuid4())
 
-        store.ids.append(memory_id)
-        store.texts.append(text)
-        store.source_indices.append(source_index)
-        store.times.append(time)
-        store.metadatas.append(metadata)
-        
-        if normalized is not None:
-            store.embeddings.append(normalized[0].copy())
-            store.indexed_memory_ids.append(memory_id)
+            store.ids.append(memory_id)
+            store.texts.append(text)
+            store.source_indices.append(source_index)
+            store.times.append(time)
+            store.metadatas.append(metadata)
 
-        self._bump_bm25_revision()
-        self._persist()
-        return memory_id
+            if normalized is not None:
+                store.embeddings.append(normalized[0].copy())
+                store.indexed_memory_ids.append(memory_id)
+
+            self._bump_bm25_revision()
+            self._persist()
+            return memory_id
 
     def list_primary_texts_ordered(self) -> List[str]:
         """Primary rows in insertion order (excludes ``memory_role=evidence``)."""
@@ -132,30 +137,31 @@ class LocalFaissDatabase:
         return self.delete(memory_id)
 
     def delete(self, memory_id: str) -> bool:
-        self._ensure_loaded()
-        store = self._store
-        try:
-            idx = store.ids.index(memory_id)
-        except ValueError:
-            return False
+        with self._lock:
+            self._ensure_loaded()
+            store = self._store
+            try:
+                idx = store.ids.index(memory_id)
+            except ValueError:
+                return False
 
-        store.ids.pop(idx)
-        store.texts.pop(idx)
-        store.source_indices.pop(idx)
-        store.times.pop(idx)
-        store.metadatas.pop(idx)
-        if memory_id in store.indexed_memory_ids:
-            emb_idx = store.indexed_memory_ids.index(memory_id)
-            store.indexed_memory_ids.pop(emb_idx)
-            store.embeddings.pop(emb_idx)
+            store.ids.pop(idx)
+            store.texts.pop(idx)
+            store.source_indices.pop(idx)
+            store.times.pop(idx)
+            store.metadatas.pop(idx)
+            if memory_id in store.indexed_memory_ids:
+                emb_idx = store.indexed_memory_ids.index(memory_id)
+                store.indexed_memory_ids.pop(emb_idx)
+                store.embeddings.pop(emb_idx)
 
-        if not store.ids:
-            self._clear_dataset()
-        else:
-            self._rebuild_index()
-            self._bump_bm25_revision()
-            self._persist()
-        return True
+            if not store.ids:
+                self._clear_dataset()
+            else:
+                self._rebuild_index()
+                self._bump_bm25_revision()
+                self._persist()
+            return True
 
     def update_memory(
         self,
@@ -169,42 +175,43 @@ class LocalFaissDatabase:
         """
         更新对应的记忆。如果更新了文本且需要更新向量，可以传入新的 new_embedding。
         """
-        self._ensure_loaded()
-        store = self._store
-        try:
-            idx = store.ids.index(memory_id)
-        except ValueError:
-            return False
+        with self._lock:
+            self._ensure_loaded()
+            store = self._store
+            try:
+                idx = store.ids.index(memory_id)
+            except ValueError:
+                return False
 
-        if new_text is not None:
-            store.texts[idx] = new_text
-            
-        if new_embedding is not None and new_embedding.size > 0:
-            if new_embedding.ndim == 1:
-                new_embedding = new_embedding.reshape(1, -1)
+            if new_text is not None:
+                store.texts[idx] = new_text
 
-            normalized = np.ascontiguousarray(new_embedding.astype(np.float32))
-            faiss.normalize_L2(normalized)
-            row = normalized[0].copy()
+            if new_embedding is not None and new_embedding.size > 0:
+                if new_embedding.ndim == 1:
+                    new_embedding = new_embedding.reshape(1, -1)
 
-            if memory_id in store.indexed_memory_ids:
-                emb_idx = store.indexed_memory_ids.index(memory_id)
-                store.embeddings[emb_idx] = row
-            else:
-                store.embeddings.append(row)
-                store.indexed_memory_ids.append(memory_id)
-            self._rebuild_index()
+                normalized = np.ascontiguousarray(new_embedding.astype(np.float32))
+                faiss.normalize_L2(normalized)
+                row = normalized[0].copy()
 
-        if new_source_index is not None:
-            store.source_indices[idx] = new_source_index
-        if new_time is not None:
-            store.times[idx] = new_time
-        if metadata_updates:
-            store.metadatas[idx].update(metadata_updates)
+                if memory_id in store.indexed_memory_ids:
+                    emb_idx = store.indexed_memory_ids.index(memory_id)
+                    store.embeddings[emb_idx] = row
+                else:
+                    store.embeddings.append(row)
+                    store.indexed_memory_ids.append(memory_id)
+                self._rebuild_index()
 
-        self._bump_bm25_revision()
-        self._persist()
-        return True
+            if new_source_index is not None:
+                store.source_indices[idx] = new_source_index
+            if new_time is not None:
+                store.times[idx] = new_time
+            if metadata_updates:
+                store.metadatas[idx].update(metadata_updates)
+
+            self._bump_bm25_revision()
+            self._persist()
+            return True
 
     def _faiss_row_to_list_row(self, store: _HistoryStore, fidx: int) -> Optional[int]:
         """Map FAISS internal row index → parallel lists (ids/texts/...) index."""
@@ -538,53 +545,54 @@ class LocalFaissDatabase:
         Keeps one per text: earliest by `time` (parse_chat_time), then smaller list index as tie-breaker.
         Returns the number of removed memories.
         """
-        self._ensure_loaded()
-        store = self._store
-        n = len(store.ids)
-        if n <= 1:
-            return 0
+        with self._lock:
+            self._ensure_loaded()
+            store = self._store
+            n = len(store.ids)
+            if n <= 1:
+                return 0
 
-        from utils.date_utils import parse_chat_time
+            from utils.date_utils import parse_chat_time
 
-        groups: Dict[str, List[int]] = {}
-        for i in range(n):
-            key = store.texts[i].strip()
-            if not key:
-                continue
-            groups.setdefault(key, []).append(i)
+            groups: Dict[str, List[int]] = {}
+            for i in range(n):
+                key = store.texts[i].strip()
+                if not key:
+                    continue
+                groups.setdefault(key, []).append(i)
 
-        remove_idx: set[int] = set()
-        for indices in groups.values():
-            if len(indices) < 2:
-                continue
+            remove_idx: set[int] = set()
+            for indices in groups.values():
+                if len(indices) < 2:
+                    continue
 
-            keeper = min(indices, key=lambda i: (parse_chat_time(store.times[i]), i))
-            for i in indices:
-                if i != keeper:
-                    remove_idx.add(i)
+                keeper = min(indices, key=lambda i: (parse_chat_time(store.times[i]), i))
+                for i in indices:
+                    if i != keeper:
+                        remove_idx.add(i)
 
-        if not remove_idx:
-            return 0
+            if not remove_idx:
+                return 0
 
-        for idx in sorted(remove_idx, reverse=True):
-            memory_id = store.ids[idx]
-            store.ids.pop(idx)
-            store.texts.pop(idx)
-            store.source_indices.pop(idx)
-            store.times.pop(idx)
-            store.metadatas.pop(idx)
-            if memory_id in store.indexed_memory_ids:
-                emb_idx = store.indexed_memory_ids.index(memory_id)
-                store.indexed_memory_ids.pop(emb_idx)
-                store.embeddings.pop(emb_idx)
+            for idx in sorted(remove_idx, reverse=True):
+                memory_id = store.ids[idx]
+                store.ids.pop(idx)
+                store.texts.pop(idx)
+                store.source_indices.pop(idx)
+                store.times.pop(idx)
+                store.metadatas.pop(idx)
+                if memory_id in store.indexed_memory_ids:
+                    emb_idx = store.indexed_memory_ids.index(memory_id)
+                    store.indexed_memory_ids.pop(emb_idx)
+                    store.embeddings.pop(emb_idx)
 
-        if not store.ids:
-            self._clear_dataset()
-        else:
-            self._rebuild_index()
-            self._persist()
+            if not store.ids:
+                self._clear_dataset()
+            else:
+                self._rebuild_index()
+                self._persist()
 
-        return len(remove_idx)
+            return len(remove_idx)
 
     def _initialize_history(self, dim: int) -> None:
         self._store.index = faiss.IndexFlatIP(dim)
@@ -825,4 +833,5 @@ class LocalFaissDatabase:
 
     def clear_all(self) -> None:
         """Remove all data for this namespace (for resume/cleanup)."""
-        self._clear_dataset()
+        with self._lock:
+            self._clear_dataset()

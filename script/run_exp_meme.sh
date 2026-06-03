@@ -69,7 +69,7 @@ apply_language="en"
 extract_model="gemma4-26B"
 manager_model="gemma4-26B"
 answer_model="gemma4-26B"
-judge_model="gpt-4o-mini"
+judge_model="qwen3-max"
 embedding_model="qwen3-embedding-8b"
 
 candidate_suffix="0519_as3"
@@ -82,7 +82,7 @@ related_top_k=3
 mem0_related_top_k=3
 mem0_related_aggregate_max=10
 
-amac_threshold=0.3
+amac_threshold=0.45
 
 model_tag="$(printf '%s' "$extract_model" | tr '/ :\\' '____' | tr -cd '[:alnum:]_.-')"
 export benchmark extract_model candidate_suffix manager_model answer_model exp_suffix
@@ -150,6 +150,7 @@ common_4phase=(
   --hybrid-bm25-weight 0.2
   --hybrid-pool-mult 4
   --relation-concurrency 50
+  --evermemos-cluster-concurrency "${evermemos_cluster_concurrency}"
   --relation-max-new-tokens "${tok_ingest_candidates_relation_max_new_tokens}"
   --manager-max-new-tokens "${tok_ingest_candidates_manager_max_new_tokens}"
   --related-top-k "${related_top_k}"
@@ -211,28 +212,19 @@ fi
 #   --output "${file_experiment_pred_mem0_jsonl}" \
 #   "${eval_forward[@]}"
 
-# _run_step "4-Phase zep → ${file_experiment_pred_zep_jsonl}"
-# _run_sub "DB: ${dir_memdb_4phase_zep}  trace: ${dir_logs_memory_trace_zep}"
+
+
+# _run_step "4-Phase amac → ${file_experiment_pred_amac_jsonl}"
+# _run_sub "DB: ${dir_memdb_4phase_amac}  trace: ${dir_logs_memory_trace_amac}"
 # python -u src/pipeline_meme_4phase.py \
 #   "${common_4phase[@]}" \
-#   --update-method zep \
-#   --database-root "${dir_memdb_4phase_zep}" \
-#   --trace-log-dir "${dir_logs_memory_trace_zep}" \
-#   --parallel-episodes "${meme_4phase_parallel_episodes_zep}" \
-#   --output "${file_experiment_pred_zep_jsonl}" \
+#   --update-method amac \
+#   --database-root "${dir_memdb_4phase_amac}" \
+#   --trace-log-dir "${dir_logs_memory_trace_amac}" \
+#   --parallel-episodes "${meme_4phase_parallel_episodes_amac}" \
+#   --amac-threshold "${amac_threshold}" \
+#   --output "${file_experiment_pred_amac_jsonl}" \
 #   "${eval_forward[@]}"
-
-_run_step "4-Phase amac → ${file_experiment_pred_amac_jsonl}"
-_run_sub "DB: ${dir_memdb_4phase_amac}  trace: ${dir_logs_memory_trace_amac}"
-python -u src/pipeline_meme_4phase.py \
-  "${common_4phase[@]}" \
-  --update-method amac \
-  --database-root "${dir_memdb_4phase_amac}" \
-  --trace-log-dir "${dir_logs_memory_trace_amac}" \
-  --parallel-episodes "${meme_4phase_parallel_episodes_amac}" \
-  --amac-threshold "${amac_threshold}" \
-  --output "${file_experiment_pred_amac_jsonl}" \
-  "${eval_forward[@]}"
 
 # _run_step "4-Phase add_all → ${file_experiment_pred_add_all_jsonl}"
 # _run_sub "DB: ${dir_memdb_4phase_add_all}  trace: ${dir_logs_memory_trace_add_all}"
@@ -245,16 +237,28 @@ python -u src/pipeline_meme_4phase.py \
 #   --output "${file_experiment_pred_add_all_jsonl}" \
 #   "${eval_forward[@]}"
 
-_run_step "4-Phase evermemos → ${file_experiment_pred_evermemos_jsonl}"
-_run_sub "DB: ${dir_memdb_4phase_evermemos}  trace: ${dir_logs_memory_trace_evermemos}"
-python -u src/pipeline_meme_4phase.py \
-  "${common_4phase[@]}" \
-  --update-method evermemos \
-  --database-root "${dir_memdb_4phase_evermemos}" \
-  --trace-log-dir "${dir_logs_memory_trace_evermemos}" \
-  --parallel-episodes "${meme_4phase_parallel_episodes_evermemos}" \
-  --output "${file_experiment_pred_evermemos_jsonl}" \
-  "${eval_forward[@]}"
+# _run_step "4-Phase evermemos → ${file_experiment_pred_evermemos_jsonl}"
+# _run_sub "DB: ${dir_memdb_4phase_evermemos}  trace: ${dir_logs_memory_trace_evermemos}"
+# python -u src/pipeline_meme_4phase.py \
+#   "${common_4phase[@]}" \
+#   --update-method evermemos \
+#   --database-root "${dir_memdb_4phase_evermemos}" \
+#   --trace-log-dir "${dir_logs_memory_trace_evermemos}" \
+#   --parallel-episodes "${meme_4phase_parallel_episodes_evermemos}" \
+#   --output "${file_experiment_pred_evermemos_jsonl}" \
+#   "${eval_forward[@]}"
+
+# _run_step "4-Phase zep → ${file_experiment_pred_zep_jsonl}"
+# _run_sub "DB: ${dir_memdb_4phase_zep}  trace: ${dir_logs_memory_trace_zep}"
+# python -u src/pipeline_meme_4phase.py \
+#   "${common_4phase[@]}" \
+#   --update-method zep \
+#   --database-root "${dir_memdb_4phase_zep}" \
+#   --trace-log-dir "${dir_logs_memory_trace_zep}" \
+#   --parallel-episodes "${meme_4phase_parallel_episodes_zep}" \
+#   --output "${file_experiment_pred_zep_jsonl}" \
+#   "${eval_forward[@]}"
+
 
 # =============================================================================
 # MEME Judge（task-specific prompts + trivial-pass 过滤）

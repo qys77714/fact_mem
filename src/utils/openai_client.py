@@ -35,10 +35,9 @@ def _prepare_extra_body_for_model(
         merged.pop("chat_template_kwargs", None)
         return merged or None
 
-    if qwen_enable_thinking:
-        chat_kw = dict(merged.get("chat_template_kwargs") or {})
-        chat_kw["enable_thinking"] = True
-        merged["chat_template_kwargs"] = chat_kw
+    chat_kw = dict(merged.get("chat_template_kwargs") or {})
+    chat_kw["enable_thinking"] = bool(qwen_enable_thinking)
+    merged["chat_template_kwargs"] = chat_kw
 
     return merged or None
 

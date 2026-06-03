@@ -117,6 +117,7 @@ class MemePhaseConfig:
     # evermemos
     evermemos_similarity_threshold: float
     evermemos_max_time_gap_days: float
+    evermemos_cluster_concurrency: int
     # trace
     trace_log_dir: Optional[str]
 
@@ -274,6 +275,7 @@ def _build_ingest_memory(cfg: MemePhaseConfig, database_root: Path):
             manager_max_new_tokens=cfg.manager_max_new_tokens,
             similarity_threshold=cfg.evermemos_similarity_threshold,
             max_time_gap_days=cfg.evermemos_max_time_gap_days,
+            cluster_concurrency=cfg.evermemos_cluster_concurrency,
         )
     # mem0 (default)
     return Mem0MemorySystem(
@@ -311,6 +313,31 @@ def _build_answer_memory(cfg: MemePhaseConfig, answer_db_root: Path) -> LmePrebu
 # Apply helpers (episode-level)
 # ---------------------------------------------------------------------------
 
+async def _close_async_chat_client(answer_client: Any) -> None:
+    """Close httpx-backed AsyncOpenAI so asyncio.run() does not leave dangling aclose tasks."""
+    inner = getattr(answer_client, "client", None)
+    close = getattr(inner, "close", None) if inner is not None else None
+    if close is not None:
+        await close()
+
+
+async def _batch_answer_and_close(
+    agent: StandardAgent,
+    history_name: str,
+    questions: List[QuestionItem],
+    top_k: int,
+    answer_client: Any,
+) -> List[str]:
+    try:
+        return await agent.batch_answer_questions(
+            history_name=history_name,
+            questions=questions,
+            top_k=top_k,
+        )
+    finally:
+        await _close_async_chat_client(answer_client)
+
+
 def _apply_phase(ingest_memory, payload_phase: Dict[str, Any],
                  update_method: str, incremental: bool = False) -> None:
     """Apply a phase payload to ingest_memory. If not incremental, clear DB first."""
@@ -323,7 +350,9 @@ def _apply_phase(ingest_memory, payload_phase: Dict[str, Any],
     if update_method == "mem0":
         apply_candidate_episode_mem0(ingest_memory, payload_phase)
     elif update_method == "zep":
-        apply_candidate_episode_zep(ingest_memory, payload_phase)
+        apply_candidate_episode_zep(
+            ingest_memory, payload_phase, incremental=incremental
+        )
     elif update_method == "evermemos":
         if not incremental:
             ingest_memory._reset_episode_state()
@@ -457,10 +486,12 @@ def run_episode_4phase(
             show_time=cfg.show_memory_time,
         )
         before_answers = asyncio.run(
-            agent.batch_answer_questions(
-                history_name=hn_before,
-                questions=pending_before,
-                top_k=cfg.retrieve_topk,
+            _batch_answer_and_close(
+                agent,
+                hn_before,
+                pending_before,
+                cfg.retrieve_topk,
+                answer_client,
             )
         )
         records = [_build_record(cfg.benchmark, hn, q, ans)
@@ -522,10 +553,12 @@ def run_episode_4phase(
             show_time=cfg.show_memory_time,
         )
         after_answers = asyncio.run(
-            agent.batch_answer_questions(
-                history_name=hn_after,
-                questions=pending_after,
-                top_k=cfg.retrieve_topk,
+            _batch_answer_and_close(
+                agent,
+                hn_after,
+                pending_after,
+                cfg.retrieve_topk,
+                answer_client,
             )
         )
         records = [_build_record(cfg.benchmark, hn, q, ans)
@@ -713,6 +746,9 @@ def parse_args() -> MemePhaseConfig:
     # evermemos
     p.add_argument("--evermemos-similarity-threshold", type=float, default=0.65)
     p.add_argument("--evermemos-max-time-gap-days", type=float, default=7.0)
+    p.add_argument("--evermemos-cluster-concurrency", type=int, default=8,
+                   dest="evermemos_cluster_concurrency",
+                   help="evermemos: cluster 合并并行线程数（默认 8）")
     # trace
     p.add_argument("--trace-log-dir", default=None)
 
@@ -773,6 +809,7 @@ def parse_args() -> MemePhaseConfig:
         amac_novelty_max_existing=args.amac_novelty_max_existing,
         evermemos_similarity_threshold=args.evermemos_similarity_threshold,
         evermemos_max_time_gap_days=args.evermemos_max_time_gap_days,
+        evermemos_cluster_concurrency=args.evermemos_cluster_concurrency,
         trace_log_dir=(args.trace_log_dir or "").strip() or None,
     )
 

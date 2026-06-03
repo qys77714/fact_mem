@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from utils.openai_client import OpenAIClient, _merge_extra_body_qwen_thinking
+from utils.openai_client import OpenAIClient, _prepare_extra_body_for_model
 
 
 def chat_completion_with_tool_calls(
@@ -34,7 +34,11 @@ def chat_completion_with_tool_calls(
     if client.model_name in ("gpt-4o-mini",):
         completion = client.client.chat.completions.create(**kargs)
     else:
-        kargs["extra_body"] = _merge_extra_body_qwen_thinking(extra_body, enable_thinking=False)
+        kargs["extra_body"] = _prepare_extra_body_for_model(
+            client.model_name,
+            extra_body,
+            qwen_enable_thinking=False,
+        )
         completion = client.client.chat.completions.create(**kargs)
 
     return completion.choices[0].message

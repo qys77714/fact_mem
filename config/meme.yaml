@@ -1,0 +1,104 @@
+# fact_memory MEME 4-Phase 实验配置
+# 与官方 MEME-public 协议对齐：每个 episode 经历 4 个阶段（before ingest → before Q&A → after ingest → after Q&A）
+#
+# 用法：python run_exp_meme.py [--config config/meme.yaml] [--stages extract,run,evaluate]
+
+experiment:
+  benchmark: meme_filler32k   # meme_nofiller / meme_filler32k / meme_filler128k
+  suffix: r2
+
+models:
+  extract: gemma4-26B
+  manager: gemma4-e2b           # 灌库管理 LLM（relation_decision / mem0 / zep / amac / evermemos）
+  answer: gemma4-e2b
+  judge: qwen3-max
+  embedding: qwen3-embedding-0.6b
+
+extract:
+  candidate_suffix: 0519_as3
+  granularity: 4
+  turn_overlap: 0
+  language: en
+  aspect_templates:
+    - "0_mem_extract_aspect_events_en.jinja"
+    - "0_mem_extract_aspect_preferences_en.jinja"
+    - "0_mem_extract_aspect_social_en.jinja"
+
+methods:
+  amac:
+    enabled: false
+    threshold: 0.45
+    weights: "0.1,0.1,0.1,0.1,0.6"
+    skip_utility: false
+    recency_decay_per_step: 0.12
+    novelty_max_existing: 64
+
+  zep:
+    enabled: false
+
+  relation_decision:
+    enabled: true
+    related_top_k: 6
+    fusion_model: ""
+
+  mem0:
+    enabled: false
+    related_top_k: 3
+    related_aggregate_max: 10
+
+  add_all:
+    enabled: false
+
+  evermemos:
+    enabled: false
+    similarity_threshold: 0.65
+    max_time_gap_days: 7.0
+
+run:                             # pipeline_meme_4phase.py 的公共参数
+  retrieve_topk: 50
+  memory_token_limit: 512
+  answer_concurrency: 10
+  show_memory_time: false
+  hybrid:
+    enabled: true
+    dense_weight: 0.8
+    bm25_weight: 0.2
+    pool_mult: 4
+  rerank:
+    enabled: false
+
+evaluate:
+  judge_max_concurrency: 8
+  judge_max_new_tokens: 512
+
+parallel:
+  extract_chunk_concurrency: 100
+  ingest_relation_concurrency: 50    # relation_decision：单 episode 内关系对并发
+  evermemos_cluster_concurrency: 8
+  fuse_package_concurrency: 4
+  parallel_episodes:                 # 各方法 4-phase per-episode 并发（relation_decision 包含融合，不宜过大）
+    relation_decision: 100
+    mem0: 4
+    add_all: 100
+    zep: 10
+    amac: 10
+    evermemos: 4
+
+token_limits:
+  extract_max_new_tokens: 2048
+  ingest_relation_max_new_tokens: 256
+  ingest_manager_max_new_tokens: 2048
+  fusion_max_new_tokens: 512
+  evaluate_max_new_tokens: 512       # MEME judge 输出较短，512 足够
+
+prompts:
+  relation_system_en: "lme_relation_classification_system_en_v2.jinja"
+  relation_system_zh: "lme_relation_classification_system_zh_v2.jinja"
+  relation_user: "lme_relation_classification_user.jinja"
+  fusion_bundle_en: "lme_fuse_memory_bundle_en_v3.jinja"
+  fusion_bundle_zh: ""
+  fusion_edge_labels_en: "lme_fuse_memory_bundle_edge_labels_en_v2.jinja"
+  fusion_edge_labels_zh: "lme_fuse_memory_bundle_edge_labels_zh_v2.jinja"
+  judge_oqa: ""
+  judge_mcq: ""
+  judge_system: ""

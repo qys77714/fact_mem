@@ -56,7 +56,7 @@ from utils.llm_api import load_api_chat_completion
 
 
 def _default_embedding_base_url() -> str:
-    return os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1")
+    return os.getenv("EMBEDDING_BASE_URL", "http://localhost:7110/v1/")
 
 
 LME_APPLY_MEMORY_READY_VERSION = 1
@@ -276,6 +276,49 @@ def _build_observation_map_for_history_name(
     return {int(meta["chunk_index"]): text for text, meta in pairs}
 
 
+def _run_parallel_ingest(
+    to_process: list[tuple[Path, str]],
+    workers: int,
+    apply_fn,
+    desc: str,
+    *,
+    accumulate_errors: bool = False,
+) -> int:
+    """Run ``apply_fn(path, history_name)`` over ``to_process`` with ``workers`` threads.
+
+    When ``accumulate_errors=False`` (default), returns 1 immediately on the first error.
+    When ``accumulate_errors=True`` (used for zep), collects all errors and returns 1 if any.
+    """
+    if workers <= 1:
+        n_errors = 0
+        for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
+            try:
+                apply_fn(path, history_name)
+            except Exception as e:
+                _print_apply_error(path, e)
+                if not accumulate_errors:
+                    return 1
+                n_errors += 1
+        return 1 if n_errors else 0
+
+    future_to_path: dict = {}
+    n_errors = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for path, history_name in to_process:
+            fut = pool.submit(apply_fn, path, history_name)
+            future_to_path[fut] = path
+        for fut in tqdm(as_completed(future_to_path), total=len(future_to_path), desc=desc, unit="ep"):
+            try:
+                fut.result()
+            except Exception as e:
+                path = future_to_path[fut]
+                _print_apply_error(path, e)
+                n_errors += 1
+                if not accumulate_errors:
+                    return 1
+    return 1 if n_errors else 0
+
+
 def main() -> int:
     load_env()
     parser = argparse.ArgumentParser(
@@ -481,8 +524,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--language",
-        default="zh",
-        help="提示语种：zh → 中文模板，否则英文",
+        default="en",
+        help="提示语种：en / zh（与 extract_candidates 保持一致）",
     )
     parser.add_argument(
         "--relation-system-template-en",
@@ -689,13 +732,18 @@ def main() -> int:
             manager_max_new_tokens=args.manager_max_new_tokens,
         )
     elif args.update_method == "evermemos":
-        memory = EverMemOSMemorySystem(
-            **lme_candidate_base_kw,
-            related_memory_top_k=_ADD_ALL_RELATED_TOP_K_PLACEHOLDER,
-            manager_max_new_tokens=args.manager_max_new_tokens,
-            similarity_threshold=float(args.evermemos_similarity_threshold),
-            max_time_gap_days=float(args.evermemos_max_time_gap_days),
-        )
+
+        def _make_evermemos_memory() -> EverMemOSMemorySystem:
+            # 每个 episode 独立实例：_cluster_state / _pending 不可跨线程共享。
+            return EverMemOSMemorySystem(
+                **lme_candidate_base_kw,
+                related_memory_top_k=_ADD_ALL_RELATED_TOP_K_PLACEHOLDER,
+                manager_max_new_tokens=args.manager_max_new_tokens,
+                similarity_threshold=float(args.evermemos_similarity_threshold),
+                max_time_gap_days=float(args.evermemos_max_time_gap_days),
+            )
+
+        memory = None  # evermemos 在 _apply_one_episode 内按 episode 构造
     else:
         # Candidate ingest only uses retrieve / decide / apply; it does not call _extract_facts.
         # extract_concurrency applies to dialogue-driven store_episode only.
@@ -718,13 +766,17 @@ def main() -> int:
     def _apply_one_episode(path: Path, history_name: str) -> None:
         # 重跑未完成 episode：先清空残留的数据库目录和 trace JSONL，再从零灌库
         # （已完成的 episode 有 .memory_ready.json marker，不会进入此分支）
-        db = memory._get_database(history_name)
+        if args.update_method == "evermemos":
+            ep_memory = _make_evermemos_memory()
+        else:
+            ep_memory = memory
+        db = ep_memory._get_database(history_name)
         db.clear_all()
-        remove_episode_trace_jsonl_files_for_logger(memory.trace, history_name)
+        remove_episode_trace_jsonl_files_for_logger(ep_memory.trace, history_name)
         if args.update_method == "mem0":
-            apply_candidate_file_mem0(memory, path)
+            apply_candidate_file_mem0(ep_memory, path)
         elif args.update_method == "zep":
-            apply_candidate_file_zep(memory, path)
+            apply_candidate_file_zep(ep_memory, path)
         elif args.update_method == "amac":
             obs_map = _build_observation_map_for_history_name(
                 benchmark=str(args.benchmark),
@@ -734,186 +786,30 @@ def main() -> int:
                 dialogue_format=str(args.ingest_obs_dialogue_format or "user_assistant"),
                 overlap_turns=int(args.ingest_obs_overlap_norm),
             )
-            apply_candidate_file(memory, path, observation_by_chunk_index=obs_map)
+            apply_candidate_file(ep_memory, path, observation_by_chunk_index=obs_map)
         elif args.update_method == "evermemos":
-            memory._reset_episode_state()
-            apply_candidate_file(memory, path)
-            memory.finalize_episode(db, history_name)
+            apply_candidate_file(ep_memory, path)
+            ep_memory.finalize_episode(db, history_name)
         else:
-            apply_candidate_file(memory, path)
+            apply_candidate_file(ep_memory, path)
         _write_apply_marker_atomic(
             _episode_apply_marker_path(db_root, history_name),
             _episode_apply_marker_payload(history_name, path, args),
         )
 
-    if args.update_method == "mem0":
-        workers = min(max(1, args.mem0_episode_concurrency), len(to_process))
-        if workers <= 1:
-            for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
-                try:
-                    _apply_one_episode(path, history_name)
-                except Exception as e:
-                    _print_apply_error(path, e)
-                    return 1
-        else:
-            future_to_path = {}
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for path, history_name in to_process:
-                    fut = pool.submit(_apply_one_episode, path, history_name)
-                    future_to_path[fut] = path
-                for fut in tqdm(
-                    as_completed(future_to_path),
-                    total=len(future_to_path),
-                    desc=desc,
-                    unit="ep",
-                ):
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        path = future_to_path[fut]
-                        _print_apply_error(path, e)
-                        return 1
-    elif args.update_method == "relation_decision":
-        workers = min(max(1, args.relation_episode_concurrency), len(to_process))
-        if workers <= 1:
-            for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
-                try:
-                    _apply_one_episode(path, history_name)
-                except Exception as e:
-                    _print_apply_error(path, e)
-                    return 1
-        else:
-            future_to_path = {}
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for path, history_name in to_process:
-                    fut = pool.submit(_apply_one_episode, path, history_name)
-                    future_to_path[fut] = path
-                for fut in tqdm(
-                    as_completed(future_to_path),
-                    total=len(future_to_path),
-                    desc=desc,
-                    unit="ep",
-                ):
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        path = future_to_path[fut]
-                        _print_apply_error(path, e)
-                        return 1
-    elif args.update_method == "add_all":
-        workers = min(max(1, args.add_all_episode_concurrency), len(to_process))
-        if workers <= 1:
-            for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
-                try:
-                    _apply_one_episode(path, history_name)
-                except Exception as e:
-                    _print_apply_error(path, e)
-                    return 1
-        else:
-            future_to_path = {}
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for path, history_name in to_process:
-                    fut = pool.submit(_apply_one_episode, path, history_name)
-                    future_to_path[fut] = path
-                for fut in tqdm(
-                    as_completed(future_to_path),
-                    total=len(future_to_path),
-                    desc=desc,
-                    unit="ep",
-                ):
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        path = future_to_path[fut]
-                        _print_apply_error(path, e)
-                        return 1
-    elif args.update_method == "amac":
-        workers = min(max(1, args.amac_episode_concurrency), len(to_process))
-        if workers <= 1:
-            for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
-                try:
-                    _apply_one_episode(path, history_name)
-                except Exception as e:
-                    _print_apply_error(path, e)
-                    return 1
-        else:
-            future_to_path = {}
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for path, history_name in to_process:
-                    fut = pool.submit(_apply_one_episode, path, history_name)
-                    future_to_path[fut] = path
-                for fut in tqdm(
-                    as_completed(future_to_path),
-                    total=len(future_to_path),
-                    desc=desc,
-                    unit="ep",
-                ):
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        path = future_to_path[fut]
-                        _print_apply_error(path, e)
-                        return 1
-    elif args.update_method == "zep":
-        workers = min(max(1, args.zep_episode_concurrency), len(to_process))
-        n_errors = 0
-        if workers <= 1:
-            for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
-                try:
-                    _apply_one_episode(path, history_name)
-                except Exception as e:
-                    _print_apply_error(path, e)
-                    n_errors += 1
-        else:
-            future_to_path = {}
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for path, history_name in to_process:
-                    fut = pool.submit(_apply_one_episode, path, history_name)
-                    future_to_path[fut] = path
-                for fut in tqdm(
-                    as_completed(future_to_path),
-                    total=len(future_to_path),
-                    desc=desc,
-                    unit="ep",
-                ):
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        path = future_to_path[fut]
-                        _print_apply_error(path, e)
-                        n_errors += 1
-        if n_errors > 0:
-            return 1
-    elif args.update_method == "evermemos":
-        workers = min(max(1, args.evermemos_episode_concurrency), len(to_process))
-        if workers <= 1:
-            for path, history_name in tqdm(to_process, desc=desc, unit="ep"):
-                try:
-                    _apply_one_episode(path, history_name)
-                except Exception as e:
-                    _print_apply_error(path, e)
-                    return 1
-        else:
-            future_to_path = {}
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                for path, history_name in to_process:
-                    fut = pool.submit(_apply_one_episode, path, history_name)
-                    future_to_path[fut] = path
-                for fut in tqdm(
-                    as_completed(future_to_path),
-                    total=len(future_to_path),
-                    desc=desc,
-                    unit="ep",
-                ):
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        path = future_to_path[fut]
-                        _print_apply_error(path, e)
-                        return 1
-    else:
-        raise AssertionError(f"unexpected update_method: {args.update_method!r}")
-    return 0
+    _episode_concurrency_map = {
+        "mem0": args.mem0_episode_concurrency,
+        "relation_decision": args.relation_episode_concurrency,
+        "add_all": args.add_all_episode_concurrency,
+        "zep": args.zep_episode_concurrency,
+        "amac": args.amac_episode_concurrency,
+        "evermemos": args.evermemos_episode_concurrency,
+    }
+    workers = min(max(1, _episode_concurrency_map[args.update_method]), len(to_process))
+    # zep accumulates errors (kuzu may crash mid-run); all other methods fail fast
+    accumulate_errors = (args.update_method == "zep")
+    return _run_parallel_ingest(to_process, workers, _apply_one_episode, desc,
+                                accumulate_errors=accumulate_errors)
 
 
 if __name__ == "__main__":

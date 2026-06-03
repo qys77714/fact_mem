@@ -67,6 +67,7 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"Qwen3-30B": "Qwen3-30B-A3B-Thinking-2507",
 		"gemma4-26B": "gemma-4-26B-A4B-it",
 		"gemma4-31B": "gemma-4-31B-it",
+		"gemma4-e2b": "gemma-4-E2B-it",
 	}
 
 	if model_name in list(model_name_vllm.keys()):

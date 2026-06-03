@@ -29,6 +29,90 @@ from .adapters import _NoCrossEncoder, _SyncEmbedderAdapter, _SyncLLMAdapter
 
 logger = logging.getLogger(__name__)
 
+
+def _remove_path(path: Path) -> None:
+    """Remove a file or directory tree (Kuzu uses a single db file, not a folder)."""
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+async def _close_kuzu_driver(driver: Any) -> None:
+    """Drain in-flight kuzu queries, then release all Python references.
+
+    Two bugs must be avoided simultaneously:
+
+    1. Original segfault — kuzu.AsyncConnection's internal ThreadPoolExecutor
+       keeps worker threads alive after process_chunks() returns.  When
+       asyncio later shuts down its own default executor those threads are
+       reaped while holding live kuzu C++ handles; the C++ destructors then
+       run outside any valid context → segfault.  Fix: drain the executor
+       with shutdown(wait=True) before returning.
+
+    2. double-free (kuzu 0.11.x bug) — kuzu's Python Connection.close() and
+       Database.close() each call the underlying C++ close() method AND then
+       set the pybind11 reference to None.  Setting the reference to None
+       triggers pybind11's tp_dealloc which calls the C++ *destructor* on the
+       same (already close()'d) object → double-free / heap corruption.
+       Fix: never call close() explicitly.  Just drain the executor so no C++
+       code is running, then release Python references.  Python's refcounting
+       will call the C++ destructors exactly once in the correct order
+       (Connection objects first, then Database).
+    """
+    try:
+        await driver.close()  # KuzuDriver.close() is a no-op
+    finally:
+        kuzu_conn = getattr(driver, "client", None)
+        if kuzu_conn is not None:
+            # Step 1: drain the internal ThreadPoolExecutor so no kuzu C++
+            # callbacks are pending when we release the objects below.
+            executor = getattr(kuzu_conn, "executor", None)
+            if executor is not None:
+                try:
+                    await asyncio.to_thread(executor.shutdown, True)
+                except Exception as _exc:
+                    logger.warning("Failed to shutdown kuzu executor: %s", _exc)
+
+            # Step 2: release kuzu.Connection Python objects WITHOUT calling
+            # conn.close().  Clearing the list drops refcounts to 0; pybind11
+            # tp_dealloc calls the C++ Connection destructor exactly once.
+            # (Calling conn.close() first would call C++ close() + destructor
+            # → double-free.)
+            try:
+                kuzu_conn.connections = []
+            except Exception:
+                pass
+
+        # Step 3: release all driver-level references.  Do NOT call
+        # kuzu_db.close() — same double-free reason as above.
+        # Python refcounting frees AsyncConnection (+ its Database ref) first,
+        # then the Database itself, guaranteeing correct C++ destructor order.
+        try:
+            driver.client = None
+        except Exception:
+            pass
+        try:
+            driver.db = None
+        except Exception:
+            pass
+
+
+def _shutdown_ephemeral_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Drain/cancel pending tasks before closing a one-shot event loop."""
+    try:
+        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.run_until_complete(loop.shutdown_default_executor())
+    finally:
+        loop.close()
+
 # Kuzu 的默认 max_db_size 是 8 TiB。在多线程并发灌库时（每个 episode 一个 KuzuDriver），
 # 每个实例都会 mmap 8 TiB 虚拟地址空间，10 个并发 = 80 TiB，超出内核限制导致
 # "Mmap for size 8796093022208 failed"。
@@ -170,7 +254,13 @@ class ZepMemorySystem(BaseMemorySystem):
     # Core ingest
     # ------------------------------------------------------------------
 
-    def process_chunks(self, history_name: str, chunks: List[Dict[str, Any]]) -> None:
+    def process_chunks(
+        self,
+        history_name: str,
+        chunks: List[Dict[str, Any]],
+        *,
+        incremental: bool = False,
+    ) -> None:
         """Synchronous entry point; drives the async graphiti pipeline.
 
         Uses a manually managed event loop so that cleanup order is explicit:
@@ -183,16 +273,18 @@ class ZepMemorySystem(BaseMemorySystem):
         """
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(self._async_process_chunks(history_name, chunks))
+            loop.run_until_complete(
+                self._async_process_chunks(history_name, chunks, incremental=incremental)
+            )
         finally:
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-                loop.run_until_complete(loop.shutdown_default_executor())
-            finally:
-                loop.close()
+            _shutdown_ephemeral_loop(loop)
 
     async def _async_process_chunks(
-        self, history_name: str, chunks: List[Dict[str, Any]]
+        self,
+        history_name: str,
+        chunks: List[Dict[str, Any]],
+        *,
+        incremental: bool = False,
     ) -> None:
         from graphiti_core import Graphiti
         from graphiti_core.driver.kuzu_driver import KuzuDriver
@@ -201,8 +293,9 @@ class ZepMemorySystem(BaseMemorySystem):
         kuzu_path = self._get_kuzu_path(history_name)
         # clear_all() in ingest_candidates already removes the history_name dir;
         # we still guard here in case process_chunks is called standalone.
-        if kuzu_path.exists():
-            shutil.rmtree(kuzu_path)
+        # Phase-3 incremental ingest copies an existing kuzu db file — keep it.
+        if not incremental and kuzu_path.exists():
+            _remove_path(kuzu_path)
         kuzu_path.parent.mkdir(parents=True, exist_ok=True)
 
         database = self._get_database(history_name)
@@ -216,7 +309,9 @@ class ZepMemorySystem(BaseMemorySystem):
         )
 
         try:
-            await graphiti_client.build_indices_and_constraints()
+            # Copied kuzu db from *_before already has schema + FTS indexes (Phase 1).
+            if not incremental:
+                await graphiti_client.build_indices_and_constraints()
 
             # Stable entity aliases for this episode: candidate facts often use
             # generic pronouns ("the user", "the assistant") as subjects.  Graphiti
@@ -291,15 +386,19 @@ class ZepMemorySystem(BaseMemorySystem):
                                 _exc,
                             )
 
-            await self._export_to_faiss(graphiti_client, database, history_name)
+            await self._export_to_faiss(
+                graphiti_client, database, history_name, incremental=incremental
+            )
         finally:
-            await graphiti_client.driver.close()
+            await _close_kuzu_driver(graphiti_client.driver)
 
     async def _export_to_faiss(
         self,
         graphiti_client,
         database: LocalFaissDatabase,
         history_name: str,
+        *,
+        incremental: bool = False,
     ) -> None:
         """Export all currently-valid EntityEdge facts to LocalFaissDatabase."""
         from graphiti_core.edges import EntityEdge
@@ -328,7 +427,16 @@ class ZepMemorySystem(BaseMemorySystem):
             len(all_edges),
         )
 
+        existing_edge_uuids: set[str] = set()
+        if incremental:
+            for mem in database.list_all_memories(sort_by_time=False):
+                uid = mem.metadata.get("entity_edge_uuid")
+                if uid:
+                    existing_edge_uuids.add(str(uid))
+
         for edge in valid_edges:
+            if incremental and edge.uuid in existing_edge_uuids:
+                continue
             text = edge.fact.strip()
             time_str = edge.valid_at.strftime("%Y-%m-%d") if edge.valid_at else ""
             metadata: Dict[str, Any] = {

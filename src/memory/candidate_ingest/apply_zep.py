@@ -15,6 +15,7 @@ def apply_candidate_episode_zep(
     payload: Dict[str, Any],
     *,
     source_path: Optional[Path] = None,
+    incremental: bool = False,
 ) -> Dict[str, Any]:
     """
     Walk chunks in order; feed ``candidate_memories`` strings through graphiti's
@@ -50,7 +51,7 @@ def apply_candidate_episode_zep(
     }
 
     try:
-        memory.process_chunks(history_name, sorted_c)
+        memory.process_chunks(history_name, sorted_c, incremental=incremental)
     finally:
         trace.close_scope(ep_scope, status="ok", metadata=stats)
 

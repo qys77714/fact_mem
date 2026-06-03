@@ -72,6 +72,10 @@ class EverMemOSMemorySystem(LmeCandidateMemorySystemBase):
     """
     Adapts EverMemOS memory management to the fact_memory ingest pipeline.
 
+    Thread-safety: ``_cluster_state`` and ``_pending`` are per-instance and must not
+    be shared across episodes. When using episode-level parallelism, construct one
+    ``EverMemOSMemorySystem`` per episode (see ``ingest_candidates.py``).
+
     Each candidate fact is:
       1. Embedded and assigned to a semantic cluster (incremental cosine clustering).
       2. Deferred until finalize_episode() is called for the current episode.
@@ -86,6 +90,7 @@ class EverMemOSMemorySystem(LmeCandidateMemorySystemBase):
         *args: Any,
         similarity_threshold: float = 0.65,
         max_time_gap_days: float = 7.0,
+        cluster_concurrency: int = 8,
         consolidation_template_en: Optional[str] = None,
         consolidation_template_zh: Optional[str] = None,
         **kwargs: Any,
@@ -94,6 +99,7 @@ class EverMemOSMemorySystem(LmeCandidateMemorySystemBase):
         super().__init__(*args, **kwargs)
         self._similarity_threshold = float(similarity_threshold)
         self._max_time_gap_seconds = float(max_time_gap_days) * 86400.0
+        self._cluster_concurrency = max(1, int(cluster_concurrency))
         self._consolidation_template_en = (
             (consolidation_template_en or "").strip() or _DEFAULT_CONSOLIDATION_TEMPLATE_EN
         )
@@ -163,7 +169,7 @@ class EverMemOSMemorySystem(LmeCandidateMemorySystemBase):
         best_cid: Optional[str] = None
         v_norm = float(np.linalg.norm(vector)) + 1e-9
 
-        for cid, centroid in state.cluster_centroids.items():
+        for cid, centroid in list(state.cluster_centroids.items()):
             if centroid is None or centroid.size == 0:
                 continue
             # Time gap check
@@ -215,8 +221,7 @@ class EverMemOSMemorySystem(LmeCandidateMemorySystemBase):
 
         total_ops = 0
         try:
-            # Parallel consolidation across clusters (reuse relation_concurrency setting)
-            workers = min(self._relation_concurrency, len(clusters))
+            workers = min(self._cluster_concurrency, len(clusters))
             if workers <= 1:
                 for cid, members in clusters.items():
                     ops = self._write_cluster(database, cid, members, ep_scope, trace)
@@ -243,6 +248,10 @@ class EverMemOSMemorySystem(LmeCandidateMemorySystemBase):
         except Exception:
             trace.close_scope(ep_scope, status="error")
             raise
+        finally:
+            # Must clear _pending after each finalize so Phase 3 (incremental=True) does not
+            # re-write Phase 1 facts into hn_after (which was already copied from hn_before).
+            self._pending = []
 
         return total_ops
 

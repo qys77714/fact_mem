@@ -130,7 +130,9 @@ def apply_candidate_episode_json(
                             stats["amac_admitted"] += 1
                         else:
                             stats["amac_rejected"] += 1
-                removed = database.deduplicate_identical_text()
+                # Skip dedup when no writes happened in this chunk (e.g. evermemos defers
+                # all DB writes to finalize_episode, so op_sub is always 0 here).
+                removed = database.deduplicate_identical_text() if op_sub > 0 else 0
                 trace.close_scope(
                     ch_scope,
                     status="ok",

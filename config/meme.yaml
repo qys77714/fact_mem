@@ -38,7 +38,7 @@ methods:
 
   relation_decision:
     enabled: true
-    related_top_k: 6
+    related_top_k: 3
     fusion_model: ""
 
   mem0:

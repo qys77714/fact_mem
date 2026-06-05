@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pl_001 Cas Update Condition · 验证说明</title>
+  <style>
+    :root {
+      --bg:#f4f6fb; --card:#fff; --border:#dde3ef; --text:#1a1d26;
+      --muted:#64748b; --accent:#3b6df6; --ok:#15803d; --ok-bg:#f0fdf4;
+      --gold:#b45309; --gold-bg:#fffbeb; --purple:#6d28d9; --purple-bg:#f5f3ff;
+      --in-bg:#f8fafc; --out-bg:#f0fdf4; --io-border:#cbd5e1;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font:14px/1.55 system-ui,sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:1100px; margin:0 auto; padding:20px 16px 48px; }
+    h1 { font-size:22px; margin:0 0 6px; }
+    h2 { font-size:15px; margin:28px 0 10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+    h3 { font-size:14px; margin:16px 0 8px; }
+    h4 { font-size:13px; margin:12px 0 6px; color:var(--accent); }
+    .sub { color:var(--muted); font-size:13px; margin-bottom:16px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+    .badge { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; }
+    .badge-ok { background:var(--ok-bg); color:var(--ok); }
+    .badge-real { background:#dbeafe; color:#1d4ed8; }
+    .badge-llm { background:#fef3c7; color:#92400e; }
+    .badge-emb { background:var(--purple-bg); color:var(--purple); }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { border-bottom:1px solid var(--border); padding:8px 10px; vertical-align:top; text-align:left; }
+    th { color:var(--muted); font-size:11px; }
+    tr.pass td:first-child { border-left:3px solid var(--ok); }
+    code, pre { font-family:ui-monospace,monospace; font-size:11.5px; }
+    code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
+    pre { background:#1e293b; color:#e2e8f0; padding:12px; border-radius:8px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; margin:8px 0; line-height:1.45; }
+    .clip { color:var(--muted); font-size:12px; }
+    .mono { font-family:ui-monospace,monospace; font-size:12px; }
+    .metric { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:8px; }
+    .metric-item { background:var(--ok-bg); border:1px solid #bbf7d0; border-radius:8px; padding:10px 14px; }
+    .metric-val { font-size:22px; font-weight:700; color:var(--ok); }
+    .schema { background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:12px; }
+    .schema-row { display:grid; grid-template-columns:160px 100px 1fr; gap:8px; padding:5px 0; border-bottom:1px dashed #e2e8f0; font-size:12px; }
+    .schema-row:last-child { border:none; }
+    .schema-h { font-weight:600; color:var(--muted); font-size:11px; margin-bottom:6px; }
+    .mem-primary { background:var(--gold-bg); border:1px solid #fcd34d; border-radius:6px; padding:6px 8px; font-size:12px; margin:4px 0; }
+    .mem-cond { background:var(--purple-bg); border:1px solid #ddd6fe; border-radius:6px; padding:6px 8px; font-size:11px; color:var(--purple); margin:4px 0; }
+    .mem-evidence { background:#f1f5f9; border:1px dashed #94a3b8; border-radius:6px; padding:6px 8px; font-size:11px; color:var(--muted); margin:4px 0; }
+    .step { border-left:3px solid var(--accent); padding:10px 0 10px 14px; margin:12px 0; }
+    .step-num { font-weight:700; color:var(--accent); font-size:12px; }
+    .io-pair { margin:10px 0; }
+    .io-label { font-size:11px; font-weight:700; margin-bottom:4px; }
+    .io-in .io-label { color:#475569; }
+    .io-out .io-label { color:var(--ok); }
+    .phase-head { background:linear-gradient(90deg,#eef2ff,#fff); border:1px solid #c7d2fe; border-radius:10px; padding:12px 14px; margin:16px 0 10px; }
+    .phase-head.after { background:linear-gradient(90deg,#fef3c7,#fff); border-color:#fcd34d; }
+    .arrow-down { text-align:center; color:var(--muted); margin:6px 0; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    @media(max-width:800px){ .grid2,.schema-row { grid-template-columns:1fr; } }
+    details { margin:8px 0; }
+    summary { cursor:pointer; font-weight:600; font-size:13px; color:var(--accent); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>pl_001 · Cas Update Condition 验证说明</h1>
+  <p class="sub">evidence-only · <strong>text-only memory</strong>（仅 primary_text + cas_update_condition，不用 entity 等元数据）· 运行 2026-06-05 14:52:31Z · meme_score = 1.0</p>
+
+  <div class="metric">
+    <div class="metric-item"><div class="metric-val">6/6</div><div class="clip">Cas+Abs 全通过</div></div>
+    <div class="metric-item"><div class="metric-val">3/3</div><div class="clip">after real_pass</div></div>
+  </div>
+
+  <!-- ========== MEMORY STRUCTURE ========== -->
+  <h2>Memory Candidate 数据结构（当前实现）</h2>
+  <div class="card">
+    <p>原始输入仅 <code>fact_text</code> 字符串（evidence-only，24 条）。<strong>不使用</strong> dataset 的 <code>entity</code>、<code>has_dependency</code>、<code>episode.entities.task</code> 等。拆分靠文本启发式（<code> — </code> + dependency 从句模式；<code>If my/we/I...</code> 识别 if-then）。检索只用 <code>primary_text</code>。</p>
+
+    <h3>MemoryRow 字段</h3>
+    <div class="schema">
+      <div class="schema-row schema-h"><span>字段</span><span>类型</span><span>说明</span></div>
+      <div class="schema-row"><span><code>id</code></span><span>string</span><span>唯一 ID（12 位 hex）</span></div>
+      <div class="schema-row"><span><code>primary_text</code></span><span>string</span><span><b>检索用主文本</b>（compound golden 的「—」前半段）</span></div>
+      <div class="schema-row"><span><code>cas_update_condition</code></span><span>string|null</span><span><b>变更条件 metadata</b>（compound 的「—」后半段 + ENRICH 合并的 if-then 规则）</span></div>
+      <div class="schema-row"><span><code>memory_role</code></span><span>primary|evidence</span><span>primary 参与检索；UPDATE 后旧 primary 降为 evidence</span></div>
+      <div class="schema-row"><span><code>parent_primary_id</code></span><span>string|null</span><span>evidence 指向的新 primary（UPDATE 边）</span></div>
+      <div class="schema-row"><span><code>lme_edge</code></span><span>UPDATE|null</span><span>与 relation_decision CON 语义对齐</span></div>
+      <div class="schema-row"><span><code>order_index</code></span><span>int</span><span>全局灌库序（session asc → fact 列表序），condition 只与更小 order 比较</span></div>
+      <div class="schema-row"><span><code>entity</code></span><span>null</span><span>text-only 模式不存储（评测侧仍用 question.entity_key）</span></div>
+      <div class="schema-row"><span><code>session_index</code></span><span>int</span><span>所属 evidence session</span></div>
+      <div class="schema-row"><span><code>source</code></span><span>enum</span><span><code>gold_split</code> | <code>gold_if_then</code> | <code>plain</code></span></div>
+      <div class="schema-row"><span><code>stale</code></span><span>bool</span><span>INVALIDATE 后 true，不参与检索</span></div>
+      <div class="schema-row"><span><code>pending_rules</code></span><span>string[]</span><span>暂存 if-then cascade 规则，供 ENRICH / hop-2 使用</span></div>
+    </div>
+
+    <h3>三类入库来源 → 结构映射</h3>
+    <table>
+      <thead><tr><th>source</th><th>识别条件</th><th>生成结构</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>gold_split</code></td>
+          <td><code>has_dependency=true</code> 且非 if-then，文本含 <code> — </code></td>
+          <td>1 个 primary + <code>cas_update_condition</code></td>
+        </tr>
+        <tr>
+          <td><code>gold_if_then</code></td>
+          <td><code>is_if_then=true</code></td>
+          <td>不新建 primary；LLM ENRICH 到同 entity 已有 primary 的 condition</td>
+        </tr>
+        <tr>
+          <td><code>plain</code></td>
+          <td>其余</td>
+          <td>仅 <code>primary_text=fact_text</code>，无 condition</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>medication 示例：原始 fact → MemoryRow</h3>
+    <p class="clip">session 3, fact_id=1, entity=medication</p>
+    <pre style="background:#f8fafc;color:#334155;border:1px solid var(--border)">RAW (dataset gold_fact):
+"I take a medication called Quelmithin — this is determined by my lactose intolerance;
+ if my health condition changes, this would likely change too"
+
+SPLIT → MemoryRow (order_index=12):
+{
+  "id": "bc1c263ccfd1",
+  "primary_text": "I take a medication called Quelmithin",
+  "cas_update_condition": "this is determined by my lactose intolerance; if my health condition changes, this would likely change too",
+  "memory_role": "primary",
+  "entity": "medication",
+  "source": "gold_split",
+  "stale": false
+}</pre>
+
+    <p class="clip">session 3, fact_id=7 — if-then rule（不建 primary，ENRICH 到 medication condition）</p>
+    <pre style="background:#f8fafc;color:#334155;border:1px solid var(--border)">RAW: "If my health condition changes, my medication will switch to multivitamin"
+
+→ ENRICH 后 cas_update_condition 变为:
+"... If my health condition changes, my medication will switch to multivitamin"</pre>
+
+    <p class="clip">session 4 触发 UPDATE 后 medication 有两行（primary + evidence）</p>
+    <div class="mem-evidence">evidence (stale): "I take a medication called Quelmithin" → parent → bc1c263…</div>
+    <div class="arrow-down">↓ UPDATE 边</div>
+    <div class="mem-primary">primary (active): "I take a medication called multivitamin" · order=18 · session=4</div>
+    <div class="mem-cond">condition 保留（继承自旧 primary）</div>
+  </div>
+
+  <!-- ========== FULL QUESTION FLOW ========== -->
+  <h2>完整流程：「What medication am I taking?」(Cas)</h2>
+  <p class="clip">以下 before / after 均来自实际运行日志（ingest_trace.jsonl + pred.jsonl）。LLM prompt 按模板 + trace 中的变量<b>还原</b>（ingest 阶段 trace 存了 llm_raw 输出，输入按 cas_update_decision.jinja 重建）。</p>
+
+  <!-- ===== BEFORE ===== -->
+  <div class="phase-head">
+    <h3 style="margin:0">Phase BEFORE · position_after_session = 3</h3>
+    <span class="clip">ingest session 0–3 → 答题 → judge · gold = <b>Quelmithin</b></span>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <div class="step-num">Step B1 · Ingest（session 0–3，无 cascade 触发）</div>
+      <p>medication compound fact 在 session 3 入库：拆分为 primary + condition。之后 if-then rule ENRICH condition。<b>此阶段无 UPDATE_PRIMARY</b>（健康尚未变化）。</p>
+      <details>
+        <summary>LLM #1 · if_then_enrich（session 3, fact_id=7）<span class="badge badge-llm">gemma4-26B</span></summary>
+        <div class="io-pair io-in">
+          <div class="io-label">INPUT（cas_update_decision.jinja 渲染）</div>
+          <pre>## New memory
+If my health condition changes, my medication will switch to multivitamin
+
+## Matched update condition (linked entity: medication, task: Cas)
+this is determined by my lactose intolerance; if my health condition changes, this would likely change too
+
+## Current primary memory linked to this condition
+I take a medication called Quelmithin
+
+## Known cascade rules already attached to this entity
+this is determined by my lactose intolerance; if my health condition changes, this would likely change too
+
+## Task hints
+- (fictional examples in template only — Antoril / Riverside / night shifts; no pl_001 values)
+(Output ONLY valid JSON)</pre>
+        </div>
+        <div class="io-pair io-out">
+          <div class="io-label">OUTPUT（trace: llm_action=ENRICH_CONDITION）</div>
+          <pre>{
+  "action": "ENRICH_CONDITION",
+  "enriched_condition": "... If my health condition changes, my medication will switch to multivitamin",
+  "reason": "Rule pre-declares replacement value for Cas-D cascade"
+}</pre>
+        </div>
+      </details>
+      <p><b>答题时 memory bank 中 medication 状态：</b></p>
+      <div class="mem-primary">primary: "I take a medication called Quelmithin"</div>
+      <div class="mem-cond">condition: "... switch to multivitamin"（已 ENRICH，但尚未触发）</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">Step B2 · 检索 <span class="badge badge-emb">qwen3-embedding-0.6b</span></div>
+      <p>query = "What medication am I taking?" · 仅索引 active primary · top-20</p>
+      <table>
+        <thead><tr><th>rank</th><th>sim</th><th>primary_text</th><th>entity</th></tr></thead>
+        <tbody>
+          <tr class="pass"><td>1</td><td class="mono">0.742</td><td>I take a medication called Quelmithin</td><td>medication</td></tr>
+          <tr><td>2</td><td class="mono">0.468</td><td>The user's current media is The Quorath Codex (book).</td><td>media_consumption</td></tr>
+          <tr><td>3</td><td class="mono">0.464</td><td>My regular appointment is tutoring session (weekly)</td><td>regular_appointment</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="step">
+      <div class="step-num">Step B3 · 答题 LLM <span class="badge badge-llm">gemma4-26B</span></div>
+      <div class="io-pair io-in">
+        <div class="io-label">INPUT（agent_prompt_en_open.jinja，节选 top-3 context）</div>
+        <pre>You are a memory-augmented assistant...
+
+### Retrieved Memory Unit [1]
+- Time: 2023/03/03 (Fri) 07:25
+&lt;MemoryContent&gt;
+I take a medication called Quelmithin
+&lt;/MemoryContent&gt;
+
+### Retrieved Memory Unit [2]
+...
+### Retrieved Memory Unit [3]
+...
+
+### Question Details
+- Current Date: 2023/03/03 (Fri) 07:25
+- Question: What medication am I taking?
+
+Please give a short answer.</pre>
+      </div>
+      <div class="io-pair io-out">
+        <div class="io-label">OUTPUT</div>
+        <pre>You are taking a medication called Quelmithin.</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">Step B4 · Judge LLM <span class="badge badge-llm">gemma4-26B</span></div>
+      <div class="io-pair io-in">
+        <div class="io-label">INPUT（BEFORE_COMMON_PROMPT）</div>
+        <pre>QUESTION: What medication am I taking?
+GOLD: Quelmithin
+AGENT: You are taking a medication called Quelmithin.
+
+Does the agent's answer contain the correct information matching the gold answer?
+Output ONLY JSON: {"correct": true/false, "reason": "..."}</pre>
+      </div>
+      <div class="io-pair io-out">
+        <div class="io-label">OUTPUT</div>
+        <pre>{"correct": true, "reason": "The agent correctly identifies the medication 'Quelmithin' as specified in the gold answer."}</pre>
+      </div>
+      <p><span class="badge badge-ok">PASS</span> u_pass=true</p>
+    </div>
+  </div>
+
+  <!-- ===== AFTER ===== -->
+  <div class="phase-head after">
+    <h3 style="margin:0">Phase AFTER · position_after_session = 4</h3>
+    <span class="clip">重新 ingest session 0–4（含健康变化事件）→ 答题 → judge · gold = <b>multivitamin</b> · pass_type = <b>real</b></span>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <div class="step-num">Step A1 · Ingest session 4 — cascade 触发 <span class="badge badge-emb">embedding</span> + <span class="badge badge-llm">LLM</span></div>
+      <p>新 memory 进入（plain, health_condition 变化）：</p>
+      <pre style="background:#fef2f2;color:#7f1d1d;border:1px solid #fecaca;font-size:12px">"My lactose intolerance has been treated and resolved. But I was recently diagnosed with high blood pressure"</pre>
+
+      <p><span class="badge badge-emb">Embedding 匹配</span> vs prior <code>cas_update_condition</code>（medication, sim=0.651 ≥ 0.5）</p>
+
+      <details open>
+        <summary>LLM #2 · condition_match → UPDATE_PRIMARY（关键决策）</summary>
+        <div class="io-pair io-in">
+          <div class="io-label">INPUT（cas_update_decision.jinja 渲染，变量来自 trace）</div>
+          <pre>## New memory
+My lactose intolerance has been treated and resolved. But I was recently diagnosed with high blood pressure
+
+## Matched update condition (linked entity: medication, task: Cas)
+this is determined by my lactose intolerance; if my health condition changes, this would likely change too
+(which affects my weekly tutoring session appointment and my exercise routine of swimming 2x/week at Crysthene Pool).
+If my health condition changes, my medication will switch to multivitamin
+
+## Current primary memory linked to this condition
+I take a medication called Quelmithin
+
+## Known cascade rules already attached to this entity
+[this condition text + pending rule above]
+
+## Task hints
+- Decision hints: infer replacement vs invalidate from condition/rules text only (template few-shots use fictional Antoril etc.) ...</pre>
+        </div>
+        <div class="io-pair io-out">
+          <div class="io-label">OUTPUT（trace llm_raw，实际返回）</div>
+          <pre>{
+  "action": "UPDATE_PRIMARY",
+  "new_primary_text": "I take a medication called multivitamin",
+  "reason": "The user's health condition changed (lactose intolerance resolved and high blood pressure diagnosed), triggering the replacement rule for medication."
+}</pre>
+        </div>
+      </details>
+
+      <p><b>系统执行 UPDATE：</b></p>
+      <div class="mem-evidence">旧 primary → evidence · lme_edge=UPDATE · stale=true<br>"I take a medication called Quelmithin"</div>
+      <div class="arrow-down">↓</div>
+      <div class="mem-primary">新 primary · "I take a medication called multivitamin" · id=4001c8331fa3</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">Step A2 · 检索</div>
+      <table>
+        <thead><tr><th>rank</th><th>sim</th><th>primary_text</th><th>entity</th></tr></thead>
+        <tbody>
+          <tr class="pass"><td>1</td><td class="mono">0.697</td><td>I take a medication called multivitamin</td><td>medication</td></tr>
+          <tr><td>2</td><td class="mono">0.493</td><td>My regular appointment is uncertain — previously …</td><td>regular_appointment</td></tr>
+          <tr><td>3</td><td class="mono">0.488</td><td>My lactose intolerance has been treated and resolved…</td><td>health_condition</td></tr>
+        </tbody>
+      </table>
+      <p class="clip">注意：旧 Quelmithin primary 已 stale，不出现在检索结果中。</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">Step A3 · 答题 LLM <span class="badge badge-llm">gemma4-26B</span></div>
+      <div class="io-pair io-in">
+        <div class="io-label">INPUT（节选）</div>
+        <pre>### Retrieved Memory Unit [1]
+&lt;MemoryContent&gt;
+I take a medication called multivitamin
+&lt;/MemoryContent&gt;
+
+### Question Details
+- Current Date: 2023/03/06 (Mon) 11:02
+- Question: What medication am I taking?</pre>
+      </div>
+      <div class="io-pair io-out">
+        <div class="io-label">OUTPUT</div>
+        <pre>You are taking a multivitamin.</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">Step A4 · Judge LLM <span class="badge badge-llm">gemma4-26B</span></div>
+      <div class="io-pair io-in">
+        <div class="io-label">INPUT（CASCADE_D_PROMPT — after Cas 专用）</div>
+        <pre>QUESTION: What medication am I taking?
+GOLD (new cascaded value): multivitamin
+AGENT: You are taking a multivitamin.
+
+The upstream entity changed, triggering a cascade. The agent should now report ONLY the new value.
+
+Rules:
+- Agent states the new value as the sole, definitive answer → YES
+- Agent lists BOTH old and new values together → NO
+- Agent states only the old value → NO
+...</pre>
+      </div>
+      <div class="io-pair io-out">
+        <div class="io-label">OUTPUT</div>
+        <pre>{"correct": true, "reason": "The agent states the new value as the sole, definitive answer."}</pre>
+      </div>
+      <p>
+        <span class="badge badge-ok">PASS</span> u_pass=true ·
+        <span class="badge badge-real">pass_type=real</span>（before 同 entity 也已通过）
+      </p>
+    </div>
+  </div>
+
+  <!-- ========== LLM CALL SUMMARY ========== -->
+  <h2>本题 LLM 调用汇总</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>阶段</th><th>时机</th><th>模板</th><th>模型</th><th>作用</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>before ingest</td><td>session 3 if-then rule</td><td><code>cas_update_decision.jinja</code></td><td>gemma4-26B</td><td>ENRICH condition（预存 multivitamin 规则）</td></tr>
+        <tr><td>before 答题</td><td>question time</td><td><code>agent_prompt_en_open.jinja</code></td><td>gemma4-26B</td><td>基于检索 context 生成答案</td></tr>
+        <tr><td>before 评判</td><td>post-answer</td><td><code>BEFORE_COMMON_PROMPT</code></td><td>gemma4-26B</td><td>语义匹配 gold=Quelmithin</td></tr>
+        <tr><td>after ingest</td><td>session 4 health change</td><td><code>cas_update_decision.jinja</code></td><td>gemma4-26B</td><td><b>UPDATE_PRIMARY</b> → multivitamin</td></tr>
+        <tr><td>after 答题</td><td>question time</td><td><code>agent_prompt_en_open.jinja</code></td><td>gemma4-26B</td><td>基于更新后 primary 生成答案</td></tr>
+        <tr><td>after 评判</td><td>post-answer</td><td><code>CASCADE_D_PROMPT</code></td><td>gemma4-26B</td><td>确认只报告新 cascade 值</td></tr>
+      </tbody>
+    </table>
+    <p class="clip">Embedding 调用（非 LLM）：每次 condition 匹配、每次检索 query 各 1 次 batch embed（qwen3-embedding-0.6b @ :7110）。</p>
+  </div>
+
+  <!-- ========== ALL QUESTIONS ========== -->
+  <h2>全部 6 题结果速览</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Phase</th><th>题型</th><th>Entity</th><th>Gold</th><th>Top-1 检索</th><th>Judge</th><th>pass_type</th></tr></thead>
+      <tbody id="qa-rows"></tbody>
+    </table>
+  </div>
+
+  <h2>输出文件 & 复现</h2>
+  <div class="card mono" style="font-size:12px;line-height:1.8">
+    test/meme/output/pl_001_cas_update_condition/<br>
+    ├── ingest_trace.jsonl &nbsp; ← ingest LLM 输出 (llm_raw) + 相似度<br>
+    ├── pred.jsonl &nbsp; ← 答题 LLM 输出 + 检索列表 + judge 结果<br>
+    ├── eval_judge.json<br>
+    └── validation_report.html &nbsp; ← 本页
+  </div>
+  <pre class="cmd" style="margin-top:8px">cd /mnt/data/zjj/project/fact_memory/test/meme/output/pl_001_cas_update_condition
+python -m http.server 8766
+# http://localhost:8766/validation_report.html</pre>
+</div>
+
+<script>
+const QA = [
+  {phase:"before",type:"Cas",ent:"medication",gold:"Quelmithin",top1:"I take a medication called Quelmithin",pass:true,pt:"—"},
+  {phase:"before",type:"Cas",ent:"fitness_facility",gold:"Crysthene Pool",top1:"I go to Crysthene Pool for workouts",pass:true,pt:"—"},
+  {phase:"before",type:"Abs",ent:"regular_appointment",gold:"tutoring session (weekly)",top1:"My regular appointment is tutoring session (weekly)",pass:true,pt:"—"},
+  {phase:"after",type:"Cas",ent:"medication",gold:"multivitamin",top1:"I take a medication called multivitamin",pass:true,pt:"real"},
+  {phase:"after",type:"Cas",ent:"fitness_facility",gold:"Velthari Studio",top1:"I work out at Velthari Studio",pass:true,pt:"real"},
+  {phase:"after",type:"Abs",ent:"regular_appointment",gold:"Uncertain",top1:"My regular appointment is uncertain — previously…",pass:true,pt:"real"},
+];
+document.getElementById("qa-rows").innerHTML = QA.map(r => `
+  <tr class="${r.pass?'pass':''}">
+    <td>${r.phase}</td><td>${r.type}</td><td>${r.ent}</td>
+    <td class="clip">${r.gold}</td>
+    <td class="clip mono">${r.top1}</td>
+    <td>${r.pass?'<span class="badge badge-ok">PASS</span>':'FAIL'}</td>
+    <td>${r.pt==='real'?'<span class="badge badge-real">real</span>':r.pt}</td>
+  </tr>`).join("");
+</script>
+</body>
+</html>

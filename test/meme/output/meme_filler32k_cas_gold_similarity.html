@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MEME Cas · Golden vs Other Similarity</title>
+  <style>
+    :root {
+      --bg:#f6f7fb; --card:#fff; --border:#e2e6ef; --text:#1a1d26;
+      --muted:#667085; --accent:#3b6df6; --gold:#b45309; --gold-bg:#fffbeb;
+      --og:#6d28d9; --og-bg:#f5f3ff; --filler:#64748b; --filler-bg:#f8fafc;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font:14px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:1100px; margin:0 auto; padding:16px; }
+    h1 { margin:0 0 12px; font-size:18px; }
+    .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
+    select, input { padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:#fff; }
+    #q-select { flex:1; min-width:240px; max-width:520px; }
+    .hint { color:var(--muted); font-size:12px; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+    .card h2 { margin:0 0 8px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+    .q { font-size:15px; font-weight:600; }
+    .meta { color:var(--muted); font-size:12px; margin-top:6px; }
+    .gold { background:var(--gold-bg); border-left:3px solid var(--gold); padding:6px 8px; margin:4px 0; font-size:13px; }
+    .gold-block { margin-bottom:14px; }
+    .gold-anchor { background:var(--gold-bg); border:1px solid #fcd34d; border-radius:6px; padding:8px 10px; margin-bottom:6px; font-size:13px; font-weight:600; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { border-bottom:1px solid var(--border); padding:6px 8px; vertical-align:top; }
+    th { color:var(--muted); font-size:11px; text-align:left; }
+    .sim { font-family:ui-monospace,monospace; color:var(--accent); font-weight:600; white-space:nowrap; }
+    .cell-gold { background:var(--gold-bg); }
+    .cell-og { background:var(--og-bg); }
+    .cell-filler { background:var(--filler-bg); }
+    .tag { display:inline-block; font-size:10px; padding:1px 5px; border-radius:4px; margin-bottom:2px; }
+    .tag-sg { background:#fef3c7; color:var(--gold); }
+    .tag-og { background:var(--og-bg); color:var(--og); }
+    .tag-f { background:#eef2f7; color:var(--filler); }
+    .clip { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .chain-step { padding:6px 8px; margin:4px 0; border-left:3px solid var(--accent); background:#f0f4ff; font-size:13px; }
+    .chain-edge { color:var(--muted); font-size:12px; margin:2px 0 6px 12px; }
+    .tl-item { display:flex; gap:8px; padding:5px 0; border-bottom:1px dashed var(--border); font-size:12px; }
+    .tl-ord { font-family:ui-monospace,monospace; color:var(--muted); min-width:28px; }
+    .tl-ent { color:var(--gold); font-weight:600; min-width:110px; }
+    .err { color:#b42318; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>MEME Cas · Golden vs Other Similarity</h1>
+    <div class="bar">
+      <select id="f-phase"><option value="">phase 全部</option></select>
+      <select id="f-ep"><option value="">episode 全部</option></select>
+      <select id="q-select"><option value="">加载中…</option></select>
+      <span class="hint" id="stats"></span>
+    </div>
+    <p class="hint">数据文件: meme_filler32k_cas_gold_similarity.json · 相似度仅与灌库顺序更早的 memory 比较 · 黄=同链golden · 紫=链外golden · 灰=filler</p>
+    <div id="detail"><p class="hint">加载数据…</p></div>
+  </div>
+  <script>
+    const JSON_FILE = "meme_filler32k_cas_gold_similarity.json";
+    const TOP_K = 20;
+    let rows = [], filtered = [];
+
+    const esc = s => (s ?? "").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const clip = (s, n=96) => {
+      const t = (s ?? "").toString();
+      return t.length > n ? t.slice(0, n) + "…" : t;
+    };
+    const kindLabel = (k, ent) => {
+      if (k === "sc") return "同链golden" + (ent ? "·"+ent : "");
+      if (k === "og") return "链外golden" + (ent ? "·"+ent : "");
+      if (k === "gu") return "链外golden";
+      return "filler";
+    };
+    const kindClass = k => k === "sc" ? "cell-gold" : (k === "og" || k === "gu" ? "cell-og" : "cell-filler");
+    const tagClass = k => k === "sc" ? "tag-sg" : (k === "f" ? "tag-f" : "tag-og");
+
+    function renderPairs(pairs) {
+      return (pairs || []).map(p => {
+        const [rank, sim, other, kind, ent, oo] = p;
+        const ordTag = oo !== undefined && oo !== null ? `<span class="hint">ord#${oo}</span> ` : '';
+        return `<tr>
+          <td class="sim">#${rank} ${Number(sim).toFixed(4)}</td>
+          <td class="${kindClass(kind)}" title="${esc(other)}">
+            <span class="tag ${tagClass(kind)}">${esc(kindLabel(kind, ent))}</span> ${ordTag}
+            <div class="clip">${esc(other)}</div>
+          </td>
+        </tr>`;
+      }).join("");
+    }
+
+    function renderLogic(logic) {
+      if (!logic || !logic.steps) return '';
+      const rc = logic.root_change || {};
+      const rootLine = logic.root ? `<div class="meta">root=${esc(logic.root)} · change: ${esc(rc.before)} → ${esc(rc.after)}</div>` : '';
+      const edges = (logic.edges || []).map(e => `<div class="chain-edge">${esc(e)}</div>`).join('');
+      const steps = logic.steps.map((s, i) => {
+        const dep = s.edge_from ? ` ← ${esc(s.edge_from)} (hop=${s.edge_hop}, ${esc(s.pattern||'')})` : '';
+        return `<div class="chain-step"><b>#${i+1} ${esc(s.entity)}</b>${dep}<br/>value@phase: <b>${esc(s.value ?? '—')}</b></div>`;
+      }).join('');
+      return `<div class="card"><h2>Cascade 逻辑链</h2>${rootLine}${edges}${steps}</div>`;
+    }
+
+    function renderTimeline(tl) {
+      if (!tl || !tl.length) return '';
+      const rows = tl.map(it => `
+        <div class="tl-item">
+          <span class="tl-ord">#${it.order}</span>
+          <span class="tl-ent">${esc(it.entity||'?')}</span>
+          <span title="${esc(it.text)}">sess${it.session_index}/chunk${it.chunk_index} · ${esc(clip(it.text, 80))}</span>
+        </div>`).join('');
+      return `<div class="card"><h2>Golden 时间顺序（灌库序）</h2>${rows}</div>`;
+    }
+
+    function renderDetail(r) {
+      if (!r) return '<p class="hint">无题目</p>';
+      const c = r.cnt || {};
+      const tl = r.gold_tl || [];
+      const ordMap = Object.fromEntries(tl.map(it => [it.text, it.order]));
+      const blocks = (r.by_gold || []).map((pairs, gi) => {
+        const gtxt = (r.gold || [])[gi] || "";
+        const ord = ordMap[gtxt];
+        const ordLabel = ord !== undefined ? `order #${ord}` : '';
+        return `<div class="gold-block">
+          <div class="gold-anchor" title="${esc(gtxt)}">Golden #${gi+1} (${ordLabel}): ${esc(clip(gtxt, 150))}</div>
+          <div class="hint" style="margin-bottom:4px">仅与 order &lt; ${ord ?? '?'} 的 memory 比较</div>
+          <table><thead><tr><th>#</th><th>Prior Memory</th></tr></thead>
+            <tbody>${renderPairs(pairs) || '<tr><td colspan=2 class=hint>无更早 memory</td></tr>'}</tbody></table>
+        </div>`;
+      }).join("");
+      return `
+        <div class="card"><h2>Question</h2><div class="q">${esc(r.q)}</div>
+          <div class="meta">${esc(r.ph)} · ${esc(r.ep)} · target=${esc((r.ent||[]).join(","))} · hop=${r.hop??"—"} · golden=${c.golden??0} · pool=${c.pool??0} · ans: ${esc(r.ans)}</div></div>
+        ${renderLogic(r.logic)}
+        ${renderTimeline(tl)}
+        <div class="card"><h2>各 Golden vs 更早 Memory · Top-${TOP_K}</h2>${blocks || '<span class=hint>无 golden</span>'}</div>`;
+    }
+
+    function rebuildSelect() {
+      const phase = document.getElementById("f-phase").value;
+      const ep = document.getElementById("f-ep").value;
+      filtered = rows.filter(r => (!phase || r.ph === phase) && (!ep || r.ep === ep));
+      const sel = document.getElementById("q-select");
+      const cur = sel.value;
+      sel.innerHTML = filtered.map((r, i) => {
+        const first = r.by_gold && r.by_gold[0] && r.by_gold[0][0];
+        const top = first ? Number(first[1]).toFixed(3) : "—";
+        const ng = (r.gold || []).length;
+        return `<option value="${i}">${esc(r.ep)} ${esc(r.ph)} · ${esc(clip(r.q, 44))} · g=${ng} top=${top}</option>`;
+      }).join("");
+      document.getElementById("stats").textContent = `${filtered.length} / ${rows.length} 题`;
+      if (filtered.length) {
+        const idx = [...sel.options].some(o => o.value === cur) ? cur : "0";
+        sel.value = idx;
+        document.getElementById("detail").innerHTML = renderDetail(filtered[Number(idx)]);
+      } else {
+        document.getElementById("detail").innerHTML = '<p class="hint">无匹配</p>';
+      }
+    }
+
+    function initFilters() {
+      const phases = [...new Set(rows.map(r => r.ph))].sort();
+      const eps = [...new Set(rows.map(r => r.ep))].sort();
+      const fp = document.getElementById("f-phase");
+      const fe = document.getElementById("f-ep");
+      phases.forEach(v => { const o = document.createElement("option"); o.value=v; o.textContent=v; fp.appendChild(o); });
+      eps.forEach(v => { const o = document.createElement("option"); o.value=v; o.textContent=v; fe.appendChild(o); });
+      fp.onchange = fe.onchange = rebuildSelect;
+      document.getElementById("q-select").onchange = e => {
+        document.getElementById("detail").innerHTML = renderDetail(filtered[Number(e.target.value)]);
+      };
+      rebuildSelect();
+    }
+
+    fetch(JSON_FILE).then(r => {
+      if (!r.ok) throw new Error(r.status + " " + r.statusText);
+      return r.json();
+    }).then(data => {
+      rows = data.rows || [];
+      initFilters();
+    }).catch(err => {
+      document.getElementById("detail").innerHTML = `<p class="err">加载 ${esc(JSON_FILE)} 失败: ${esc(err.message)}<br>请在同目录起静态服务: <code>python -m http.server -d ${esc(location.pathname.replace(/[^/]+$/, ""))}</code></p>`;
+    });
+  </script>
+</body>
+</html>

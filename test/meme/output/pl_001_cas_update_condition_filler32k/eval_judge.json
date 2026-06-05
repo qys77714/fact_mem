@@ -1,0 +1,73 @@
+[
+  {
+    "timestamp": "2026-06-05T15:39:14Z",
+    "eval_type": "cas_update_condition_experiment",
+    "episode_id": "pl_001",
+    "dataset": "data/raw_data/MEME/meme_filler32k.json",
+    "pred_path": "test/meme/output/pl_001_cas_update_condition_filler32k/pred.jsonl",
+    "trace_path": "test/meme/output/pl_001_cas_update_condition_filler32k/ingest_trace.jsonl",
+    "answer_model": "gemma4-26B",
+    "judge_model": "gemma4-26B",
+    "embedding_model": "qwen3-embedding-0.6b",
+    "condition_sim_threshold": 0.5,
+    "text_only_memory": true,
+    "ingest_mode": "filler32k_timeline",
+    "candidates_dir": "MemDB/candidates/meme_filler32k_gemma4-26B_0519_as3",
+    "n_gold_ingested_before": 20,
+    "n_filler_ingested_before": 184,
+    "n_gold_ingested_after": 24,
+    "n_filler_ingested_after": 227,
+    "n_questions": 6,
+    "n_samples": 6,
+    "judged_count": 3,
+    "api_failure_count": 0,
+    "overall_accuracy": 1.0,
+    "meme_score": 1.0,
+    "meme_score_raw": 1.0,
+    "meme_score_judge_totals": 1.0,
+    "before_pass": 3,
+    "before_total": 3,
+    "after_pass": 3,
+    "after_total": 3,
+    "before_pass_raw": 3,
+    "after_pass_raw": 3,
+    "per_type": {
+      "Cas": {
+        "accuracy": 1.0,
+        "correct": 2,
+        "judged": 2,
+        "api_failed": 0
+      },
+      "Abs": {
+        "accuracy": 1.0,
+        "correct": 1,
+        "judged": 1,
+        "api_failed": 0
+      }
+    },
+    "trivial_analysis": {
+      "Cas": {
+        "total": 2,
+        "real_pass": 2,
+        "trivial_pass": 0,
+        "knew_but_failed": 0,
+        "never_knew": 0
+      },
+      "Del": {
+        "total": 0,
+        "real_pass": 0,
+        "trivial_pass": 0,
+        "knew_but_failed": 0,
+        "never_knew": 0
+      },
+      "Abs": {
+        "total": 1,
+        "real_pass": 1,
+        "trivial_pass": 0,
+        "knew_but_failed": 0,
+        "never_knew": 0
+      }
+    },
+    "scoring_note": "meme_score: after-only; Cas/Abs/Del after needs pass_type=real; meme_score_judge_totals: (before+after) raw u_pass like judge.py"
+  }
+]

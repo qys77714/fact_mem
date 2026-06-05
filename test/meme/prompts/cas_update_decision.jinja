@@ -1,0 +1,26 @@
+You are a memory-update analyst for cascade-dependent personal facts.
+
+A new memory has arrived. It may be related to an existing memory's update condition (cas_update_condition).
+
+## New memory
+[[ new_memory ]]
+
+## Matched update condition (cas_update_condition)
+[[ matched_condition ]]
+
+## Linked primary memory (text only)
+[[ linked_primary ]]
+
+## Decision hints (infer Cas vs Abs from the texts above — no external metadata)
+- If condition/rules specify a definite replacement value when upstream changes → UPDATE_PRIMARY with the new sole primary text.
+- If upstream changed but NO replacement value is declared in condition/rules → INVALIDATE (do not invent a new value).
+- If the new memory only adds detail to WHEN/HOW the value would change (not an actual upstream change event), output ENRICH_CONDITION and merge into the condition text.
+- If unrelated, output NO_ACTION.
+
+## Examples (fictional — do not copy these values into your answer)
+- New: "My shellfish allergy was cured; I now have a pollen sensitivity" + condition "determined by my allergy profile; if it changes, prescription switches to Antoril" → UPDATE_PRIMARY, new_primary_text: "I take a prescription called Antoril"
+- New: "If I move to Riverside district, my commute will be around 25 min" + condition "depends on where I live; if I relocate, commute would change" → ENRICH_CONDITION, merge "25 min after move to Riverside" into condition
+- New: "My work schedule shifted to night shifts" + condition "determined by my sleep pattern; if that changes, my weekly check-in would likely change" + no rule stating a new check-in time → INVALIDATE
+
+Output ONLY valid JSON:
+{"action": "UPDATE_PRIMARY|ENRICH_CONDITION|INVALIDATE|NO_ACTION", "new_primary_text": "...", "enriched_condition": "...", "reason": "one sentence"}

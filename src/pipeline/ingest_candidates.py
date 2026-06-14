@@ -390,6 +390,13 @@ def main() -> int:
         help="灌库管理用 LLM（OpenAI 兼容端点）",
     )
     parser.add_argument(
+        "--relation-backend",
+        dest="relation_backend",
+        choices=["classifier", "llm"],
+        default="classifier",
+        help="relation_decision 成对关系判断后端：classifier=本地 relation_classifier（默认，仅英文）；llm=manager_model",
+    )
+    parser.add_argument(
         "--related-top-k",
         type=int,
         default=5,
@@ -698,6 +705,7 @@ def main() -> int:
             "relation_system_en_template": (args.relation_system_en_template or "").strip() or None,
             "relation_system_zh_template": (args.relation_system_zh_template or "").strip() or None,
             "relation_user_template": (args.relation_user_template or "").strip() or None,
+            "relation_backend": args.relation_backend,
         }
         memory = LmeCandidateRelationDecisionMemorySystem(
             **lme_candidate_base_kw,

@@ -1,6 +1,6 @@
 """
 使用 Jinja 模板从 benchmark 数据抽取 candidate memory（原子块 + 每块若干候选句）。
-默认 ``0_mem_extract_v2.jinja``；``locomo`` 系列英文 ``0_mem_extract_locomo.jinja``、中文 ``0_mem_extract_locomo_zh.jinja``（由 ``--language`` 与 benchmark 共同决定，见 ``_resolve_mem_extract_prompt_template``）。
+默认 ``0_mem_extract_v2.jinja``（中文 ``0_mem_extract_v2_zh.jinja``，由 ``--language`` 决定，见 ``_resolve_mem_extract_prompt_template``）。
 可用 ``--mem-extract-template`` 指定文件名覆盖上述规则（置于 ``src/prompts/templates/``）。
 两种互斥模式：（1）默认仅使用主模板 ``--mem-extract-template``（或 benchmark+language 解析结果），不传方面模板即可；
 （2）``--mem-extract-aspects-only`` 且 ``--mem-extract-extra-template``（1～3 次）：每块**仅**并行调用这些方面模板，按顺序合并 ``candidate_memories`` 并精确去重，主模板不参与 LLM。
@@ -40,12 +40,9 @@ from utils.question_filter import parse_question_types_arg
 
 
 def _resolve_mem_extract_prompt_template(benchmark: str, language: str = "en") -> str:
-    """按 benchmark 与提示语语言选择模板；LoCoMo 为双人具名对话专用。"""
-    b = (benchmark or "").strip().lower()
+    """按 benchmark 与提示语语言选择模板。"""
     lang = (language or "en").strip().lower()
     use_zh = lang == "zh" or lang.startswith("zh-")
-    if b == "locomo" or b.startswith("locomo"):
-        return "0_mem_extract_locomo_zh.jinja" if use_zh else "0_mem_extract_locomo.jinja"
     return "0_mem_extract_v2_zh.jinja" if use_zh else "0_mem_extract_v2.jinja"
 
 
@@ -749,7 +746,7 @@ def main() -> None:
     parser.add_argument(
         "--language",
         default="en",
-        help="记忆抽取提示模板语言：en / zh（zh 时 locomo 用 0_mem_extract_locomo_zh.jinja，否则 0_mem_extract_v2_zh.jinja）",
+        help="记忆抽取提示模板语言：en / zh（zh 时用 0_mem_extract_v2_zh.jinja，否则 0_mem_extract_v2.jinja）",
     )
     parser.add_argument(
         "--mem-extract-template",

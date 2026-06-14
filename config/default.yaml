@@ -3,7 +3,7 @@
 # 用法：python run_exp.py [--config config/default.yaml] [--stages extract,ingest,generate,evaluate]
 
 experiment:
-  benchmark: lme_s        # lme_o / lme_s / lme_m / locomo / meme_filler32k / meme_nofiller / ...
+  benchmark: lme_s        # lme_o / lme_s / lme_m / meme_filler32k / meme_nofiller / ...
   suffix: exp001          # 实验版本标签（区分同一 benchmark 的多次运行）
 
 models:

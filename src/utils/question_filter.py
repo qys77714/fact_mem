@@ -66,7 +66,7 @@ def stratified_sample_by_question_type(
     Sample ``n`` question keys so that per-``question_type`` counts follow the
     largest-remainder allocation of the full pool (approximate proportions).
 
-    Used for Locomo-style workloads: single-hop / multi-hop / temporal / …
+    Used for multi-category QA workloads: single-hop / multi-hop / temporal / …
     """
     if n <= 0:
         return {k for k, _ in _dedupe_question_keys(items)}

@@ -95,8 +95,6 @@ def stage_extract(cfg: ExperimentConfig) -> None:
     args.append("--mem-extract-aspects-only")
     for t in cfg.extract.aspect_templates:
         args += ["--mem-extract-extra-template", t]
-    if cfg.experiment.benchmark.lower().startswith("locomo"):
-        args += ["--dialogue-format", "named_speakers"]
 
     _run(args)
 
@@ -145,8 +143,6 @@ def stage_ingest(cfg: ExperimentConfig) -> None:
                 "--ingest-obs-granularity", cfg.extract.granularity,
                 "--ingest-obs-turn-overlap", cfg.extract.turn_overlap,
             ]
-            if cfg.experiment.benchmark.lower().startswith("locomo"):
-                extra += ["--ingest-obs-dialogue-format", "named_speakers"]
             if method_cfg.skip_utility:
                 extra.append("--amac-skip-utility")
             _run(base_args + extra)

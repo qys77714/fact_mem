@@ -21,3 +21,6 @@ src/generate/openai_chat_batch_azure.py
 .env
 viewer/
 
+# Tests
+test/
+

@@ -3,7 +3,7 @@
 Facts from the candidate JSON (already extracted by gemma4-26B) are fed into
 graphiti's entity-deduplication and temporal-validity pipeline (via a Kuzu
 embedded graph DB), and the resulting currently-valid EntityEdge facts are
-exported to LocalFaissDatabase so that the unchanged lme_prebuilt
+exported to LocalFaissDatabase so that the unchanged prebuilt
 generate/judge pipeline can evaluate them alongside mem0 and relation_decision.
 
 This is a controlled-variable experiment: the **input** is always the same

@@ -228,7 +228,7 @@ def apply_user_deletion(
         if is_evidence:
             updates["memory_role"] = "primary"
             updates["parent_primary"] = ""
-            updates["lme_edge"] = ""
+            updates["edge"] = ""
             database.update_memory(target.memory_id, metadata_updates=updates)
             trace.log_memory_operation(
                 operation="USER_DELETE_DETACH_EVIDENCE",

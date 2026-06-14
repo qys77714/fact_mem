@@ -141,7 +141,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
                 metadata_updates={
                     "memory_role": "evidence",
                     "parent_primary": new_row_id,
-                    "lme_edge": "UPDATE",
+                    "edge": "UPDATE",
                 },
             )
             trace.log_memory_operation(
@@ -341,7 +341,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
             metadata_updates={
                 "memory_role": "evidence",
                 "parent_primary": new_id,
-                "lme_edge": "UPDATE",
+                "edge": "UPDATE",
                 "stale": True,
             },
         )
@@ -522,7 +522,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
                 chunk_scope=chunk_scope,
                 trace=trace,
                 operation="ATTACH_EQUIVALENT",
-                metadata_extra={"lme_edge": "EQUIV"},
+                metadata_extra={"edge": "EQUIV"},
             )
             self._apply_con_weak_updates(database, weak_id, con_ids, m_new, chunk_scope, trace)
             return 1
@@ -557,7 +557,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
                     metadata_updates={
                         "memory_role": "evidence",
                         "parent_primary": new_id,
-                        "lme_edge": "ATTACH",
+                        "edge": "ATTACH",
                     },
                 )
                 trace.log_memory_operation(
@@ -582,7 +582,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
                 chunk_scope=chunk_scope,
                 trace=trace,
                 operation="ATTACH_EVIDENCE",
-                metadata_extra={"lme_edge": "ATTACH"},
+                metadata_extra={"edge": "ATTACH"},
             )
             self._apply_con_weak_updates(database, weak_id, con_ids, m_new, chunk_scope, trace)
             return 1

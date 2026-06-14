@@ -44,11 +44,11 @@ from memory.candidate_ingest import (
     apply_candidate_episode_zep,
     load_candidate_json,
 )
-from memory.fusion.lme_bundle_fusion import fuse_local_faiss_database
+from memory.fusion.bundle_fusion import fuse_local_faiss_database
 from memory.mem0 import Mem0MemorySystem
 from memory.storage.local_faiss import LocalFaissDatabase
 from memory.zep import ZepMemorySystem
-from memory.baselines.lme_prebuilt import LmePrebuiltMemorySystem
+from memory.prebuilt import PrebuiltMemorySystem
 from memory.tracing import remove_episode_trace_jsonl_files_for_logger
 from agent.standard_agent import StandardAgent
 from utils.embed_utils import embed_texts
@@ -58,8 +58,8 @@ from utils.llm_api import load_api_chat_completion
 
 _ADD_ALL_RELATED_TOP_K_PLACEHOLDER = 1
 
-LME_FUSION_MEMORY_READY_VERSION = 3
-LME_FUSION_MARKER_KIND = "lme_bundle_fusion"
+FUSION_MEMORY_READY_VERSION = 3
+FUSION_MARKER_KIND = "bundle_fusion"
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +200,8 @@ def _fuse_phase_episode(
     stats_payload = {k: v for k, v in stats.items()}
     stats_payload.setdefault("fusion_strategy", "whole_tree_single_wave")
     payload = {
-        "version": LME_FUSION_MEMORY_READY_VERSION,
-        "kind": LME_FUSION_MARKER_KIND,
+        "version": FUSION_MEMORY_READY_VERSION,
+        "kind": FUSION_MARKER_KIND,
         "history_name": hn_phase,
         "fusion_model": fusion_model_name,
         "embedding_model": embedding_model,
@@ -302,11 +302,11 @@ def _build_ingest_memory(cfg: MemePhaseConfig, database_root: Path):
     )
 
 
-def _build_answer_memory(cfg: MemePhaseConfig, answer_db_root: Path) -> LmePrebuiltMemorySystem:
+def _build_answer_memory(cfg: MemePhaseConfig, answer_db_root: Path) -> PrebuiltMemorySystem:
     api_key = cfg.embedding_api_key
     from openai import OpenAI
     embed_client = OpenAI(api_key=api_key, base_url=cfg.embedding_base_url)
-    return LmePrebuiltMemorySystem(
+    return PrebuiltMemorySystem(
         embed_model_name=cfg.embedding_model,
         embed_client=embed_client,
         database_root=str(answer_db_root),

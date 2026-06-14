@@ -31,7 +31,7 @@ def __getattr__(name: str):
         "list_multimember_depth_one_partition_wave",
         "list_whole_tree_fusion_packages",
     ):
-        from . import lme_bundle_fusion as m
+        from . import bundle_fusion as m
 
         return getattr(m, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

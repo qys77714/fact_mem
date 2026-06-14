@@ -69,9 +69,6 @@ generate:
     bm25_weight: 0.2
     pool_mult: 4                     # 每路候选数 = max(retrieve_topk * pool_mult, 50)
 
-  rerank:                            # Qwen3-Reranker 精排（需先启动 script/0_run_reranker_ppu.sh）
-    enabled: false
-
 evaluate:
   use_cot: true
   judge_stratified_sample: 0         # 对 Judge 额外分层抽样（0 = 与答题保持一致）

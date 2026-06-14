@@ -1,7 +1,7 @@
-"""Fusion user prompt text (no LocalFaiss / faiss import). Used by HTML build scripts and lme_bundle_fusion.
+"""Fusion user prompt text (no LocalFaiss / faiss import). Used by HTML build scripts and bundle_fusion.
 
-Default templates: ``lme_fuse_memory_bundle_{en,zh}_v3.jinja``. Optional ``bundle_template_en`` /
-``bundle_template_zh`` override the filename for that language (e.g. ``lme_fuse_memory_bundle_en_v3.jinja``).
+Default templates: ``fuse_memory_bundle_{en,zh}_v3.jinja``. Optional ``bundle_template_en`` /
+``bundle_template_zh`` override the filename for that language (e.g. ``fuse_memory_bundle_en_v3.jinja``).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def _member_tag(mem: RetrievedMemory) -> str:
     meta = mem.metadata or {}
     if _is_primary_meta(meta):
         return "primary"
-    return str(meta.get("lme_edge") or meta.get("memory_role") or "evidence")
+    return str(meta.get("edge") or meta.get("memory_role") or "evidence")
 
 
 def _zh_parent_desc(parent_idx: int | None) -> str:
@@ -137,8 +137,8 @@ def _format_bundle_for_prompt(
     members: Sequence[RetrievedMemory],
     *,
     language: str,
-    edge_labels_en: str = "lme_fuse_memory_bundle_edge_labels_en_v2.jinja",
-    edge_labels_zh: str = "lme_fuse_memory_bundle_edge_labels_zh_v2.jinja",
+    edge_labels_en: str = "fuse_memory_bundle_edge_labels_en_v2.jinja",
+    edge_labels_zh: str = "fuse_memory_bundle_edge_labels_zh_v2.jinja",
 ) -> str:
     lang = (language or "en").strip().lower()
     id_to_idx: Dict[str, int] = {m.memory_id: i for i, m in enumerate(members, start=1)}
@@ -201,12 +201,12 @@ def render_fusion_user_prompt(
 ) -> str:
     """User message sent to the LLM for bundle fusion (same as ``_fuse_bundle_with_llm`` input)."""
     lang = (language or "en").strip().lower()
-    el_en = (edge_labels_en or "").strip() or "lme_fuse_memory_bundle_edge_labels_en_v2.jinja"
-    el_zh = (edge_labels_zh or "").strip() or "lme_fuse_memory_bundle_edge_labels_zh_v2.jinja"
+    el_en = (edge_labels_en or "").strip() or "fuse_memory_bundle_edge_labels_en_v2.jinja"
+    el_zh = (edge_labels_zh or "").strip() or "fuse_memory_bundle_edge_labels_zh_v2.jinja"
     if lang.startswith("zh"):
-        template = bundle_template_zh or "lme_fuse_memory_bundle_zh_v3.jinja"
+        template = bundle_template_zh or "fuse_memory_bundle_zh_v3.jinja"
     else:
-        template = bundle_template_en or "lme_fuse_memory_bundle_en_v3.jinja"
+        template = bundle_template_en or "fuse_memory_bundle_en_v3.jinja"
     return render_prompt(
         template,
         bundle_lines=_format_bundle_for_prompt(

@@ -194,7 +194,7 @@ def _stage_fuse(cfg: ExperimentConfig) -> None:
     _title(f"关系包融合 → {cfg.ingest_dir('relation_decision_fused')}")
 
     args = [
-        _SRC / "pipeline" / "fuse_lme_memory_bundles.py",
+        _SRC / "pipeline" / "fuse_memory_bundles.py",
         "--database-root", cfg.ingest_dir("relation_decision"),
         "--fused-output-root", cfg.ingest_dir("relation_decision_fused"),
         "--manager-model", fusion_model,
@@ -226,7 +226,7 @@ def stage_generate(cfg: ExperimentConfig) -> None:
     sample = 0 if cfg.experiment.benchmark.lower().startswith("meme") else g.answer_stratified_sample
 
     common_args = [
-        "--method", "lme_prebuilt",
+        "--method", "prebuilt",
         "--benchmark", cfg.experiment.benchmark,
         "--answer_model", cfg.models.answer,
         "--embedding_model", cfg.models.embedding,
@@ -246,8 +246,6 @@ def stage_generate(cfg: ExperimentConfig) -> None:
             "--hybrid-bm25-weight", g.hybrid.bm25_weight,
             "--hybrid-pool-mult", g.hybrid.pool_mult,
         ]
-    if g.rerank.enabled:
-        common_args += ["--rerank-qwen3-vllm", "--rerank-top-k", g.retrieve_topk]
 
     cfg.experiment_run_root.mkdir(parents=True, exist_ok=True)
 

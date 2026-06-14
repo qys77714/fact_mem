@@ -71,8 +71,6 @@ run:                             # pipeline_meme_4phase.py 的公共参数
     dense_weight: 0.8
     bm25_weight: 0.2
     pool_mult: 4
-  rerank:
-    enabled: false
 
 evaluate:
   judge_max_concurrency: 8

@@ -51,12 +51,6 @@ class GenerateConfig:
     hybrid_dense_weight: float
     hybrid_bm25_weight: float
     hybrid_pool_mult: int
-    rerank_qwen3_vllm: bool
-    rerank_qwen3_vllm_base_url: Optional[str]
-    rerank_qwen3_vllm_api_key: Optional[str]
-    rerank_qwen3_vllm_model: str
-    rerank_qwen3_vllm_timeout_s: float
-    rerank_top_k: Optional[int]
     answer_stratified_sample: int
     answer_sample_seed: int
     show_memory_time: bool
@@ -74,7 +68,7 @@ def parse_args() -> GenerateConfig:
     parser.add_argument(
         "--method",
         required=True,
-        help="记忆方法：目前仅支持 lme_prebuilt（预灌向量库）",
+        help="记忆方法：目前仅支持 prebuilt（预灌向量库）",
     )
     parser.add_argument("--answer_model", required=True, help="答题 LLM")
     parser.add_argument("--embedding_model", required=True, help="Embedding 模型名")
@@ -133,31 +127,6 @@ def parse_args() -> GenerateConfig:
         help="只评测这些 question_type（逗号分隔）",
     )
     parser.add_argument(
-        "--rerank-qwen3-vllm",
-        action="store_true",
-        help="启用 Qwen3-Reranker 精排（需先启动 /v1/score 服务）",
-    )
-    parser.add_argument(
-        "--rerank-qwen3-vllm-base-url",
-        default=os.getenv("RERANKER_BASE_URL", "http://localhost:7114/v1/"),
-    )
-    parser.add_argument(
-        "--rerank-qwen3-vllm-api-key",
-        default=os.getenv("RERANKER_API_KEY"),
-    )
-    parser.add_argument(
-        "--rerank-qwen3-vllm-model",
-        default=os.getenv("RERANKER_MODEL", "Qwen3-Reranker-0.6B"),
-    )
-    parser.add_argument("--rerank-qwen3-vllm-timeout-s", type=float, default=120.0)
-    parser.add_argument(
-        "--rerank-top-k",
-        type=int,
-        default=None,
-        metavar="K",
-        help="精排后保留条数（默认与 --retrieve_topk 相同）",
-    )
-    parser.add_argument(
         "--answer-stratified-sample",
         type=int,
         default=0,
@@ -179,8 +148,8 @@ def parse_args() -> GenerateConfig:
 
     args = parser.parse_args()
 
-    if args.method != "lme_prebuilt":
-        raise ValueError(f"--method 目前仅支持 lme_prebuilt，收到 {args.method!r}")
+    if args.method != "prebuilt":
+        raise ValueError(f"--method 目前仅支持 prebuilt，收到 {args.method!r}")
 
     ingest_marker_method = str(args.ingest_marker_update_method or "").strip()
     if not ingest_marker_method:
@@ -207,16 +176,6 @@ def parse_args() -> GenerateConfig:
         hybrid_dense_weight=float(args.hybrid_dense_weight),
         hybrid_bm25_weight=float(args.hybrid_bm25_weight),
         hybrid_pool_mult=max(1, int(args.hybrid_pool_mult)),
-        rerank_qwen3_vllm=bool(args.rerank_qwen3_vllm),
-        rerank_qwen3_vllm_base_url=(
-            str(args.rerank_qwen3_vllm_base_url).strip() or None
-        ) if args.rerank_qwen3_vllm_base_url else None,
-        rerank_qwen3_vllm_api_key=(
-            str(args.rerank_qwen3_vllm_api_key).strip() or None
-        ) if args.rerank_qwen3_vllm_api_key else None,
-        rerank_qwen3_vllm_model=str(args.rerank_qwen3_vllm_model or "Qwen3-Reranker-0.6B").strip(),
-        rerank_qwen3_vllm_timeout_s=float(args.rerank_qwen3_vllm_timeout_s),
-        rerank_top_k=int(args.rerank_top_k) if args.rerank_top_k is not None else None,
         answer_stratified_sample=max(0, int(args.answer_stratified_sample)),
         answer_sample_seed=int(args.answer_sample_seed),
         show_memory_time=not bool(args.no_memory_time),
@@ -274,12 +233,6 @@ def _build_memory_system(cfg: GenerateConfig, language: str):
         hybrid_bm25_weight=cfg.hybrid_bm25_weight,
         hybrid_pool_mult=cfg.hybrid_pool_mult,
         language=language,
-        rerank_qwen3_vllm=cfg.rerank_qwen3_vllm,
-        rerank_qwen3_vllm_base_url=cfg.rerank_qwen3_vllm_base_url,
-        rerank_qwen3_vllm_api_key=cfg.rerank_qwen3_vllm_api_key,
-        rerank_qwen3_vllm_model=cfg.rerank_qwen3_vllm_model,
-        rerank_qwen3_vllm_timeout_s=cfg.rerank_qwen3_vllm_timeout_s,
-        rerank_top_k=cfg.rerank_top_k,
         granularity="all",
         llm_client=None,
         related_memory_top_k=cfg.retrieve_topk,

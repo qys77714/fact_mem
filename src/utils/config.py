@@ -48,10 +48,6 @@ class HybridConfig(BaseModel):
     pool_mult: int = 4
 
 
-class RerankConfig(BaseModel):
-    enabled: bool = False
-
-
 class GenerateConfig(BaseModel):
     retrieve_topk: int = 50
     memory_token_limit: int = 512
@@ -59,7 +55,6 @@ class GenerateConfig(BaseModel):
     answer_sample_seed: int = 43
     show_memory_time: bool = False
     hybrid: HybridConfig = Field(default_factory=HybridConfig)
-    rerank: RerankConfig = Field(default_factory=RerankConfig)
 
 
 class EvaluateConfig(BaseModel):
@@ -106,10 +101,10 @@ class PromptsConfig(BaseModel):
     relation_system_en: str = "lme_relation_classification_system_en_v2.jinja"
     relation_system_zh: str = "lme_relation_classification_system_zh_v2.jinja"
     relation_user: str = "lme_relation_classification_user.jinja"
-    fusion_bundle_en: str = "lme_fuse_memory_bundle_en_v3.jinja"
+    fusion_bundle_en: str = "fuse_memory_bundle_en_v3.jinja"
     fusion_bundle_zh: str = ""
-    fusion_edge_labels_en: str = "lme_fuse_memory_bundle_edge_labels_en_v2.jinja"
-    fusion_edge_labels_zh: str = "lme_fuse_memory_bundle_edge_labels_zh_v2.jinja"
+    fusion_edge_labels_en: str = "fuse_memory_bundle_edge_labels_en_v2.jinja"
+    fusion_edge_labels_zh: str = "fuse_memory_bundle_edge_labels_zh_v2.jinja"
     judge_oqa: str = "pipeline_eval_oqa.jinja"
     judge_mcq: str = "pipeline_eval_mcq.jinja"
     judge_system: str = "pipeline_eval_system.jinja"
@@ -189,7 +184,6 @@ class MemeRunConfig(BaseModel):
     answer_concurrency: int = 10
     show_memory_time: bool = False
     hybrid: HybridConfig = Field(default_factory=HybridConfig)
-    rerank: RerankConfig = Field(default_factory=RerankConfig)
 
 
 class MemeEvaluateConfig(BaseModel):

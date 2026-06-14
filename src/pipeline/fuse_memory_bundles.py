@@ -23,14 +23,14 @@ from typing import Any, List
 
 from tqdm import tqdm
 
-from memory.fusion.lme_bundle_fusion import fuse_local_faiss_database
+from memory.fusion.bundle_fusion import fuse_local_faiss_database
 from memory.storage.local_faiss import LocalFaissDatabase
 from utils.embed_utils import embed_texts
 from utils.env import load_env
 from utils.llm_api import load_api_chat_completion
 
-LME_FUSION_MEMORY_READY_VERSION = 3
-LME_FUSION_MARKER_KIND = "lme_bundle_fusion"
+FUSION_MEMORY_READY_VERSION = 3
+FUSION_MARKER_KIND = "bundle_fusion"
 
 
 def _episode_fusion_marker_path(episode_dir: Path) -> Path:
@@ -113,25 +113,25 @@ def main() -> int:
         "--fusion-bundle-template-en",
         default="",
         metavar="NAME.jinja",
-        help="覆盖英文融合 user 模板文件名（默认 lme_fuse_memory_bundle_en_v3.jinja）；置于 src/prompts/templates/",
+        help="覆盖英文融合 user 模板文件名（默认 fuse_memory_bundle_en_v3.jinja）；置于 src/prompts/templates/",
     )
     parser.add_argument(
         "--fusion-bundle-template-zh",
         default="",
         metavar="NAME.jinja",
-        help="覆盖中文融合 user 模板文件名（默认 lme_fuse_memory_bundle_zh_v3.jinja）",
+        help="覆盖中文融合 user 模板文件名（默认 fuse_memory_bundle_zh_v3.jinja）",
     )
     parser.add_argument(
         "--fusion-edge-labels-template-en",
         default="",
         metavar="NAME.jinja",
-        help="英文：包内行前缀边标签模板（默认 lme_fuse_memory_bundle_edge_labels_en_v2.jinja）",
+        help="英文：包内行前缀边标签模板（默认 fuse_memory_bundle_edge_labels_en_v2.jinja）",
     )
     parser.add_argument(
         "--fusion-edge-labels-template-zh",
         default="",
         metavar="NAME.jinja",
-        help="中文：包内行前缀边标签模板（默认 lme_fuse_memory_bundle_edge_labels_zh_v2.jinja）",
+        help="中文：包内行前缀边标签模板（默认 fuse_memory_bundle_edge_labels_zh_v2.jinja）",
     )
     parser.add_argument(
         "--fuse-max-new-tokens",
@@ -230,8 +230,8 @@ def main() -> int:
         _write_fusion_marker_atomic(
             dst_ep,
             {
-                "version": LME_FUSION_MEMORY_READY_VERSION,
-                "kind": LME_FUSION_MARKER_KIND,
+                "version": FUSION_MEMORY_READY_VERSION,
+                "kind": FUSION_MARKER_KIND,
                 "history_name": hn,
                 "fusion_model": model,
                 "embedding_model": args.embedding_model,

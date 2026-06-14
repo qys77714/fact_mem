@@ -6,7 +6,7 @@
 **一次** ``render_fusion_user_prompt`` / LLM 调用融合为一条记忆；episode 内多棵不相交的根树则各调用一次。
 **不会**把本轮产生的多条融合行再并成一包。
 
-单结点根（仅一条 primary、无 evidence）在收尾阶段单独打 ``lme_fused_bundle``（无 LLM）。
+单结点根（仅一条 primary、无 evidence）在收尾阶段单独打 ``fused_bundle``（无 LLM）。
 
 深度 ≤1 分块列举 API 保留为 ``list_disjoint_depth_one_partition_packages`` / ``list_multimember_depth_one_partition_wave``（对照、测试）。
 ``list_fusion_packages``：每条 primary（含非根）各列一包；默认融合路径请用 ``list_whole_tree_fusion_packages``。
@@ -33,7 +33,7 @@ from .bundle_prompt_render import _is_primary_meta, render_fusion_user_prompt
 logger = logging.getLogger(__name__)
 
 # ``fuse_local_faiss_database`` 写入 stats / marker 的策略名（单轮整树，不递归合并融合行）
-LME_FUSION_STRATEGY_WHOLE_TREE = "whole_tree_single_wave"
+FUSION_STRATEGY_WHOLE_TREE = "whole_tree_single_wave"
 
 
 def list_fusion_packages(db: LocalFaissDatabase) -> List[List[RetrievedMemory]]:
@@ -270,14 +270,14 @@ def _fuse_one_package(
         fused_text = "\n".join((m.text or "").strip() for m in members if (m.text or "").strip())
 
     meta0 = dict(center.metadata or {})
-    base_meta = {k: v for k, v in meta0.items() if k not in ("parent_primary", "lme_edge", "evidence_depth")}
+    base_meta = {k: v for k, v in meta0.items() if k not in ("parent_primary", "edge", "evidence_depth")}
     if _center_outputs_primary_row(center):
         fused_meta: Dict[str, Any] = {
             **base_meta,
             "memory_role": "primary",
-            "lme_fused_bundle": True,
-            "lme_fused_member_ids": mids,
-            "lme_fused_member_count": len(members),
+            "fused_bundle": True,
+            "fused_member_ids": mids,
+            "fused_member_count": len(members),
         }
     else:
         pp = _parent_primary_str(meta0)
@@ -289,12 +289,12 @@ def _fuse_one_package(
             fused_meta = {
                 **base_meta,
                 "memory_role": "primary",
-                "lme_fused_bundle": True,
-                "lme_fused_member_ids": mids,
-                "lme_fused_member_count": len(members),
+                "fused_bundle": True,
+                "fused_member_ids": mids,
+                "fused_member_count": len(members),
             }
         else:
-            edge = meta0.get("lme_edge")
+            edge = meta0.get("edge")
             depth = meta0.get("evidence_depth")
             if not isinstance(depth, int) or depth < 1:
                 depth = 1
@@ -302,12 +302,12 @@ def _fuse_one_package(
                 **base_meta,
                 "memory_role": "evidence",
                 "parent_primary": pp,
-                "lme_fused_bundle": True,
-                "lme_fused_member_ids": mids,
-                "lme_fused_member_count": len(members),
+                "fused_bundle": True,
+                "fused_member_ids": mids,
+                "fused_member_count": len(members),
             }
             if edge is not None:
-                fused_meta["lme_edge"] = edge
+                fused_meta["edge"] = edge
             fused_meta["evidence_depth"] = depth
 
     time_s = _pick_time(members)
@@ -339,20 +339,20 @@ def _rewire_parent_primary_after_fusion(
 
 
 def _database_already_fused(db: LocalFaissDatabase) -> bool:
-    """True iff 库内每一行都已带 ``lme_fused_bundle``（允许根 primary 下仍挂融合子 evidence）。"""
+    """True iff 库内每一行都已带 ``fused_bundle``（允许根 primary 下仍挂融合子 evidence）。"""
     all_mems = db.list_all_memories(sort_by_time=False)
     # Empty store is not "successfully fused" — e.g. interrupted copy/crash leaves no rows;
-    # treating it as fused caused fuse_lme_memory_bundles resume to skip those episodes.
+    # treating it as fused caused fuse_memory_bundles resume to skip those episodes.
     if not all_mems:
         return False
     for m in all_mems:
-        if not (m.metadata or {}).get("lme_fused_bundle"):
+        if not (m.metadata or {}).get("fused_bundle"):
             return False
     return True
 
 
 def is_local_faiss_database_fused(db: LocalFaissDatabase) -> bool:
-    """True if this namespace has already been through bundle fusion (every row marked ``lme_fused_bundle``)."""
+    """True if this namespace has already been through bundle fusion (every row marked ``fused_bundle``)."""
     return _database_already_fused(db)
 
 
@@ -360,16 +360,16 @@ def build_pre_fusion_member_to_fused_maps(
     db: LocalFaissDatabase,
 ) -> Tuple[Dict[str, str], Dict[str, RetrievedMemory]]:
     """
-    For a fused namespace: map each pre-fusion ``memory_id`` (from ``lme_fused_member_ids``) to the
+    For a fused namespace: map each pre-fusion ``memory_id`` (from ``fused_member_ids``) to the
     fused row's ``memory_id``, and collect a fused ``RetrievedMemory`` per fused row (score = 0).
     """
     member_to_fused: Dict[str, str] = {}
     fused_by_id: Dict[str, RetrievedMemory] = {}
     for mem in db.list_all_memories(sort_by_time=False):
         meta = mem.metadata or {}
-        if not meta.get("lme_fused_bundle"):
+        if not meta.get("fused_bundle"):
             continue
-        mids = meta.get("lme_fused_member_ids")
+        mids = meta.get("fused_member_ids")
         if not mids or not isinstance(mids, (list, tuple)):
             continue
         fid = mem.memory_id
@@ -386,7 +386,7 @@ def build_pre_fusion_member_to_fused_maps(
             prev = member_to_fused.get(s)
             if prev is not None and prev != fid:
                 logger.warning(
-                    "lme_fused_member_ids: duplicate member id %r (fused %s vs %s); using latter",
+                    "fused_member_ids: duplicate member id %r (fused %s vs %s); using latter",
                     s,
                     prev,
                     fid,
@@ -421,7 +421,7 @@ def fuse_local_faiss_database(
             "packages": 0,
             "added": 0,
             "rounds": 0,
-            "fusion_strategy": LME_FUSION_STRATEGY_WHOLE_TREE,
+            "fusion_strategy": FUSION_STRATEGY_WHOLE_TREE,
         }
 
     all_mems = db.list_all_memories(sort_by_time=False)
@@ -432,7 +432,7 @@ def fuse_local_faiss_database(
             "packages": 0,
             "added": 0,
             "rounds": 0,
-            "fusion_strategy": LME_FUSION_STRATEGY_WHOLE_TREE,
+            "fusion_strategy": FUSION_STRATEGY_WHOLE_TREE,
         }
 
     rounds = 0
@@ -479,7 +479,7 @@ def fuse_local_faiss_database(
                 "added": total_added,
                 "deleted": total_deleted,
                 "rounds": rounds,
-                "fusion_strategy": LME_FUSION_STRATEGY_WHOLE_TREE,
+                "fusion_strategy": FUSION_STRATEGY_WHOLE_TREE,
                 "error": "embedding_empty_mid_fuse",
             }
 
@@ -506,16 +506,16 @@ def fuse_local_faiss_database(
     # 仍为 primary、未打融合标记：
     # - 无 evidence 子树；或
     # - 子 evidence 已全部为融合行（单轮后仅剩「根 + 若干融合子块」）
-    # 仅对该根做单条 ``lme_fused_bundle`` 标记（无 LLM），并先重连子结点 ``parent_primary`` 再删旧行。
+    # 仅对该根做单条 ``fused_bundle`` 标记（无 LLM），并先重连子结点 ``parent_primary`` 再删旧行。
     for mem in list(db.list_all_memories(sort_by_time=False)):
         if not _is_primary_meta(mem.metadata):
             continue
         if is_cascade_root(mem.metadata):
             continue
-        if (mem.metadata or {}).get("lme_fused_bundle"):
+        if (mem.metadata or {}).get("fused_bundle"):
             continue
         evs = db.collect_evidence_descendants(mem.memory_id)
-        if evs and not all((e.metadata or {}).get("lme_fused_bundle") for e in evs):
+        if evs and not all((e.metadata or {}).get("fused_bundle") for e in evs):
             continue
         mids, row = _fuse_one_package(
             [mem],
@@ -552,5 +552,5 @@ def fuse_local_faiss_database(
         "added": total_added,
         "deleted": total_deleted,
         "rounds": rounds,
-        "fusion_strategy": LME_FUSION_STRATEGY_WHOLE_TREE,
+        "fusion_strategy": FUSION_STRATEGY_WHOLE_TREE,
     }

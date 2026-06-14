@@ -1,9 +1,9 @@
 ### 检索到的记忆单元 [[ index ]]
 {% set _t_raw = time or (metadata.get('date', '') if metadata else '') %}
-{% set _mc = metadata.get('lme_fused_member_count') if metadata else none %}
-{% set _mids = (metadata.get('lme_fused_member_ids') or []) if metadata else [] %}
-{% set _member_n = (_mc if _mc is not none else (_mids|length)) if (metadata and metadata.get('lme_fused_bundle')) else 0 %}
-{% set _omit_time_header = (show_time is defined and not show_time) or (metadata and metadata.get('lme_fused_bundle') and (_member_n > 1)) %}
+{% set _mc = metadata.get('fused_member_count') if metadata else none %}
+{% set _mids = (metadata.get('fused_member_ids') or []) if metadata else [] %}
+{% set _member_n = (_mc if _mc is not none else (_mids|length)) if (metadata and metadata.get('fused_bundle')) else 0 %}
+{% set _omit_time_header = (show_time is defined and not show_time) or (metadata and metadata.get('fused_bundle') and (_member_n > 1)) %}
 {% set _t = '' if _omit_time_header else _t_raw %}
 {% if _t %}
 - 时间：[[ _t ]]

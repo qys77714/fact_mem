@@ -14,15 +14,11 @@ import numpy as np
 from benchmark.base import ChatSession
 from memory.base import BaseMemorySystem, RetrievedMemory
 from memory.storage.local_faiss import LocalFaissDatabase
-from utils.qwen3_reranker_vllm import (
-    qwen3_vllm_score_documents,
-    rerank_instruction_for_language,
-)
 
 logger = logging.getLogger(__name__)
 
 
-class LmePrebuiltMemorySystem(BaseMemorySystem):
+class PrebuiltMemorySystem(BaseMemorySystem):
     """``store_*`` 为空操作；``retrieve`` 与 RAG 相同（不按 only_primary 过滤）。"""
 
     def __init__(
@@ -35,12 +31,6 @@ class LmePrebuiltMemorySystem(BaseMemorySystem):
         hybrid_full_corpus_pool: bool = False,
         unfused_rank_database_root: Optional[str] = None,
         language: str = "en",
-        rerank_qwen3_vllm: bool = False,
-        rerank_qwen3_vllm_base_url: Optional[str] = None,
-        rerank_qwen3_vllm_api_key: Optional[str] = None,
-        rerank_qwen3_vllm_model: str = "Qwen3-Reranker-0.6B",
-        rerank_qwen3_vllm_timeout_s: float = 120.0,
-        rerank_top_k: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
         # ``pipeline_lme_generate`` passes mem0-style kwargs (granularity, trace_log_dir, …);
@@ -59,67 +49,6 @@ class LmePrebuiltMemorySystem(BaseMemorySystem):
         )
         self._fused_maps_cache: dict[str, Tuple[Dict[str, str], Dict[str, RetrievedMemory]]] = {}
         self._language = (language or "en").strip() or "en"
-        self._rerank_qwen3_vllm = bool(rerank_qwen3_vllm)
-        self._rerank_base_url = (rerank_qwen3_vllm_base_url or "").strip() or None
-        self._rerank_api_key = (rerank_qwen3_vllm_api_key or "").strip() or None
-        self._rerank_model = str(rerank_qwen3_vllm_model or "Qwen3-Reranker-0.6B").strip()
-        self._rerank_timeout_s = float(rerank_qwen3_vllm_timeout_s)
-        self._rerank_top_k = int(rerank_top_k) if rerank_top_k is not None else None
-
-    def _apply_qwen3_vllm_rerank(
-        self,
-        query: str,
-        coarse: List[RetrievedMemory],
-        retrieve_top_k: int,
-    ) -> List[RetrievedMemory]:
-        if not self._rerank_qwen3_vllm or not coarse:
-            return coarse
-        api_key = self._rerank_api_key
-        base = self._rerank_base_url
-        if not api_key or not base:
-            logger.warning(
-                "rerank_qwen3_vllm enabled but rerank API key or base URL is empty; using coarse order"
-            )
-            return coarse
-        final_k = self._rerank_top_k if self._rerank_top_k is not None else retrieve_top_k
-        final_k = max(0, min(final_k, len(coarse)))
-        instruction = rerank_instruction_for_language(self._language)
-        try:
-            scores = qwen3_vllm_score_documents(
-                base_url=base,
-                api_key=api_key,
-                model=self._rerank_model,
-                query=query,
-                documents=[m.text for m in coarse],
-                timeout_s=self._rerank_timeout_s,
-                instruction=instruction,
-            )
-        except Exception as exc:
-            logger.warning("Qwen3 vLLM rerank failed (%s); using coarse order", exc)
-            return coarse
-        if len(scores) != len(coarse):
-            logger.warning(
-                "reranker score count mismatch (%s vs %s); using coarse order",
-                len(scores),
-                len(coarse),
-            )
-            return coarse
-        order = sorted(range(len(coarse)), key=lambda i: scores[i], reverse=True)
-        out: List[RetrievedMemory] = []
-        for i in order[:final_k]:
-            m = coarse[i]
-            out.append(
-                RetrievedMemory(
-                    memory_id=m.memory_id,
-                    text=m.text,
-                    source_index=m.source_index,
-                    time=m.time,
-                    score=float(scores[i]),
-                    metadata=dict(m.metadata or {}),
-                    attached_evidence=list(m.attached_evidence or []),
-                )
-            )
-        return out
 
     def episode_storage_path(self, history_name: str) -> Optional[Path]:
         return self.persisted_data_root() / history_name
@@ -146,7 +75,7 @@ class LmePrebuiltMemorySystem(BaseMemorySystem):
         self, db_f: LocalFaissDatabase, history_name: str
     ) -> Tuple[Dict[str, str], Dict[str, RetrievedMemory]]:
         if history_name not in self._fused_maps_cache:
-            from memory.fusion.lme_bundle_fusion import build_pre_fusion_member_to_fused_maps
+            from memory.fusion.bundle_fusion import build_pre_fusion_member_to_fused_maps
 
             self._fused_maps_cache[history_name] = build_pre_fusion_member_to_fused_maps(db_f)
         return self._fused_maps_cache[history_name]
@@ -177,16 +106,15 @@ class LmePrebuiltMemorySystem(BaseMemorySystem):
             return []
 
         if self._unfused_rank_database_root:
-            coarse = self._retrieve_unfused_rank_fused_content(
+            return self._retrieve_unfused_rank_fused_content(
                 history_name=history_name,
                 query=query,
                 query_embedding=query_embedding[0],
                 top_k=top_k,
             )
-            return self._apply_qwen3_vllm_rerank(query, coarse, top_k)
 
         if self._use_hybrid_retrieval:
-            coarse = db_f.search_hybrid(
+            return db_f.search_hybrid(
                 query,
                 query_embedding[0],
                 top_k,
@@ -196,13 +124,11 @@ class LmePrebuiltMemorySystem(BaseMemorySystem):
                 pool_mult=self._hybrid_pool_mult,
                 full_corpus_pool=self._hybrid_full_corpus_pool,
             )
-            return self._apply_qwen3_vllm_rerank(query, coarse, top_k)
-        coarse = db_f.search(
+        return db_f.search(
             query_embedding[0],
             top_k,
             only_primary=False,
         )
-        return self._apply_qwen3_vllm_rerank(query, coarse, top_k)
 
     def _retrieve_unfused_rank_fused_content(
         self,

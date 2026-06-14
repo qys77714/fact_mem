@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from memory.mem0 import Mem0MemorySystem
 
 from .apply import _sorted_chunks, load_candidate_json
+from .cas_update import candidate_memory_display_text
 
 
 def _facts_from_chunk(chunk: Dict[str, Any]) -> List[str]:
@@ -16,8 +17,7 @@ def _facts_from_chunk(chunk: Dict[str, Any]) -> List[str]:
         return []
     out: List[str] = []
     for m in mems:
-        raw = m if isinstance(m, str) else str(m)
-        s = raw.strip()
+        s = candidate_memory_display_text(m).strip()
         if s:
             out.append(s)
     return out

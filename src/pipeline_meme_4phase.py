@@ -118,6 +118,11 @@ class MemePhaseConfig:
     evermemos_similarity_threshold: float
     evermemos_max_time_gap_days: float
     evermemos_cluster_concurrency: int
+    # cascade (relation_decision)
+    cascade_enabled: bool
+    deletion_enabled: bool
+    condition_sim_threshold: float
+    pairwise_sim_threshold: float
     # trace
     trace_log_dir: Optional[str]
 
@@ -241,6 +246,10 @@ def _build_ingest_memory(cfg: MemePhaseConfig, database_root: Path):
             relation_system_zh_template=cfg.relation_system_zh_template or None,
             relation_user_template=cfg.relation_user_template or None,
             related_memory_top_k=cfg.related_top_k,
+            cascade_enabled=cfg.cascade_enabled,
+            deletion_enabled=cfg.deletion_enabled,
+            condition_sim_threshold=cfg.condition_sim_threshold,
+            pairwise_sim_threshold=cfg.pairwise_sim_threshold,
         )
     if m == "add_all":
         return LmeCandidateAddAllMemorySystem(
@@ -751,6 +760,11 @@ def parse_args() -> MemePhaseConfig:
                    help="evermemos: cluster 合并并行线程数（默认 8）")
     # trace
     p.add_argument("--trace-log-dir", default=None)
+    # cascade (relation_decision)
+    p.add_argument("--cascade-enabled", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--deletion-enabled", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--condition-sim-threshold", type=float, default=0.5)
+    p.add_argument("--pairwise-sim-threshold", type=float, default=0.7)
 
     args = p.parse_args()
 
@@ -810,6 +824,10 @@ def parse_args() -> MemePhaseConfig:
         evermemos_similarity_threshold=args.evermemos_similarity_threshold,
         evermemos_max_time_gap_days=args.evermemos_max_time_gap_days,
         evermemos_cluster_concurrency=args.evermemos_cluster_concurrency,
+        cascade_enabled=bool(args.cascade_enabled),
+        deletion_enabled=bool(args.deletion_enabled),
+        condition_sim_threshold=float(args.condition_sim_threshold),
+        pairwise_sim_threshold=float(args.pairwise_sim_threshold),
         trace_log_dir=(args.trace_log_dir or "").strip() or None,
     )
 

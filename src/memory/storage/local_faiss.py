@@ -23,6 +23,11 @@ def _memory_entry_is_primary(metadata: Dict[str, Any]) -> bool:
     return metadata.get("memory_role") != "evidence"
 
 
+def _memory_entry_is_searchable_primary(metadata: Dict[str, Any]) -> bool:
+    """Primary rows eligible for dense retrieval (excludes stale cascade-invalidated primaries)."""
+    return _memory_entry_is_primary(metadata) and not bool(metadata.get("stale"))
+
+
 def _tokenize_bm25(text: str) -> List[str]:
     """Whitespace tokenization + lowercasing; for CJK-heavy corpora consider a dedicated tokenizer."""
     return text.lower().split()
@@ -273,7 +278,9 @@ class LocalFaissDatabase:
         faiss.normalize_L2(normalized_query)
 
         def _passes_filters(meta: Dict[str, Any]) -> bool:
-            if only_primary and not _memory_entry_is_primary(meta):
+            if bool(meta.get("stale")):
+                return False
+            if only_primary and not _memory_entry_is_searchable_primary(meta):
                 return False
             return True
 
@@ -287,6 +294,9 @@ class LocalFaissDatabase:
                     continue
                 row = self._faiss_row_to_list_row(store, int(fidx))
                 if row is None:
+                    continue
+                meta = store.metadatas[row]
+                if not _passes_filters(meta):
                     continue
                 results.append(
                     RetrievedMemory(
@@ -401,6 +411,8 @@ class LocalFaissDatabase:
                 row = self._faiss_row_to_list_row(store, int(fidx))
                 if row is None:
                     continue
+                if bool(store.metadatas[row].get("stale")):
+                    continue
                 dense_scores[store.ids[row]] = float(score)
 
         bm25_top: Dict[str, float] = {}
@@ -418,6 +430,8 @@ class LocalFaissDatabase:
                         top_ix = part[np.argsort(-raw[part])]
                     for i in top_ix:
                         ii = int(i)
+                        if bool(store.metadatas[ii].get("stale")):
+                            continue
                         bm25_top[store.ids[ii]] = float(raw[ii])
 
         max_d = max(dense_scores.values()) if dense_scores else 0.0
@@ -446,6 +460,8 @@ class LocalFaissDatabase:
             try:
                 row = store.ids.index(mid)
             except ValueError:
+                continue
+            if bool(store.metadatas[row].get("stale")):
                 continue
             out.append(
                 RetrievedMemory(

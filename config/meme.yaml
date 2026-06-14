@@ -1,21 +1,24 @@
 # fact_memory MEME 4-Phase 实验配置
 # 与官方 MEME-public 协议对齐：每个 episode 经历 4 个阶段（before ingest → before Q&A → after ingest → after Q&A）
 #
-# 用法：python run_exp_meme.py [--config config/meme.yaml] [--stages extract,run,evaluate]
+# 用法：
+#   python run_exp_meme.py --config config/meme.yaml --stages run,evaluate   # 仅 relation_decision（候选已就绪）
+#   python run_exp_meme.py --config config/meme.yaml                         # 含 extract（会重写候选目录）
 
 experiment:
   benchmark: meme_filler32k   # meme_nofiller / meme_filler32k / meme_filler128k
-  suffix: r2
+  suffix: "0607_exp002"       
 
 models:
   extract: gemma4-26B
-  manager: gemma4-e2b           # 灌库管理 LLM（relation_decision / mem0 / zep / amac / evermemos）
+  manager: gemma4-26B           # 灌库管理 LLM（relation_decision / mem0 / zep / amac / evermemos）
   answer: gemma4-26B
   judge: qwen3-max
   embedding: qwen3-embedding-0.6b
 
 extract:
-  candidate_suffix: 0519_as3
+  # → MemDB/candidates/meme_filler32k_gemma4-26B_0519_as4（candidate_memories + cas_update_rules）
+  candidate_suffix: 0606_as3
   granularity: 4
   turn_overlap: 0
   language: en
@@ -40,6 +43,10 @@ methods:
     enabled: true
     related_top_k: 3
     fusion_model: ""
+    cascade_enabled: false
+    deletion_enabled: false
+    condition_sim_threshold: 0.5
+    pairwise_sim_threshold: 0.5
 
   mem0:
     enabled: false
@@ -50,17 +57,17 @@ methods:
     enabled: true
 
   evermemos:
-    enabled: true
+    enabled: false
     similarity_threshold: 0.65
     max_time_gap_days: 7.0
 
 run:                             # pipeline_meme_4phase.py 的公共参数
   retrieve_topk: 50
-  memory_token_limit: 1024
-  answer_concurrency: 10
+  memory_token_limit: 512
+  answer_concurrency: 20
   show_memory_time: false
   hybrid:
-    enabled: true
+    enabled: false
     dense_weight: 0.8
     bm25_weight: 0.2
     pool_mult: 4

@@ -4,9 +4,11 @@
 可用 ``--mem-extract-template`` 指定文件名覆盖上述规则（置于 ``src/prompts/templates/``）。
 两种互斥模式：（1）默认仅使用主模板 ``--mem-extract-template``（或 benchmark+language 解析结果），不传方面模板即可；
 （2）``--mem-extract-aspects-only`` 且 ``--mem-extract-extra-template``（1～3 次）：每块**仅**并行调用这些方面模板，按顺序合并 ``candidate_memories`` 并精确去重，主模板不参与 LLM。
-``raw_response`` 仅保留本次流水线中**第一个**实际调用的模板对应输出（主模板模式为唯一一次；方面模式为第一个方面模板）。
 
 默认输出目录：``MemDB/candidates/{benchmark}/{extract_model_tag}/{suffix}/``（可用 ``--output`` 覆盖）。
+
+MEME benchmark 的 evidence session：``gold_facts`` 不经 LLM，默认拆分为 ``candidate_memories``（primary）
++ 并行 ``cas_update_rules``（无规则时为 null）。
 
 续跑：在输出根目录维护单一 ``extract_progress.state``（JSON），记录已完成 ``history_name``；
 判定是否跳过**仅**看 ``completed`` 是否包含该 episode，不比对 ``config`` 指纹（``config`` 仅作留痕写入）。
@@ -28,6 +30,7 @@ from tqdm import tqdm
 from benchmark import get_benchmark
 from benchmark.base import MemoryEpisode
 from benchmark.datasets import DEFAULT_BENCHMARK_DATASETS, resolve_benchmark_data_path
+from memory.candidate_ingest.cas_update import build_evidence_gold_chunk_fields
 from pipeline.paths import default_candidates_dir, safe_model_tag
 from prompts import render_prompt
 from utils.env import load_env
@@ -236,7 +239,6 @@ def _extract_config_dict(
         "prompt_template": prompt_template,
         "mem_extract_extra_templates": list(mem_extract_extra_templates),
         "mem_extract_aspects_only": bool(getattr(args, "mem_extract_aspects_only", False)),
-        "omit_raw": args.omit_raw,
         "use_json_schema": not args.no_json_schema,
         "max_new_tokens": args.max_new_tokens,
     }
@@ -261,8 +263,7 @@ def _load_completed_set(out_root: Path) -> set[str]:
     """读取 ``extract_progress.state`` 中的 ``completed`` 集合。
 
     判定是否跳过**仅**看 ``completed`` 列表是否包含该 ``history_name``；
-    不再比对 ``config`` 指纹（``model`` / ``max_new_tokens`` / ``prompt_template`` /
-    ``omit_raw`` 等任一字段变化都不再触发全量重抽）。仅保留 ``kind`` 白名单校验，
+    不再比对 ``config`` 指纹（``model`` / ``max_new_tokens`` / ``prompt_template`` 等任一字段变化都不再触发全量重抽）。仅保留 ``kind`` 白名单校验，
     避免误读到其它类型的 state 文件。
     """
     data = _read_json_dict(_progress_state_path(out_root))
@@ -341,8 +342,6 @@ def _merge_chunk_pass_rows(meta: Dict[str, Any], pass_rows: List[Dict[str, Any]]
         "candidate_memories": merged,
         "parse_error": parse_err,
     }
-    if pass_rows and "raw_response" in pass_rows[0]:
-        row["raw_response"] = pass_rows[0]["raw_response"]
     return row
 
 
@@ -362,7 +361,6 @@ def _process_single_chunk(
     prompt_template: str,
     max_new_tokens: int,
     use_json_schema: bool,
-    omit_raw: bool,
     pbar: Optional[Any] = None,
 ) -> Dict[str, Any]:
     user_prompt = render_prompt(prompt_template, observation=observation)
@@ -379,7 +377,6 @@ def _process_single_chunk(
     )
     if pbar is not None:
         pbar.update(1)
-    raw_s = "" if raw is None else str(raw)
     memories: List[Any] = []
     err: Optional[str] = None
     if raw is None:
@@ -404,8 +401,6 @@ def _process_single_chunk(
         "candidate_memories": memories,
         "parse_error": err,
     }
-    if not omit_raw:
-        row["raw_response"] = raw_s
     return row
 
 
@@ -435,13 +430,12 @@ def _run_meme_episode_extract(
     templates_order: List[str],
     use_json_schema: bool = True,
     pbar: Optional[Any] = None,
-    omit_raw: bool = False,
     executor: Optional[ThreadPoolExecutor] = None,
     overlap_turns: int = 0,
 ) -> Dict[str, Any]:
     """
     MEME-specific extraction:
-    - evidence sessions → candidate_memories taken directly from gold_facts (no LLM)
+    - evidence sessions → gold_facts split to primary_text + cas_update_condition (no LLM)
     - filler sessions   → LLM extraction via _process_single_chunk (same as lme_s)
 
     Maintains a unified sequential chunk_index across all session types.
@@ -452,11 +446,9 @@ def _run_meme_episode_extract(
     header: Dict[str, Any] = {
         "history_name": hn,
         "model": model,
-        "prompt_template": prompt_template,
         "memory_granularity": gran_s,
         "turn_overlap": int(overlap_turns),
         "dialogue_format": dialogue_format,
-        "mem_extract_aspects_only": len(templates_order) > 1 or (templates_order != [prompt_template]),
     }
 
     chunk_index = 0
@@ -469,13 +461,14 @@ def _run_meme_episode_extract(
         sess_type = session.metadata.get("type", "filler")
 
         if sess_type == "evidence":
-            # Direct: build one synthetic chunk row per evidence session from gold_facts
+            # Direct: gold_facts → primary + cas_update_rules (no LLM)
             gold_facts: List[Dict[str, Any]] = session.metadata.get("gold_facts") or []
-            candidate_memories = [
-                f["fact_text"]
+            fact_texts = [
+                str(f.get("fact_text") or "").strip()
                 for f in gold_facts
                 if isinstance(f, dict) and f.get("fact_text")
             ]
+            gold_fields = build_evidence_gold_chunk_fields(fact_texts)
             chunk_rows.append({
                 "chunk_index": chunk_index,
                 "session_index": sess_idx,
@@ -483,9 +476,9 @@ def _run_meme_episode_extract(
                 "turn_end": None,
                 "turn_overlap": 0,
                 "session_date": st,
-                "candidate_memories": candidate_memories,
                 "parse_error": None,
                 "source": "evidence_gold_facts",
+                **gold_fields,
             })
             chunk_index += 1
         else:
@@ -522,7 +515,6 @@ def _run_meme_episode_extract(
                 _process_single_chunk(
                     client, observation, meta, tpl,
                     max_new_tokens, use_json_schema,
-                    omit_raw if ti == 0 else True,
                     pbar,
                 )
             )
@@ -540,7 +532,6 @@ def _run_meme_episode_extract(
                             _process_single_chunk,
                             client, observation, meta, tpl,
                             max_new_tokens, use_json_schema,
-                            omit_raw if ti == 0 else True,
                             pbar,
                         ),
                     ))
@@ -584,7 +575,6 @@ def _run_episode_extract(
     mem_extract_aspects_only: bool = False,
     use_json_schema: bool = True,
     pbar: Optional[Any] = None,
-    omit_raw: bool = False,
     executor: Optional[ThreadPoolExecutor] = None,
     overlap_turns: int = 0,
     benchmark: str = "",
@@ -610,7 +600,6 @@ def _run_episode_extract(
             templates_order=templates_order,
             use_json_schema=use_json_schema,
             pbar=pbar,
-            omit_raw=omit_raw,
             executor=executor,
             overlap_turns=overlap_turns,
         )
@@ -618,14 +607,10 @@ def _run_episode_extract(
     header: Dict[str, Any] = {
         "history_name": hn,
         "model": model,
-        "prompt_template": prompt_template,
         "memory_granularity": gran_s,
         "turn_overlap": int(overlap_turns),
         "dialogue_format": dialogue_format,
-        "mem_extract_aspects_only": bool(mem_extract_aspects_only),
     }
-    if mem_extract_aspects_only and extras:
-        header["mem_extract_extra_templates"] = list(extras)
 
     obs_chunks = episode_to_observation_chunks(
         episode, memory_granularity, dialogue_format, overlap_turns=overlap_turns
@@ -648,7 +633,6 @@ def _run_episode_extract(
                     tpl,
                     max_new_tokens,
                     use_json_schema,
-                    omit_raw if ti == 0 else True,
                     pbar,
                 )
             )
@@ -671,7 +655,6 @@ def _run_episode_extract(
                             tpl,
                             max_new_tokens,
                             use_json_schema,
-                            omit_raw if ti == 0 else True,
                             pbar,
                         ),
                     )
@@ -731,8 +714,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--question-types",
-        default="knowledge-update",
-        help="逗号分隔；仅保留「qas 中至少命中一种该类型」的 episode（与题目条数无关）",
+        default="",
+        help="",
     )
     parser.add_argument("--max-new-tokens", type=int, default=8192)
     parser.add_argument(
@@ -758,11 +741,6 @@ def main() -> None:
         help="单个 episode 内抽取 chunk 的并发量（episode 之间串行处理）",
     )
     parser.add_argument("--limit", type=int, default=0, help="仅处理前 N 条（0 表示不限制）")
-    parser.add_argument(
-        "--omit-raw",
-        action="store_true",
-        help="写入时各 chunk 不包含 raw_response 字段（减小体积）",
-    )
     parser.add_argument(
         "--no-json-schema",
         action="store_true",
@@ -928,7 +906,6 @@ def main() -> None:
             mem_extract_aspects_only=args.mem_extract_aspects_only,
             use_json_schema=not args.no_json_schema,
             pbar=chunk_pbar,
-            omit_raw=args.omit_raw,
             executor=executor,
             overlap_turns=turn_overlap,
             benchmark=_benchmark_name,

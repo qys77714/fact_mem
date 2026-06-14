@@ -1,0 +1,15 @@
+# relation_classifier 推理配置（仅保留推理需要字段）
+# backbone 路径不在此处——见 classifier.py:DEFAULT_BACKBONE 或构造参数
+
+labels: [IND, EQV, OSN, NSO, CON]
+
+# 特征抽取（须与训练一致）
+max_length: 256
+extract_batch_size: 64
+dtype: bfloat16
+
+# 分类头结构（须与 head_best.pt 一致）
+hidden_size: 1024      # Qwen3-0.6B
+mid_dim: 512
+dropout: 0.1
+num_classes: 5

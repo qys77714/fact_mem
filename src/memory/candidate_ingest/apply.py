@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .cas_update import parse_candidate_memory
 from .memory_system_amac import LmeCandidateAmacMemorySystem
 from .memory_system_base import LmeCandidateMemorySystemBase
 
@@ -92,6 +93,7 @@ def apply_candidate_episode_json(
             metadata_base = {
                 **metadata_common,
                 "date": session_date,
+                "chunk_source": str(chunk.get("source") or "filler"),
                 "lme_chunk_index": ci,
                 "lme_session_index": chunk.get("session_index"),
                 "lme_turn_start": chunk.get("turn_start"),
@@ -104,17 +106,27 @@ def apply_candidate_episode_json(
             mems = chunk.get("candidate_memories") or []
             if not isinstance(mems, list):
                 mems = []
+            cas_rules = chunk.get("cas_update_rules")
 
             op_sub = 0
             try:
                 for fi, m_new in enumerate(mems):
-                    raw_text = m_new if isinstance(m_new, str) else str(m_new)
-                    s = raw_text.strip()
+                    parsed = parse_candidate_memory(
+                        m_new,
+                        cas_update_rule=(
+                            cas_rules[fi]
+                            if isinstance(cas_rules, list) and fi < len(cas_rules)
+                            else None
+                        ),
+                    )
+                    s = parsed.text.strip()
                     if not s:
                         continue
                     stats["facts_submitted"] += 1
                     mb = dict(metadata_base)
                     mb["lme_fact_index_in_chunk"] = fi
+                    if parsed.cas_update_rule:
+                        mb["gold_cas_update_condition"] = parsed.cas_update_rule
                     r = memory._process_one_new_fact(
                         database,
                         s,

@@ -1,0 +1,37 @@
+You are a memory-update analyst for cascade-dependent personal facts.
+
+You are evaluating ONE linked primary at a time. The same condition text may appear on multiple unrelated primaries. Similar or identical condition text alone is NOT enough to act.
+
+Standalone if-then cascade rules and duplicate text (new memory identical to linked primary) are handled outside this prompt. Focus only on upstream-change cascade logic.
+
+## New memory
+[[ new_memory ]]
+
+## Matched update condition (cas_update_condition)
+[[ matched_condition ]]
+
+## Linked primary memory (text only)
+[[ linked_primary ]]
+
+## Decision procedure (follow in order; stop at first matching step)
+
+1. **Upstream change event** — Does the new memory report that an upstream dependency named in the condition ACTUALLY changed (past or present fact, not hypothetical)?
+   - No → **NO_ACTION**.
+   - Yes → go to step 2.
+
+2. **Replacement vs uncertainty** (subject of the new memory may differ from the linked primary — the link is via the shared condition)
+   - The condition contains a rule naming a definite NEW value for THIS linked primary → **UPDATE_PRIMARY** with that value as new_primary_text (sole primary text only; must be the linked primary's new value, not the upstream fact).
+   - Upstream changed but NO rule gives a replacement for THIS linked primary → **INVALIDATE** (do not invent a value).
+
+## Examples (fictional — do not copy these values into your answer)
+
+- New: "My shellfish allergy was cured; I now have a pollen sensitivity" + linked primary "I take a prescription called Xeltran" + condition includes "if allergy profile changes, prescription switches to Antoril" → **UPDATE_PRIMARY**, new_primary_text: "I take a prescription called Antoril"
+
+- New: "Our platform migrated to Veltrion" + linked primary "Our build tool is Karnex Bundler" + condition ties the tool to the platform but names no new tool → **INVALIDATE** (upstream changed; trigger wording is about the platform, not the tool)
+
+- New: "My sleep pattern shifted to night shifts" + linked primary "My weekly check-in is on Tuesdays" + condition has no replacement for check-in time → **INVALIDATE**
+
+- New: "The user's hobby is pottery" + linked primary "I take a prescription called Xeltran" + shared upstream condition only → **NO_ACTION** (not an upstream change event for this condition)
+
+Output ONLY valid JSON:
+{"action": "UPDATE_PRIMARY|INVALIDATE|NO_ACTION", "new_primary_text": "...", "reason": "one sentence"}

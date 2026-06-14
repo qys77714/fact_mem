@@ -188,6 +188,18 @@ def stage_run(cfg: MemeExperimentConfig) -> None:
                 "--related-top-k", method_cfg.related_top_k,
                 "--fused-database-root", cfg.ingest_4phase_fused_dir(method_name),
             ]
+            if getattr(method_cfg, "cascade_enabled", True):
+                method_args.append("--cascade-enabled")
+            else:
+                method_args.append("--no-cascade-enabled")
+            if getattr(method_cfg, "deletion_enabled", True):
+                method_args.append("--deletion-enabled")
+            else:
+                method_args.append("--no-deletion-enabled")
+            method_args += [
+                "--condition-sim-threshold", getattr(method_cfg, "condition_sim_threshold", 0.5),
+                "--pairwise-sim-threshold", getattr(method_cfg, "pairwise_sim_threshold", 0.7),
+            ]
         elif method_name == "mem0":
             method_args += [
                 "--mem0-related-top-k", method_cfg.related_top_k,

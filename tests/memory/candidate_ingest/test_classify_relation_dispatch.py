@@ -56,3 +56,15 @@ def test_llm_backend_used(monkeypatch):
     lab = s._classify_relation("old", "new", "scope", _Trace())
     assert lab == "CON"
     assert s.llm_client.calls != []          # 调 LLM
+
+
+def test_language_guard_raises_for_non_english():
+    from memory.candidate_ingest.memory_system import _check_relation_language
+    with pytest.raises(ValueError):
+        _check_relation_language("classifier", "zh")
+
+
+def test_language_guard_allows_english():
+    from memory.candidate_ingest.memory_system import _check_relation_language
+    _check_relation_language("classifier", "en")  # no raise
+    _check_relation_language("llm", "zh")          # no raise

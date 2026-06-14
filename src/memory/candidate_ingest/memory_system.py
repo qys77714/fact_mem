@@ -40,6 +40,15 @@ logger = logging.getLogger(__name__)
 _VALID_RELATIONS = frozenset({"IND", "EQV", "NSO", "OSN", "CON"})
 
 
+def _check_relation_language(relation_backend: str, language: str) -> None:
+    """Raise ValueError if the backend/language combination is unsupported."""
+    if relation_backend == "classifier" and language != "en":
+        raise ValueError(
+            "relation_backend='classifier' 只支持英文（language='en'），"
+            f"当前 language={language!r}。请用 relation_backend='llm' 或英文输入。"
+        )
+
+
 class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
     """
     relation_decision with optional cascade-first layer (cas_update_condition).
@@ -62,12 +71,8 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         self._cascade_max_new_tokens = int(kwargs.pop("cascade_max_new_tokens", 512))
         trace_log_dir: Optional[str] = kwargs.get("trace_log_dir")
         super().__init__(*args, **kwargs)
+        _check_relation_language(self._relation_backend, self.language)
         if self._relation_backend == "classifier":
-            if self.language != "en":
-                raise ValueError(
-                    "relation_backend='classifier' 只支持英文（language='en'），"
-                    f"当前 language={self.language!r}。请用 relation_backend='llm' 或英文输入。"
-                )
             self._rc_backend = RelationClassifierBackend()
         else:
             self._rc_backend = None

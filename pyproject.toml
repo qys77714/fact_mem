@@ -11,6 +11,7 @@ dependencies = [
     "pytest-asyncio>=1.3.0",
     "python-dotenv>=1.1.1",
     "transformers>=4.45.2",
+    "torch>=2.6.0",
     "jinja2>=3.1.0",
     "openai>=1.0.0",
     "tqdm>=4.0.0",
@@ -25,3 +26,12 @@ dependencies = [
 # TUNA 偶发对直链返回 403；与 uv.lock 中已有源一致用阿里云
 url = "https://mirrors.aliyun.com/pypi/simple"
 default = true
+
+[[tool.uv.index]]
+# torch cu126 轮子：默认源装到 cu13 与本机驱动 CUDA 12.8 不兼容，固定走此 index
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }

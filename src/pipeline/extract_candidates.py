@@ -54,7 +54,7 @@ _UNSAFE_NAME_CHARS = frozenset(r'\/:*?"<>|\n\r\t')
 
 
 def _normalize_memory_granularity(value: str) -> Union[str, int]:
-    """与 ``pipeline_generate`` 的 ``--memory-granularity`` 一致：``all`` 或正整数。"""
+    """与 ``pipeline_lme_generate`` 的 ``--memory-granularity`` 一致：``all`` 或正整数。"""
     v = str(value).strip().lower()
     if v == "all":
         return "all"
@@ -707,7 +707,7 @@ def main() -> None:
         "--extract-model",
         dest="model",
         required=True,
-        help="抽取用 LLM（与 pipeline_generate 模型名规则一致）",
+        help="抽取用 LLM（与 pipeline_lme_generate 模型名规则一致）",
     )
     parser.add_argument(
         "--question-types",
@@ -718,7 +718,7 @@ def main() -> None:
     parser.add_argument(
         "--memory-granularity",
         default="4",
-        help="与 pipeline_generate 相同：'all' 或每 N 个 turn 一块（在单个 session 内切块）",
+        help="与 pipeline_lme_generate 相同：'all' 或每 N 个 turn 一块（在单个 session 内切块）",
     )
     parser.add_argument(
         "--turn-overlap",

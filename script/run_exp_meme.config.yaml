@@ -1,7 +1,7 @@
 # run_exp_meme.sh — MEME 4-Phase 对齐实验配置
 #
 # 与 run_exp.config.yaml 的区别:
-#   - 使用 pipeline_meme_4phase.py 替代 ingest_candidates + fuse + pipeline_generate
+#   - 使用 pipeline_meme_4phase.py 替代 ingest_candidates + fuse + pipeline_lme_generate
 #   - 每个 method 只调一次 4phase 脚本，内部按 per-episode 四阶段执行
 #   - relation_decision 额外有 fuse 步骤（phase 脚本内部处理）
 #   - Judge 使用 pipeline_meme_evaluate.py（task-specific prompts + trivial-pass）

@@ -22,7 +22,7 @@ def get_memory_system(
     rerank_top_k: int | None = None,
     **kwargs,
 ) -> BaseMemorySystem:
-    """Return a memory system for ``pipeline_generate`` (prebuilt dense retrieval only)."""
+    """Return a memory system for ``pipeline_lme_generate`` (prebuilt dense retrieval only)."""
     from .baselines.lme_prebuilt import LmePrebuiltMemorySystem
 
     if method_name == "lme_prebuilt":

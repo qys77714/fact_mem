@@ -1,6 +1,6 @@
-# fact_memory 实验配置
+# fact_memory LME 实验配置
 # 修改此文件来调整实验参数；比较多种方法时只需切换 methods 下各方法的 enabled 即可。
-# 用法：python run_exp.py [--config config/default.yaml] [--stages extract,ingest,generate,evaluate]
+# 用法：python run_exp_lme.py [--config config/lme.yaml] [--stages extract,ingest,generate,evaluate]
 
 experiment:
   benchmark: lme_s        # lme_o / lme_s / lme_m / meme_filler32k / meme_nofiller / ...
@@ -25,7 +25,7 @@ extract:
 
 methods:
   # 在此控制运行哪些灌库方法；方法特定超参在各子节设置。
-  # 比较实验：将多个 enabled 设为 true，run_exp.py 会依次完成各方法的 ingest 和 generate。
+  # 比较实验：将多个 enabled 设为 true，run_exp_lme.py 会依次完成各方法的 ingest 和 generate。
 
   add_all:
     enabled: true
@@ -114,7 +114,7 @@ prompts:
   fusion_bundle_zh: ""
   fusion_edge_labels_en: "lme_fuse_memory_bundle_edge_labels_en_v2.jinja"
   fusion_edge_labels_zh: "lme_fuse_memory_bundle_edge_labels_zh_v2.jinja"
-  # --- pipeline_evaluate Judge ---
+  # --- pipeline_lme_evaluate Judge ---
   judge_oqa: "pipeline_eval_oqa.jinja"
   judge_mcq: "pipeline_eval_mcq.jinja"
   judge_system: "pipeline_eval_system.jinja"

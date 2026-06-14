@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
-# Used by pipeline_generate, extract_candidates, and any tool that resolves paths by benchmark id.
+# Used by pipeline_lme_generate, extract_candidates, and any tool that resolves paths by benchmark id.
 DEFAULT_BENCHMARK_DATASETS: Dict[str, Tuple[str, str]] = {
     "test": ("data/preprocessed/test.json", "zh"),
     "lme_o": ("data/preprocessed/longmemeval_oracle_converted.json", "en"),

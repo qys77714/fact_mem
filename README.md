@@ -1,6 +1,6 @@
 # easy-mem
 
-在长对话记忆评测基准上，对比多种记忆方法的实验框架。支持 LongMemEval / LoCoMo / LifeMemBench / EgoMemBench / MEME 等基准，比较 `relation_decision` / `amac` / `zep` / `mem0` / `add_all` / `evermemos` 六种灌库策略。
+在长对话记忆评测基准上，对比多种记忆方法的实验框架。支持 LongMemEval (LME) / MEME 两个基准，比较 `relation_decision` / `amac` / `zep` / `mem0` / `add_all` / `evermemos` 六种灌库策略。
 
 ## 快速开始
 
@@ -37,8 +37,8 @@ DASHSCOPE_API_KEY=your_key   # 云端 qwen3-max 等 judge 模型
 ### 4. 运行实验
 
 ```bash
-# LME / LoCoMo / LifeMemBench / EgoMemBench
-python run_exp.py
+# LME (LongMemEval)
+python run_exp_lme.py
 
 # MEME 4-Phase 协议
 python run_exp_meme.py
@@ -48,10 +48,10 @@ python run_exp_meme.py
 
 ## 实验入口
 
-### `run_exp.py`（LME / LoCoMo 等通用基准）
+### `run_exp_lme.py`（LME / LongMemEval）
 
 ```bash
-python run_exp.py [--config config/default.yaml] [--stages extract,ingest,generate,evaluate]
+python run_exp_lme.py [--config config/lme.yaml] [--stages extract,ingest,generate,evaluate]
 ```
 
 阶段：
@@ -62,10 +62,10 @@ python run_exp.py [--config config/default.yaml] [--stages extract,ingest,genera
 
 ```bash
 # 只跑部分阶段（如候选已有，跳过 extract）
-python run_exp.py --stages ingest,generate,evaluate
+python run_exp_lme.py --stages ingest,generate,evaluate
 
 # 同时比较多个方法：在 config 中将需要的 methods 设为 enabled: true
-python run_exp.py --config config/my_exp.yaml
+python run_exp_lme.py --config config/my_exp.yaml
 ```
 
 ### `run_exp_meme.py`（MEME 4-Phase 协议）
@@ -86,14 +86,14 @@ python run_exp_meme.py [--config config/meme.yaml] [--stages extract,run,evaluat
 
 | 文件 | 用途 |
 |------|------|
-| [`config/default.yaml`](config/default.yaml) | 通用实验（LME / LoCoMo 等） |
+| [`config/lme.yaml`](config/lme.yaml) | LME (LongMemEval) 实验 |
 | [`config/meme.yaml`](config/meme.yaml) | MEME 4-Phase 实验 |
 
 ### 常用修改
 
 ```yaml
 experiment:
-  benchmark: lme_s        # 切换基准：lme_o / lme_s / locomo / meme_filler32k / ...
+  benchmark: lme_s        # 切换基准：lme_o / lme_s / lme_m / meme_filler32k / ...
   suffix: exp001          # 实验版本标签
 
 models:
@@ -136,9 +136,6 @@ generate:
 | `lme_o` | `data/preprocessed/longmemeval_oracle_converted.json` | en |
 | `lme_s` | `data/preprocessed/longmemeval_s_cleaned_converted.json` | en |
 | `lme_m` | `data/preprocessed/longmemeval_m_cleaned_converted.json` | en |
-| `locomo` | `data/raw_data/locomo10.json` | en |
-| `lmb_event` | `data/preprocessed/LifeMemBench_event.json` | zh |
-| `emb_event` | `data/preprocessed/EgoMemBench_event_half.json` | en |
 | `meme_nofiller` | `data/raw_data/MEME/meme_nofiller.json` | en |
 | `meme_filler32k` | `data/raw_data/MEME/meme_filler32k.json` | en |
 | `meme_filler128k` | `data/raw_data/MEME/meme_filler128k.json` | en |
@@ -170,9 +167,9 @@ export PYTHONPATH=src
 |------|------|
 | `src/pipeline/extract_candidates.py` | 候选记忆抽取 |
 | `src/pipeline/ingest_candidates.py` | 候选写库（`--update-method` 选方法） |
-| `src/pipeline/fuse_lme_memory_bundles.py` | relation_decision 关系包融合（`run_exp.py` 自动调用） |
-| `src/pipeline_generate.py` | 预建库检索 + Agent 答题 |
-| `src/pipeline_evaluate.py` | LLM Judge（通用基准） |
+| `src/pipeline/fuse_lme_memory_bundles.py` | relation_decision 关系包融合（`run_exp_lme.py` 自动调用） |
+| `src/pipeline_lme_generate.py` | 预建库检索 + Agent 答题 |
+| `src/pipeline_lme_evaluate.py` | LLM Judge（LME 基准） |
 | `src/pipeline_meme_4phase.py` | MEME 4-phase 灌库+答题 |
 | `src/pipeline_meme_evaluate.py` | MEME Judge |
 
@@ -181,14 +178,14 @@ export PYTHONPATH=src
 ## 项目结构
 
 ```
-run_exp.py              # 主入口：LME / LoCoMo / LifeMemBench 等
+run_exp_lme.py          # 主入口：LME / LongMemEval
 run_exp_meme.py         # 主入口：MEME 4-Phase
 config/
-  default.yaml          # 通用实验配置
+  lme.yaml              # LME 实验配置
   meme.yaml             # MEME 实验配置
 src/
   agent/                # StandardAgent（检索 → 拼上下文 → 答题）
-  benchmark/            # 基准数据加载（LME、LoCoMo、MEME 等）
+  benchmark/            # 基准数据加载（LME、MEME）
   memory/
     baselines/          # lme_prebuilt（检索阶段 memory system）
     admission/          # A-MAC 五维准入评分
@@ -198,8 +195,8 @@ src/
     zep/                # Graphiti + Kuzu 知识图谱适配
     storage/            # LocalFaiss 向量库封装
   pipeline/             # extract_candidates、ingest_candidates、fuse 子步骤
-  pipeline_generate.py
-  pipeline_evaluate.py
+  pipeline_lme_generate.py
+  pipeline_lme_evaluate.py
   pipeline_meme_4phase.py
   pipeline_meme_evaluate.py
   prompts/              # Jinja 模板（抽取 / 关系分类 / 融合 / Judge / Agent）

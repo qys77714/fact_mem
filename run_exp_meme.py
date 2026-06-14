@@ -9,7 +9,7 @@ ingest + answer 合并在 pipeline_meme_4phase.py 内完成。
   python run_exp_meme.py [--config config/meme.yaml] [--stages extract,run,evaluate]
 
 阶段说明：
-  extract  — 候选记忆抽取（三方面模板，与 run_exp.py 相同）
+  extract  — 候选记忆抽取（三方面模板，与 run_exp_lme.py 相同）
   run      — 各 enabled 方法的 4-phase 灌库+答题（pipeline_meme_4phase.py）
   evaluate — MEME Judge（pipeline_meme_evaluate.py，task-specific prompts + trivial-pass 过滤）
 """
@@ -30,7 +30,7 @@ from utils.config import MemeExperimentConfig  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# 工具函数（与 run_exp.py 相同）
+# 工具函数（与 run_exp_lme.py 相同）
 # ---------------------------------------------------------------------------
 
 def _run(args: list, *, check: bool = True) -> subprocess.CompletedProcess:

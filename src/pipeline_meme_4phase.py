@@ -11,7 +11,7 @@ relation_decision 额外步骤：
   Phase 1 结束后 fuse {hn}_before (unfused → fused)
   Phase 3 结束后 fuse {hn}_after  (unfused → fused)
 
-pred.jsonl 格式与 pipeline_generate.py 一致，含 phase/entity_key/entity_values/hop 字段。
+pred.jsonl 格式与 pipeline_lme_generate.py 一致，含 phase/entity_key/entity_values/hop 字段。
 """
 
 from __future__ import annotations

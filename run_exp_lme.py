@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-fact_memory 实验流水线（Python 入口，替代 script/run_exp.sh）
+fact_memory LME 实验流水线（Python 入口）
 
 用法：
-  python run_exp.py [--config config/default.yaml] [--stages extract,ingest,generate,evaluate]
+  python run_exp_lme.py [--config config/lme.yaml] [--stages extract,ingest,generate,evaluate]
 
-比较多种方法：在 config/default.yaml 的 methods 下将需要比较的方法 enabled 设为 true，
+比较多种方法：在 config/lme.yaml 的 methods 下将需要比较的方法 enabled 设为 true，
 再运行此脚本即可——ingest 和 generate 会依次为每种方法执行，evaluate 自动汇总所有 pred 文件。
 """
 
@@ -262,7 +262,7 @@ def stage_generate(cfg: ExperimentConfig) -> None:
         _title(f"生成预测: {method_name} → {output}")
 
         _run([
-            _SRC / "pipeline_generate.py",
+            _SRC / "pipeline_lme_generate.py",
         ] + common_args + [
             "--database_root", db_root,
             "--output", output,
@@ -286,7 +286,7 @@ def stage_evaluate(cfg: ExperimentConfig) -> None:
     p = cfg.prompts
 
     args = [
-        _SRC / "pipeline_evaluate.py",
+        _SRC / "pipeline_lme_evaluate.py",
         "--input", *pred_files,
         "--judge_model", cfg.models.judge,
         "--benchmark", cfg.experiment.benchmark,
@@ -326,15 +326,15 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例：\n"
-            "  python run_exp.py                             # 跑所有阶段\n"
-            "  python run_exp.py --stages ingest,generate   # 只跑 ingest + generate\n"
-            "  python run_exp.py --config config/meme.yaml  # 使用自定义配置\n"
+            "  python run_exp_lme.py                             # 跑所有阶段\n"
+            "  python run_exp_lme.py --stages ingest,generate   # 只跑 ingest + generate\n"
+            "  python run_exp_lme.py --config config/lme.yaml   # 使用自定义配置\n"
         ),
     )
     parser.add_argument(
         "--config",
-        default="config/default.yaml",
-        help="实验配置 YAML（默认 config/default.yaml）",
+        default="config/lme.yaml",
+        help="实验配置 YAML（默认 config/lme.yaml）",
     )
     parser.add_argument(
         "--stages",

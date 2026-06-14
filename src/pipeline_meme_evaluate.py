@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
         "--input",
         nargs="+",
         required=True,
-        help="pred JSONL file(s) from pipeline_generate (MEME protocol fields required)",
+        help="pred JSONL file(s) from pipeline_lme_generate (MEME protocol fields required)",
     )
     p.add_argument("--judge_model", required=True, help="Judge LLM (default MEME paper: gpt-4o)")
     p.add_argument(

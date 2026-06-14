@@ -332,7 +332,7 @@ def main() -> int:
     parser.add_argument(
         "--benchmark-file",
         default=None,
-        help="与 extract / pipeline_generate 一致：覆盖默认 benchmark 数据文件",
+        help="与 extract / pipeline_lme_generate 一致：覆盖默认 benchmark 数据文件",
     )
     parser.add_argument(
         "--question-types",

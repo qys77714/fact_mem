@@ -1,6 +1,6 @@
-"""ExperimentConfig: typed Pydantic model for config/default.yaml.
+"""ExperimentConfig: typed Pydantic model for config/lme.yaml.
 
-Used by run_exp.py to read the unified config and build CLI args for each stage.
+Used by run_exp_lme.py to read the unified config and build CLI args for each stage.
 """
 
 from __future__ import annotations

@@ -8,7 +8,7 @@ from benchmark.base import QuestionItem
 
 
 def answer_row_key(row: Dict[str, Any]) -> Tuple[str, str]:
-    """Match ``pipeline_generate`` resume keys: (history_name, question_id)."""
+    """Match ``pipeline_lme_generate`` resume keys: (history_name, question_id)."""
     h = str(row.get("history_name", ""))
     qid = row.get("question_id")
     return (h, str(qid if qid is not None else h))

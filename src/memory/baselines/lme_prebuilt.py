@@ -43,7 +43,7 @@ class LmePrebuiltMemorySystem(BaseMemorySystem):
         rerank_top_k: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
-        # ``pipeline_generate`` passes mem0-style kwargs (granularity, trace_log_dir, …);
+        # ``pipeline_lme_generate`` passes mem0-style kwargs (granularity, trace_log_dir, …);
         # only BaseMemorySystem's constructor args may go to ``super()`` .
         _base_keys = ("embed_client", "embed_model_name", "llm_client", "database_root")
         super().__init__(**{k: kwargs[k] for k in _base_keys if k in kwargs})

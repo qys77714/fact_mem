@@ -29,6 +29,7 @@ from .deletion_update import (
 from .memory_system_base import LmeCandidateMemorySystemBase
 from .schemas import LME_RELATION_CLASSIFICATION_RESPONSE_FORMAT
 from .relation_decision import LmeRelationDecision, decide_lme_update_relation_decision
+from .relation_classifier_backend import RelationClassifierBackend
 from .prompts import (
     build_lme_relation_classification_user_prompt,
     lme_relation_system_prompt_for_language,
@@ -53,6 +54,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         self._relation_system_en_template = (kwargs.pop("relation_system_en_template", None) or "").strip() or None
         self._relation_system_zh_template = (kwargs.pop("relation_system_zh_template", None) or "").strip() or None
         self._relation_user_template = (kwargs.pop("relation_user_template", None) or "").strip() or None
+        self._relation_backend = (kwargs.pop("relation_backend", "classifier") or "classifier")
         self._cascade_enabled = bool(kwargs.pop("cascade_enabled", True))
         self._deletion_enabled = bool(kwargs.pop("deletion_enabled", True))
         self._condition_sim_threshold = float(kwargs.pop("condition_sim_threshold", 0.5))
@@ -60,6 +62,15 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         self._cascade_max_new_tokens = int(kwargs.pop("cascade_max_new_tokens", 512))
         trace_log_dir: Optional[str] = kwargs.get("trace_log_dir")
         super().__init__(*args, **kwargs)
+        if self._relation_backend == "classifier":
+            if self.language != "en":
+                raise ValueError(
+                    "relation_backend='classifier' 只支持英文（language='en'），"
+                    f"当前 language={self.language!r}。请用 relation_backend='llm' 或英文输入。"
+                )
+            self._rc_backend = RelationClassifierBackend()
+        else:
+            self._rc_backend = None
         self.trace = MemoryTraceLogger(
             method="lme_candidate_relation_decision",
             log_dir=trace_log_dir or "logs/memory_trace",
@@ -83,6 +94,17 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         trace_scope_id: Optional[str],
         trace: MemoryTraceLogger,
     ) -> str:
+        if self._relation_backend == "classifier":
+            label = self._rc_backend.classify(m_old_text, m_new)
+            trace.log_llm_interaction(
+                purpose="lme_candidate_relation_decision_classify_relation",
+                messages=[{"role": "user", "content": f"old: {m_old_text}\nnew: {m_new}"}],
+                response={"relation": label, "backend": "classifier"},
+                scope_id=trace_scope_id,
+                metadata={"backend": "classifier"},
+            )
+            return label if label in _VALID_RELATIONS else "IND"
+
         system = lme_relation_system_prompt_for_language(
             self.language,
             template_en=self._relation_system_en_template,

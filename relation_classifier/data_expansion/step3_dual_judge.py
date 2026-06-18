@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import time
-from typing import List, Dict
+from typing import List
 
 
 def load_pairs(path: str) -> List[dict]:
@@ -49,34 +49,23 @@ def gemma_judge(pairs: List[dict], model_name: str = "gemma4-26B",
     sys.path.insert(0, os.path.abspath(_src))
     from utils.llm_api import load_api_chat_completion
 
-    client = load_api_chat_completion(model_name)
     messages_list = [build_gemma_messages(p["old"], p["new"]) for p in pairs]
 
     print(f"发送 {len(messages_list)} 条分类请求到 {model_name}...")
     t0 = time.time()
 
     # 使用异步客户端批量请求
-    if hasattr(client, 'get_response_chat') and 'messages_list' in str(type(client)):
-        # 同步客户端，逐条调用
-        responses = []
-        for i, msgs in enumerate(messages_list):
-            if i % 50 == 0:
-                print(f"  gemma4-26B 进度: {i}/{len(messages_list)}")
-            resp = client.get_response_chat(msgs, max_new_tokens=128, temperature=0.0)
-            responses.append(resp)
-    else:
-        # 异步客户端
-        import asyncio
-        async_client = load_api_chat_completion(model_name, async_=True)
-        responses = asyncio.run(
-            async_client.get_response_chat(
-                messages_list,
-                max_new_tokens=128,
-                temperature=0.0,
-                max_concurrency=max_concurrency,
-                use_tqdm=True,
-            )
+    import asyncio
+    async_client = load_api_chat_completion(model_name, async_=True)
+    responses = asyncio.run(
+        async_client.get_response_chat(
+            messages_list,
+            max_new_tokens=128,
+            temperature=0.0,
+            max_concurrency=max_concurrency,
+            use_tqdm=True,
         )
+    )
 
     elapsed = time.time() - t0
     print(f"gemma4-26B 判断完成: {len(responses)} 条, 耗时 {elapsed:.1f}s")
@@ -163,6 +152,9 @@ def main():
         args.pairs = tmp_path
 
     judge_all_pairs(args.pairs, args.output, cfg)
+
+    if args.limit > 0:
+        os.remove(tmp_path)
 
 
 if __name__ == "__main__":

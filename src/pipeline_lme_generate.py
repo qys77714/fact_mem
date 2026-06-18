@@ -56,6 +56,7 @@ class GenerateConfig:
     show_memory_time: bool
     require_lme_ingest_marker: bool
     ingest_marker_update_method: str
+    answer_mode: bool
 
 
 def parse_args() -> GenerateConfig:
@@ -145,6 +146,12 @@ def parse_args() -> GenerateConfig:
         metavar="METHOD",
         help="配合 --require-lme-ingest-marker：ingest 时使用的 --update-method",
     )
+    parser.add_argument(
+        "--answer-mode",
+        action="store_true",
+        help="relation_decision 专用：只检索就地融合的答题记忆 C + 未被覆盖的孤立原子"
+        "（排除 evidence / 已被 C 覆盖的原子）",
+    )
 
     args = parser.parse_args()
 
@@ -181,6 +188,7 @@ def parse_args() -> GenerateConfig:
         show_memory_time=not bool(args.no_memory_time),
         require_lme_ingest_marker=bool(args.require_lme_ingest_marker),
         ingest_marker_update_method=ingest_marker_method,
+        answer_mode=bool(args.answer_mode),
     )
 
 
@@ -238,6 +246,7 @@ def _build_memory_system(cfg: GenerateConfig, language: str):
         related_memory_top_k=cfg.retrieve_topk,
         retrieve_topk=cfg.retrieve_topk,
         trace_log_dir=None,
+        answer_mode=cfg.answer_mode,
     )
 
 

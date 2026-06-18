@@ -1,4 +1,5 @@
 from typing import List, Optional
+import os
 
 from benchmark.base import QuestionItem
 from memory.base import BaseMemorySystem, RetrievedMemory
@@ -64,8 +65,13 @@ class StandardAgent(BaseAgent):
         )
 
         if AutoTokenizer is not None:
+            # 仅用于上下文 token 计数；路径可经 ANSWER_TOKENIZER_PATH 覆盖，
+            # 默认指向本地 Qwen3-8B（原硬编码 /mnt/data_oss 在未挂载机器上不可用）。
+            tok_path = os.environ.get(
+                "ANSWER_TOKENIZER_PATH", "/data/zjj/models/Qwen/Qwen3-8B"
+            )
             self.tokenizer = AutoTokenizer.from_pretrained(
-                "/mnt/data_oss/models/Qwen3-8B",
+                tok_path,
                 trust_remote_code=True,
             )
         else:

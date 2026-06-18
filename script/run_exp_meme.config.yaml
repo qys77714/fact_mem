@@ -38,9 +38,9 @@ prompts:
   # --- extract_candidates ---
   mem_extract_template: "0_mem_extract_v2.jinja"
   mem_extract_aspects_only: "1"
-  mem_extract_aspect_template_1: "0_mem_extract_aspect_events_en.jinja"
-  mem_extract_aspect_template_2: "0_mem_extract_aspect_preferences_en.jinja"
-  mem_extract_aspect_template_3: "0_mem_extract_aspect_social_en.jinja"
+  mem_extract_aspect_template_1: "0_mem_extract_aspect_unified_en.jinja"   # 单 pass 统一抽取（events+preferences+social 合并，含 user 中心显著性过滤）
+  mem_extract_aspect_template_2: ""
+  mem_extract_aspect_template_3: ""
   # --- relation_decision ingest ---
   relation_classification_system_en: "lme_relation_classification_system_en_v2.jinja"
   relation_classification_system_zh: "lme_relation_classification_system_zh_v2.jinja"

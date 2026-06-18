@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+[LEGACY] 事后整树关系包融合脚本。
+
+relation_decision 已改为**灌库时就地增量融合**答题记忆 C（同库，role=answer），
+答题用 answer_mode 检索，不再需要本脚本产出的 _fused 副本目录。保留本脚本仅供
+旧实验对照 / 复现历史结果，不在主流程（run_exp_lme.py / pipeline_meme_4phase.py）调用。
+
+----------------------------------------------------------------------
 灌库完成后：在**副本目录**中对各 episode 做关系包 LLM 融合（源目录不修改）。
 
 - ``--database-root``：灌库产物（未融合），与 ingest 的 ``--database-root`` 一致；**不会被本脚本改写**。

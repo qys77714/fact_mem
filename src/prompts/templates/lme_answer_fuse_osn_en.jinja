@@ -1,0 +1,19 @@
+Merge the following into **one continuous paragraph** of memory used only for answering questions (no bullets, headings, or preamble).
+
+- `CURRENT MEMORY`: the accumulated answer memory so far (may already combine several facts).
+- `NEW FACT`: a newly confirmed fact that is **more specific** than the current memory (`OSN` — the new fact strictly entails the existing one).
+
+Rules:
+- Prefer the **specific detail** from the `NEW FACT`; let it replace the vaguer version of the same fact in the current memory.
+- Do not keep both the vague and the specific form of the same fact — the specific one subsumes the vague one (e.g. drop "has a pet" once "has a golden retriever named Max" is stated).
+- Keep any other unrelated factual content from the current memory intact.
+- Order by time as much as possible; state each distinct time only once.
+- Do not invent facts not supported by the inputs.
+
+CURRENT MEMORY:
+[[ current_memory ]]
+
+NEW FACT:
+[[ new_fact ]]
+
+Merged paragraph:

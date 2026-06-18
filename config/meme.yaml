@@ -7,7 +7,7 @@
 
 experiment:
   benchmark: meme_filler32k   # meme_nofiller / meme_filler32k / meme_filler128k
-  suffix: "0607_exp002"       
+  suffix: "0616_exp004_topic_agg"
 
 models:
   extract: gemma4-26B
@@ -18,14 +18,12 @@ models:
 
 extract:
   # → MemDB/candidates/meme_filler32k_gemma4-26B_0519_as4（candidate_memories + cas_update_rules）
-  candidate_suffix: 0606_as3
+  candidate_suffix: "0615_unified"
   granularity: 4
   turn_overlap: 0
   language: en
   aspect_templates:
-    - "0_mem_extract_aspect_events_en.jinja"
-    - "0_mem_extract_aspect_preferences_en.jinja"
-    - "0_mem_extract_aspect_social_en.jinja"
+    - "0_mem_extract_aspect_unified_en.jinja"   # 单 pass 统一抽取（events+preferences+social 合并，含显著性过滤，精简记忆量）
 
 methods:
   amac:
@@ -45,6 +43,7 @@ methods:
     fusion_model: ""
     cascade_enabled: false
     deletion_enabled: false
+    topic_aggregation_enabled: false
     condition_sim_threshold: 0.5
     pairwise_sim_threshold: 0.5
 
@@ -65,7 +64,7 @@ run:                             # pipeline_meme_4phase.py 的公共参数
   retrieve_topk: 50
   memory_token_limit: 512
   answer_concurrency: 20
-  show_memory_time: false
+  show_memory_time: true
   hybrid:
     enabled: false
     dense_weight: 0.8
@@ -100,10 +99,10 @@ prompts:
   relation_system_en: "lme_relation_classification_system_en_v2.jinja"
   relation_system_zh: "lme_relation_classification_system_zh_v2.jinja"
   relation_user: "lme_relation_classification_user.jinja"
-  fusion_bundle_en: "lme_fuse_memory_bundle_en_v3.jinja"
+  fusion_bundle_en: "fuse_memory_bundle_en_v3.jinja"
   fusion_bundle_zh: ""
-  fusion_edge_labels_en: "lme_fuse_memory_bundle_edge_labels_en_v2.jinja"
-  fusion_edge_labels_zh: "lme_fuse_memory_bundle_edge_labels_zh_v2.jinja"
+  fusion_edge_labels_en: "fuse_memory_bundle_edge_labels_en_v2.jinja"
+  fusion_edge_labels_zh: "fuse_memory_bundle_edge_labels_zh_v2.jinja"
   judge_oqa: ""
   judge_mcq: ""
   judge_system: ""

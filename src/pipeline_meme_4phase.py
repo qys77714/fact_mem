@@ -2,14 +2,13 @@
 MEME 4-Phase Pipeline — 与 MEME-public run_episode 协议完全对齐。
 
 每个 episode 按四阶段执行：
-  Phase 1: ingest sessions 0 → before_pos → MemDB/{hn}_before  (unfused)
-  Phase 2: answer before_questions (relation_decision 使用 fused {hn}_before)
+  Phase 1: ingest sessions 0 → before_pos → MemDB/{hn}_before
+  Phase 2: answer before_questions
   Phase 3: copy {hn}_before → {hn}_after; 增量 ingest sessions before_pos+1 → after_pos
-  Phase 4: answer after_questions (relation_decision 使用 fused {hn}_after)
+  Phase 4: answer after_questions
 
-relation_decision 额外步骤：
-  Phase 1 结束后 fuse {hn}_before (unfused → fused)
-  Phase 3 结束后 fuse {hn}_after  (unfused → fused)
+relation_decision：灌库时就地增量融合答题记忆 C（同库，role=answer），答题用 answer_mode
+检索（C + 未被覆盖的孤立原子）。不再有独立的事后整树 fuse 阶段 / _fused 目录。
 
 pred.jsonl 格式与 pipeline_lme_generate.py 一致，含 phase/entity_key/entity_values/hop 字段。
 """
@@ -44,22 +43,17 @@ from memory.candidate_ingest import (
     apply_candidate_episode_zep,
     load_candidate_json,
 )
-from memory.fusion.bundle_fusion import fuse_local_faiss_database
 from memory.mem0 import Mem0MemorySystem
 from memory.storage.local_faiss import LocalFaissDatabase
 from memory.zep import ZepMemorySystem
 from memory.prebuilt import PrebuiltMemorySystem
 from memory.tracing import remove_episode_trace_jsonl_files_for_logger
 from agent.standard_agent import StandardAgent
-from utils.embed_utils import embed_texts
 from utils.env import load_env
 from utils.eval_report import append_jsonl, utc_timestamp_iso
 from utils.llm_api import load_api_chat_completion
 
 _ADD_ALL_RELATED_TOP_K_PLACEHOLDER = 1
-
-FUSION_MEMORY_READY_VERSION = 3
-FUSION_MARKER_KIND = "bundle_fusion"
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +115,7 @@ class MemePhaseConfig:
     # cascade (relation_decision)
     cascade_enabled: bool
     deletion_enabled: bool
+    topic_aggregation_enabled: bool
     condition_sim_threshold: float
     pairwise_sim_threshold: float
     # trace
@@ -156,62 +151,6 @@ def _copy_episode_db(root: Path, hn_src: str, hn_dst: str) -> None:
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(src, dst)
-
-
-def _fuse_phase_episode(
-    hn_phase: str,
-    unfused_root: Path,
-    fused_root: Path,
-    embed_fn,
-    llm_client,
-    language: str,
-    fuse_max_new_tokens: int,
-    package_concurrency: int,
-    bundle_template_en: Optional[str],
-    bundle_template_zh: Optional[str],
-    edge_labels_en: Optional[str],
-    edge_labels_zh: Optional[str],
-    fusion_model_name: str,
-    embedding_model: str,
-) -> None:
-    """Copy unfused episode to fused root and run bundle fusion in-place."""
-    src = unfused_root / hn_phase
-    dst = fused_root / hn_phase
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
-    # Remove any ingest marker carried over by copytree
-    marker = dst / ".memory_ready.json"
-    marker.unlink(missing_ok=True)
-
-    db = LocalFaissDatabase(namespace=hn_phase, database_root=str(fused_root))
-    stats = fuse_local_faiss_database(
-        db,
-        embed_fn,
-        llm_client,
-        language=language,
-        fuse_max_new_tokens=fuse_max_new_tokens,
-        package_concurrency=package_concurrency,
-        bundle_template_en=bundle_template_en or None,
-        bundle_template_zh=bundle_template_zh or None,
-        edge_labels_en=edge_labels_en or None,
-        edge_labels_zh=edge_labels_zh or None,
-    )
-    stats_payload = {k: v for k, v in stats.items()}
-    stats_payload.setdefault("fusion_strategy", "whole_tree_single_wave")
-    payload = {
-        "version": FUSION_MEMORY_READY_VERSION,
-        "kind": FUSION_MARKER_KIND,
-        "history_name": hn_phase,
-        "fusion_model": fusion_model_name,
-        "embedding_model": embedding_model,
-        "language": language,
-        "fuse_max_new_tokens": fuse_max_new_tokens,
-        "stats": stats_payload,
-    }
-    tmp = marker.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(marker)
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +189,8 @@ def _build_ingest_memory(cfg: MemePhaseConfig, database_root: Path):
             deletion_enabled=cfg.deletion_enabled,
             condition_sim_threshold=cfg.condition_sim_threshold,
             pairwise_sim_threshold=cfg.pairwise_sim_threshold,
+            answer_fuse_max_new_tokens=cfg.fuse_max_new_tokens,
+            topic_aggregation_enabled=cfg.topic_aggregation_enabled,
         )
     if m == "add_all":
         return LmeCandidateAddAllMemorySystem(
@@ -314,6 +255,8 @@ def _build_answer_memory(cfg: MemePhaseConfig, answer_db_root: Path) -> Prebuilt
         hybrid_dense_weight=cfg.hybrid_dense_weight,
         hybrid_bm25_weight=cfg.hybrid_bm25_weight,
         hybrid_pool_mult=cfg.hybrid_pool_mult,
+        # relation_decision：答题只检索融合记忆 C + 未被覆盖的孤立原子（排除 evidence/被覆盖原子）
+        answer_mode=(cfg.update_method == "relation_decision"),
         language=cfg.language,
     )
 
@@ -425,8 +368,6 @@ def run_episode_4phase(
     answered: Set[Tuple[str, str]],
     output_path: Path,
     output_lock: threading.Lock,
-    embed_fn_for_fuse,
-    llm_client_for_fuse,
 ) -> None:
     hn = str(episode.history_name)
     phase_blocks = episode.metadata.get("phase_blocks", {})
@@ -440,8 +381,9 @@ def run_episode_4phase(
 
     payload = load_candidate_json(cand_path)
 
-    is_rel_dec = cfg.update_method == "relation_decision"
-    answer_db_root = cfg.fused_database_root if is_rel_dec else cfg.database_root
+    # relation_decision 现在灌库时就地融合答题记忆 C（同库），答题直接读 database_root；
+    # 不再需要事后 fuse 到 fused_database_root。
+    answer_db_root = cfg.database_root
 
     # Build per-episode ingest memory system pointing at the shared database_root.
     # All namespaces (hn_before / hn_after) are subdirs under this root.
@@ -453,26 +395,6 @@ def run_episode_4phase(
     print(f"  [{hn}] Phase 1: ingest sessions 1-{before_max} → {hn_before}", flush=True)
     payload_before = _filter_payload(payload, hn_before, max_si=before_max)
     _apply_phase(ingest_memory, payload_before, cfg.update_method, incremental=False)
-
-    # For relation_decision: fuse _before
-    if is_rel_dec and cfg.fused_database_root:
-        print(f"  [{hn}] Fuse: {hn_before}", flush=True)
-        _fuse_phase_episode(
-            hn_phase=hn_before,
-            unfused_root=cfg.database_root,
-            fused_root=cfg.fused_database_root,
-            embed_fn=embed_fn_for_fuse,
-            llm_client=llm_client_for_fuse,
-            language=cfg.language,
-            fuse_max_new_tokens=cfg.fuse_max_new_tokens,
-            package_concurrency=cfg.fusion_package_concurrency,
-            bundle_template_en=cfg.fusion_bundle_template_en or None,
-            bundle_template_zh=cfg.fusion_bundle_template_zh or None,
-            edge_labels_en=cfg.fusion_edge_labels_template_en or None,
-            edge_labels_zh=cfg.fusion_edge_labels_template_zh or None,
-            fusion_model_name=cfg.manager_model,
-            embedding_model=cfg.embedding_model,
-        )
 
     # -----------------------------------------------------------------------
     # Phase 2: answer before_questions
@@ -520,26 +442,6 @@ def run_episode_4phase(
     payload_after = _filter_payload(payload, hn_after,
                                     min_si=before_max, max_si=after_max)
     _apply_phase(ingest_memory, payload_after, cfg.update_method, incremental=True)
-
-    # For relation_decision: fuse _after
-    if is_rel_dec and cfg.fused_database_root:
-        print(f"  [{hn}] Fuse: {hn_after}", flush=True)
-        _fuse_phase_episode(
-            hn_phase=hn_after,
-            unfused_root=cfg.database_root,
-            fused_root=cfg.fused_database_root,
-            embed_fn=embed_fn_for_fuse,
-            llm_client=llm_client_for_fuse,
-            language=cfg.language,
-            fuse_max_new_tokens=cfg.fuse_max_new_tokens,
-            package_concurrency=cfg.fusion_package_concurrency,
-            bundle_template_en=cfg.fusion_bundle_template_en or None,
-            bundle_template_zh=cfg.fusion_bundle_template_zh or None,
-            edge_labels_en=cfg.fusion_edge_labels_template_en or None,
-            edge_labels_zh=cfg.fusion_edge_labels_template_zh or None,
-            fusion_model_name=cfg.manager_model,
-            embedding_model=cfg.embedding_model,
-        )
 
     # -----------------------------------------------------------------------
     # Phase 4: answer after_questions
@@ -600,20 +502,8 @@ def run_pipeline(cfg: MemePhaseConfig) -> int:
 
     cfg.output.parent.mkdir(parents=True, exist_ok=True)
     cfg.database_root.mkdir(parents=True, exist_ok=True)
-    if cfg.fused_database_root:
-        cfg.fused_database_root.mkdir(parents=True, exist_ok=True)
 
     answered = _load_answered_keys(cfg.output)
-
-    # Build embed_fn / llm_client for fuse (shared across episodes for relation_decision)
-    embed_fn_for_fuse = None
-    llm_client_for_fuse = None
-    if cfg.update_method == "relation_decision" and cfg.fused_database_root:
-        from openai import OpenAI
-        _ec = OpenAI(api_key=cfg.embedding_api_key, base_url=cfg.embedding_base_url)
-        _emb_model = cfg.embedding_model
-        embed_fn_for_fuse = lambda texts: embed_texts(_ec, texts, _emb_model)
-        llm_client_for_fuse = load_api_chat_completion(cfg.manager_model, async_=False)
 
     # Build per-episode job list
     jobs: List[Tuple[MemoryEpisode, Path]] = []
@@ -649,8 +539,6 @@ def run_pipeline(cfg: MemePhaseConfig) -> int:
                 answered=answered,
                 output_path=cfg.output,
                 output_lock=output_lock,
-                embed_fn_for_fuse=embed_fn_for_fuse,
-                llm_client_for_fuse=llm_client_for_fuse,
             )
         except Exception as exc:
             print(f"  ERROR [{ep.history_name}]: {exc}", file=sys.stderr)
@@ -763,6 +651,8 @@ def parse_args() -> MemePhaseConfig:
     # cascade (relation_decision)
     p.add_argument("--cascade-enabled", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--deletion-enabled", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--topic-aggregation", action=argparse.BooleanOptionalAction, default=True,
+                   help="同主题 profile 聚合（基于 candidate_topics 平行数组）")
     p.add_argument("--condition-sim-threshold", type=float, default=0.5)
     p.add_argument("--pairwise-sim-threshold", type=float, default=0.7)
 
@@ -773,10 +663,9 @@ def parse_args() -> MemePhaseConfig:
         print("ERROR: EMBEDDING_API_KEY not set", file=sys.stderr)
         sys.exit(1)
 
-    fused_root = args.fused_database_root
-    if args.update_method == "relation_decision" and fused_root is None:
-        fused_root = args.database_root.parent / (args.database_root.name + "_fused")
-        print(f"[4phase] auto fused_database_root: {fused_root}", flush=True)
+    # relation_decision 现在灌库时就地融合答题记忆 C（同库），不再产出独立的 _fused 目录。
+    # 保留 --fused-database-root CLI 以向后兼容，但不再使用。
+    fused_root = None
 
     return MemePhaseConfig(
         benchmark=args.benchmark,
@@ -826,6 +715,7 @@ def parse_args() -> MemePhaseConfig:
         evermemos_cluster_concurrency=args.evermemos_cluster_concurrency,
         cascade_enabled=bool(args.cascade_enabled),
         deletion_enabled=bool(args.deletion_enabled),
+        topic_aggregation_enabled=bool(args.topic_aggregation),
         condition_sim_threshold=float(args.condition_sim_threshold),
         pairwise_sim_threshold=float(args.pairwise_sim_threshold),
         trace_log_dir=(args.trace_log_dir or "").strip() or None,

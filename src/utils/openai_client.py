@@ -91,14 +91,19 @@ class OpenAIClient:
         max_new_tokens: int = 1024,
         temperature: float = 0.0,
         verbose: bool = False,
+        max_retries: int = 5,
         **kargs,
     ) -> str:
-        response = None
-        try:
-            kargs = dict(kargs)
-            qwen_enable_thinking = False
-            if self.model_name in ["gpt-4o-mini"]:
-                try:
+        kargs = dict(kargs)
+        is_gpt4o_mini = self.model_name in ["gpt-4o-mini"]
+        if not is_gpt4o_mini:
+            user_extra = kargs.pop("extra_body", None)
+            qwen_enable_thinking = bool(kargs.pop("qwen_enable_thinking", False))
+
+        last_err: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                if is_gpt4o_mini:
                     completion = self.client.chat.completions.create(
                         model=self.model_name,
                         messages=messages,
@@ -106,40 +111,44 @@ class OpenAIClient:
                         temperature=temperature,
                         **kargs,
                     )
-                except Exception as e:
-                    print(f"Error during completion: {e}")
+                else:
+                    completion = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        max_tokens=max_new_tokens,
+                        temperature=temperature,
+                        extra_body=_prepare_extra_body_for_model(
+                            self.model_name,
+                            user_extra,
+                            qwen_enable_thinking=qwen_enable_thinking,
+                        ),
+                        **kargs,
+                    )
+
+                _msg = completion.choices[0].message
+                response = _openai_assistant_message_text(_msg)
+
+                if verbose:
+                    self.logger.info("=========")
+                    self.logger.info(f"prompt: {messages[-1]['content']}\n" + "-" * 20)
+                    self.logger.info(f"response: {response}")
+                    self.logger.info("=========")
+                return response
+
+            except Exception as e:
+                error_str = str(e)
+                # 内容安全失败不可重试，直接跳过该样本
+                if "data_inspection_failed" in error_str or "inappropriate content" in error_str:
+                    print("请求内容安全检查失败，跳过生成")
                     return None
-            else:
-                user_extra = kargs.pop("extra_body", None)
-                qwen_enable_thinking = bool(kargs.pop("qwen_enable_thinking", False))
-                completion = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    max_tokens=max_new_tokens,
-                    temperature=temperature,
-                    extra_body=_prepare_extra_body_for_model(
-                        self.model_name,
-                        user_extra,
-                        qwen_enable_thinking=qwen_enable_thinking,
-                    ),
-                    **kargs,
-                )
+                last_err = e
+                print(f"chat 请求第 {attempt + 1}/{max_retries} 次失败，错误: {error_str}")
+                if attempt < max_retries - 1:
+                    time.sleep(min(60, 2**attempt))
 
-            _msg = completion.choices[0].message
-            response = _openai_assistant_message_text(_msg)
-
-            if verbose:
-                self.logger.info("=========")
-                self.logger.info(f"prompt: {messages[-1]['content']}\n" + "-" * 20)
-                self.logger.info(f"response: {response}")
-                self.logger.info("=========")
-        except Exception as e:
-            error_str = str(e)
-            if "data_inspection_failed" in error_str or "inappropriate content" in error_str:
-                print("请求内容安全检查失败，跳过生成")
-                return None
-
-        return response
+        # 重试耗尽：明确告警后返回 None（上游据此记 llm_api_failed）
+        print(f"chat 请求重试 {max_retries} 次后仍失败，放弃: {last_err}")
+        return None
 
 
 class AsyncOpenAIClient:

@@ -1,6 +1,6 @@
 # relation_classifier — 给 agent 的使用说明
 
-输入一对**英文**记忆 `(old, new)`，输出它们的关系五分类。基于冻结的 Qwen3-0.6B + 训练好的线性探测头，test Macro F1 ≈ 0.936。
+输入一对**英文**记忆 `(old, new)`，输出它们的关系五分类。基于冻结的 Qwen3-0.6B + 训练好的线性探测头，test Macro F1 ≈ 0.953。
 
 ## 五类语义
 
@@ -51,7 +51,7 @@ CUDA_VISIBLE_DEVICES=1 python cli.py --input mem.jsonl --output preds.jsonl
 
 ## 已知局限
 
-`IND`↔`CON` 边界最弱（IND recall 最低）。两句很短、没有共享字面线索时，"换城市/换工作"这类本应判 CON 的样本可能被误判成 IND。对这类结果建议留心或加规则兜底。
+`IND`↔`CON` 边界历来最弱（IND recall 最低）。经两轮改进——高词重叠 IND/CON 对抗样本注入训练 + 输入前拼五类富定义前缀——已大幅缓解：标准 test IND recall 升到 0.98、IND→CON 误判从 11 降到 2。但在刻意构造的高难样本上 `CON` precision 仍偏低（少量 OSN/EQV 难例会被吸入 CON），双重否定（`EQV`）等低频刁钻句式仍是短板。对极端边界样本建议留心或加规则兜底。
 
 ## 运行环境
 
@@ -62,10 +62,10 @@ CUDA_VISIBLE_DEVICES=1 python cli.py --input mem.jsonl --output preds.jsonl
 ## 文件清单
 
 ```
-classifier.py    核心库（自包含，RelationClassifier）
+classifier.py    核心库（自包含，RelationClassifier；含 RELATION_DEF 富定义前缀）
 cli.py           命令行批量打标
-config.yaml       推理配置（标签顺序、末token、分类头结构）
-head_best.pt      分类头权重（2MB，val Macro F1=0.9407）
+config.yaml       推理配置（标签顺序、max_length=1152、分类头结构）
+head_best.pt      分类头权重（2MB，val Macro F1=0.9481）
 examples/         sample.jsonl + quickstart.py
 requirements.txt  依赖
 ```

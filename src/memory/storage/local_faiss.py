@@ -19,13 +19,35 @@ logger = logging.getLogger(__name__)
 
 
 def _memory_entry_is_primary(metadata: Dict[str, Any]) -> bool:
-    """Evidence rows use metadata['memory_role'] == 'evidence'. Missing key means primary (backward compatible)."""
-    return metadata.get("memory_role") != "evidence"
+    """结构主条目。``evidence`` 弱边行与 ``answer`` 答题融合行(C)都不算 primary。
+
+    缺省(无 memory_role)视为 primary，向后兼容 baseline 数据。``answer`` 是
+    relation_decision 就地融合产出的答题专用记忆，不参与灌库判断/弱边结构。
+    """
+    role = metadata.get("memory_role")
+    return role != "evidence" and role != "answer"
 
 
 def _memory_entry_is_searchable_primary(metadata: Dict[str, Any]) -> bool:
-    """Primary rows eligible for dense retrieval (excludes stale cascade-invalidated primaries)."""
+    """灌库判断检索可见的原子 primary（排除 stale；保留 answer_hidden——后续仍用它判断）。"""
     return _memory_entry_is_primary(metadata) and not bool(metadata.get("stale"))
+
+
+def _memory_entry_is_answer_visible(metadata: Dict[str, Any]) -> bool:
+    """答题检索可见行：融合记忆 C(role=answer) + 未被 C 覆盖的孤立原子 primary。
+
+    排除：stale、evidence 弱边、以及已被某条 C 覆盖的原子(answer_hidden=True)。
+    """
+    if bool(metadata.get("stale")):
+        return False
+    role = metadata.get("memory_role")
+    if role == "evidence":
+        return False
+    if role == "answer":
+        return True
+    # 原子 primary：仅当未被融合记忆覆盖时才在答题检索可见
+    return not bool(metadata.get("answer_hidden"))
+
 
 
 def _tokenize_bm25(text: str) -> List[str]:
@@ -258,10 +280,13 @@ class LocalFaissDatabase:
         top_k: int,
         *,
         only_primary: bool = False,
+        answer_mode: bool = False,
     ) -> List[RetrievedMemory]:
         """
         直接接收 query_embedding (1D 或 2D numpy array) 并召回最近似的 K 条结果。
         only_primary=True 时跳过 metadata['memory_role'] == 'evidence'（主检索路径）。
+        answer_mode=True 时只返回答题可见行：融合记忆 C(role=answer) + 未被 C 覆盖的孤立原子；
+        优先级高于 only_primary（relation_decision 答题路径用）。
         """
         if top_k <= 0 or query_embedding is None or query_embedding.size == 0:
             return []
@@ -277,7 +302,12 @@ class LocalFaissDatabase:
         normalized_query = np.ascontiguousarray(query_embedding.astype(np.float32))
         faiss.normalize_L2(normalized_query)
 
+        # answer_mode 走与 only_primary 相同的「轮次扩召回 + 过滤」循环，故并入同一路径
+        filter_restrictive = bool(only_primary or answer_mode)
+
         def _passes_filters(meta: Dict[str, Any]) -> bool:
+            if answer_mode:
+                return _memory_entry_is_answer_visible(meta)
             if bool(meta.get("stale")):
                 return False
             if only_primary and not _memory_entry_is_searchable_primary(meta):
@@ -285,7 +315,7 @@ class LocalFaissDatabase:
             return True
 
         total = store.index.ntotal
-        if not only_primary:
+        if not filter_restrictive:
             k = min(top_k, total)
             scores, indices = store.index.search(normalized_query, k)
             results: List[RetrievedMemory] = []
@@ -353,6 +383,7 @@ class LocalFaissDatabase:
         dense_weight: float = 0.5,
         bm25_weight: float = 0.5,
         only_primary: bool = False,
+        answer_mode: bool = False,
         pool_mult: int = 4,
         return_full_ranked_pool: bool = False,
         full_corpus_pool: bool = False,
@@ -365,15 +396,23 @@ class LocalFaissDatabase:
         If ``full_corpus_pool`` is True, dense/BM25 each consider every indexed row when building the
         fusion pool (then truncate to ``top_k``), instead of capping at
         ``min(n, max(top_k * pool_mult, 50))``.
+
+        ``answer_mode``：只保留答题可见行（融合记忆 C + 未被覆盖的孤立原子），过滤 evidence/被覆盖原子。
         """
         if only_primary:
             return self.search(query_embedding, top_k, only_primary=True)
+
+        # answer_mode 下用「答题可见」谓词替代单纯的 stale 过滤
+        def _row_dropped(meta: Dict[str, Any]) -> bool:
+            if answer_mode:
+                return not _memory_entry_is_answer_visible(meta)
+            return bool(meta.get("stale"))
 
         w_d = max(0.0, float(dense_weight))
         w_b = max(0.0, float(bm25_weight))
         w_sum = w_d + w_b
         if w_sum <= 0:
-            return self.search(query_embedding, top_k, only_primary=False)
+            return self.search(query_embedding, top_k, only_primary=False, answer_mode=answer_mode)
 
         w_d /= w_sum
         w_b /= w_sum
@@ -411,7 +450,7 @@ class LocalFaissDatabase:
                 row = self._faiss_row_to_list_row(store, int(fidx))
                 if row is None:
                     continue
-                if bool(store.metadatas[row].get("stale")):
+                if _row_dropped(store.metadatas[row]):
                     continue
                 dense_scores[store.ids[row]] = float(score)
 
@@ -430,7 +469,7 @@ class LocalFaissDatabase:
                         top_ix = part[np.argsort(-raw[part])]
                     for i in top_ix:
                         ii = int(i)
-                        if bool(store.metadatas[ii].get("stale")):
+                        if _row_dropped(store.metadatas[ii]):
                             continue
                         bm25_top[store.ids[ii]] = float(raw[ii])
 
@@ -461,7 +500,7 @@ class LocalFaissDatabase:
                 row = store.ids.index(mid)
             except ValueError:
                 continue
-            if bool(store.metadatas[row].get("stale")):
+            if _row_dropped(store.metadatas[row]):
                 continue
             out.append(
                 RetrievedMemory(
@@ -526,6 +565,23 @@ class LocalFaissDatabase:
         self._ensure_loaded()
         return len(self._store.ids)
 
+    def get_memory(self, memory_id: str) -> Optional[RetrievedMemory]:
+        """按 memory_id 取单条记忆；不存在返回 None。"""
+        self._ensure_loaded()
+        store = self._store
+        try:
+            idx = store.ids.index(memory_id)
+        except ValueError:
+            return None
+        return RetrievedMemory(
+            memory_id=store.ids[idx],
+            text=store.texts[idx],
+            source_index=store.source_indices[idx],
+            time=store.times[idx],
+            score=0.0,
+            metadata=store.metadatas[idx],
+        )
+
     def list_all_memories(self, sort_by_time: bool = True, descending: bool = False) -> List[RetrievedMemory]:
         """
         返回所有保存的记忆，可选择按时间排序（如果 time 包含有效可比格式）。
@@ -557,8 +613,12 @@ class LocalFaissDatabase:
 
     def deduplicate_identical_text(self) -> int:
         """
-        Remove memories whose stripped text is identical to another entry.
-        Keeps one per text: earliest by `time` (parse_chat_time), then smaller list index as tie-breaker.
+        Remove memories whose stripped text is identical to another entry **with the same
+        ``memory_role``**.  Rows with different roles (e.g. ``primary`` vs ``answer``) serve
+        distinct purposes — primary for relation decisions, answer for question-answering
+        retrieval — so they are NOT deduplicated across roles.
+
+        Within each (text, role) group, keeps the earliest by ``time``, then smallest list index.
         Returns the number of removed memories.
         """
         with self._lock:
@@ -570,18 +630,20 @@ class LocalFaissDatabase:
 
             from utils.date_utils import parse_chat_time
 
-            groups: Dict[str, List[int]] = {}
+            # 按 (text, memory_role) 分组，不同角色的相同文本互不去重
+            groups: Dict[tuple, List[int]] = {}
             for i in range(n):
-                key = store.texts[i].strip()
-                if not key:
+                text_key = store.texts[i].strip()
+                if not text_key:
                     continue
-                groups.setdefault(key, []).append(i)
+                meta_i = store.metadatas[i]
+                role = meta_i.get("memory_role", "primary") if isinstance(meta_i, dict) else "primary"
+                groups.setdefault((text_key, role), []).append(i)
 
             remove_idx: set[int] = set()
             for indices in groups.values():
                 if len(indices) < 2:
                     continue
-
                 keeper = min(indices, key=lambda i: (parse_chat_time(store.times[i]), i))
                 for i in indices:
                     if i != keeper:

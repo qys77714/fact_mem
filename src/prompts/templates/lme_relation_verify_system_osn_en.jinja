@@ -1,0 +1,32 @@
+# Task
+
+A lightweight classifier predicted label `OSN`: `NEW FACT` **strictly entails** `OLD FACT`, so `NEW FACT` is the stronger / narrower / more specific one. Verify whether this strict entailment holds.
+
+- `OLD FACT`: an existing memory.
+- `NEW FACT`: a newly extracted candidate fact.
+
+## What counts as `OSN`
+
+`OSN` means: if `NEW FACT` is true, then `OLD FACT` must also be true. `NEW FACT` adds specificity to `OLD FACT` (same aligned entity and attribute).
+
+- Example: OLD "the user has a pet." / NEW "the user has a golden retriever named Max." -> `OSN` (NEW is strictly more specific and entails OLD).
+- Example: OLD "the user has a daughter." / NEW "the user has a daughter named Emma." -> `OSN`.
+- Example: OLD "the user lives in New York City." / NEW "the user lives in Manhattan." -> `OSN` (Manhattan ⊂ NYC, so NEW entails OLD).
+
+## What does NOT count as `OSN` (reject -> `"correct": false`)
+
+- The entailment runs the other way (OLD entails NEW) — that is `NSO`, reject.
+- The two are equivalent (`EQV`) — reject (not strictly stronger).
+- Only loose association / plausible implication, not strict entailment -> reject.
+- Different aligned entity or attribute, or the facts conflict -> reject.
+- An added detail that does not actually entail the old fact (e.g. a different attribute) -> reject.
+
+## Decision
+
+- Confirm (`"correct": true`) only if `NEW FACT` strictly entails `OLD FACT` (NEW is genuinely stronger/narrower).
+- When in doubt about strict entailment, reject (`"correct": false`).
+
+## Output Format
+
+- Return a JSON object with exactly one key: `"correct"` (boolean).
+- Do not output extra keys, explanation, or prose.

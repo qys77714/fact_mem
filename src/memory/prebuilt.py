@@ -30,6 +30,7 @@ class PrebuiltMemorySystem(BaseMemorySystem):
         hybrid_pool_mult: int = 4,
         hybrid_full_corpus_pool: bool = False,
         unfused_rank_database_root: Optional[str] = None,
+        answer_mode: bool = False,
         language: str = "en",
         **kwargs: Any,
     ) -> None:
@@ -47,6 +48,7 @@ class PrebuiltMemorySystem(BaseMemorySystem):
         self._unfused_rank_database_root = (
             str(Path(unfused_rank_database_root).resolve()) if unfused_rank_database_root else None
         )
+        self._answer_mode = bool(answer_mode)
         self._fused_maps_cache: dict[str, Tuple[Dict[str, str], Dict[str, RetrievedMemory]]] = {}
         self._language = (language or "en").strip() or "en"
 
@@ -121,6 +123,7 @@ class PrebuiltMemorySystem(BaseMemorySystem):
                 dense_weight=self._hybrid_dense_weight,
                 bm25_weight=self._hybrid_bm25_weight,
                 only_primary=False,
+                answer_mode=self._answer_mode,
                 pool_mult=self._hybrid_pool_mult,
                 full_corpus_pool=self._hybrid_full_corpus_pool,
             )
@@ -128,6 +131,7 @@ class PrebuiltMemorySystem(BaseMemorySystem):
             query_embedding[0],
             top_k,
             only_primary=False,
+            answer_mode=self._answer_mode,
         )
 
     def _retrieve_unfused_rank_fused_content(

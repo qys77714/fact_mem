@@ -714,7 +714,7 @@ def main() -> None:
         default="",
         help="",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=8192)
+    parser.add_argument("--max-new-tokens", type=int, default=2048)
     parser.add_argument(
         "--memory-granularity",
         default="4",

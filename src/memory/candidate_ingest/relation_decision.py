@@ -1,7 +1,7 @@
 """
 LME 候选事实更新 — relation_decision：pairwise 五类关系 → 桶内聚合 → 确定性写库。
 
-桶内优先级：``EQV`` > ``OSN`` > ``NSO`` > ``CON`` > ``IND``。
+桶内优先级：``CON`` > ``OSN`` > ``NSO`` > ``EQV`` > ``IND``。
 不物理删除；``CON`` 产出 ``conflict_update``（ADD primary ``m_new`` + 对 CON 旧条 UPDATE 边）；
 ``EQV``/``NSO`` 为弱侧新行；``OSN`` 为 ADD primary + 弱侧旧行 ATTACH。
 
@@ -87,7 +87,7 @@ def decide_lme_update_relation_decision_for_bucket(
     labeled: Sequence[Tuple[RetrievedMemory, str]],
 ) -> LmeRelationDecision:
     """
-    顺序：EQV > OSN > NSO；若仅 CON → ``conflict_update``；否则 ``fresh_primary``。
+    顺序：CON > OSN > NSO > EQV；否则 ``fresh_primary``。
     ``con_update_ids`` 收集所有标为 CON 的 ``m_old``，在写库阶段统一打 UPDATE 弱边（见 memory_system）。
     """
     m_new = (m_new or "").strip()
@@ -97,14 +97,12 @@ def decide_lme_update_relation_decision_for_bucket(
     con = _ordered_by_label(labeled, "CON")
     con_ids = tuple(m.memory_id for m in con)
 
-    if eqv:
-        rep = select_representative(eqv)
+    if con:
         return LmeRelationDecision(
-            outcome="equivalent_evidence",
+            outcome="conflict_update",
             content=m_new,
-            representative_id=rep.memory_id,
             con_update_ids=con_ids,
-            reason="eqv",
+            reason="con",
         )
     if osn:
         return LmeRelationDecision(
@@ -123,12 +121,14 @@ def decide_lme_update_relation_decision_for_bucket(
             con_update_ids=con_ids,
             reason="nso",
         )
-    if con:
+    if eqv:
+        rep = select_representative(eqv)
         return LmeRelationDecision(
-            outcome="conflict_update",
+            outcome="equivalent_evidence",
             content=m_new,
+            representative_id=rep.memory_id,
             con_update_ids=con_ids,
-            reason="con",
+            reason="eqv",
         )
     return LmeRelationDecision(
         outcome="fresh_primary",

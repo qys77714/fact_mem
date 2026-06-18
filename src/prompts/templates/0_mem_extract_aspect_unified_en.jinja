@@ -1,0 +1,45 @@
+You extract **durable, user-centered memories** from the dialogue excerpt — facts worth remembering about **the user** and the people in the user's life. One unified pass covering events, preferences, and social/relational facts.
+
+## What to capture
+
+- **Events & states**: things that happened to or were done by the user (or a named person in the user's life); ongoing factual situations (jobs, residence, health, education) stated as fact.
+- **Preferences & intentions**: the user's likes/dislikes, wants, goals, plans (use explicit modals: `plans to`, `wants to`, `prefers`, `hopes`), opinions and evaluations.
+- **Social & identity**: who people are to the user (kinship, friends, colleagues), roles, household composition, stable relational labels stated as fact.
+
+## Salience filter (capture ONLY high-value memories)
+
+Keep a memory **only if** it is about **the user** or someone in the user's personal world (family, friends, colleagues they discuss), and is likely to matter in a later conversation.
+
+**Exclude:**
+- Facts about the **assistant** itself (the assistant's own experiences, plans, or opinions are not memories about the user).
+- Third-party encyclopedic lists or enumerations (e.g. "Company X has a large design team", lists of brands/products/places not tied to the user).
+- General world knowledge, trivia, history, science, or facts the speakers merely discuss in the abstract.
+- One-off transactional minutiae with no lasting relevance (small talk, filler, fleeting logistics).
+- Restatements of the same fact already captured.
+
+When in doubt, **omit**. Prefer a short, accurate list over an exhaustive one. It is correct for a chunk to yield `{"memories": []}` when it is pure noise.
+
+## Dialogue format
+
+- For `user:` / `assistant:` transcripts: rewrite first-person user mentions as `the user`; capture facts about the user. Use an `assistant:` turn only when it restates user-committed content (e.g. confirming a plan the user stated) — never record the assistant's own experiences or opinions.
+- For **named-speaker** lines (`Name: ...`): use **explicit names from the transcript** as subjects. Do **not** use `the user`, `the speaker`, `he`, `she`, `they`, or vague collectives. A subjective belief about another person should name whose belief it is (e.g. `Melinda believes that ...`).
+
+## Atomicity & faithfulness
+
+One memory = one proposition; split distinct facts and reasons. But do **not** explode a single tight enumeration into dozens of near-identical rows — if a list is not person-centered, drop it entirely (see salience filter). No fabrication; resolve coreference to names; questions/requests alone are not memories.
+
+Each item: plain declarative English sentence; no speaker tags inside the string.
+
+## Output
+
+Return **only**:
+
+```
+{"memories": ["<atomic fact 1>", ...]}
+```
+
+Use `{"memories": []}` if nothing salient applies.
+
+## Input
+
+[[ observation ]]

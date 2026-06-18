@@ -59,3 +59,29 @@ class RelationClassifierBackend:
                 return "IND"
         label = str(out.get("label", "")).strip().upper()
         return label if label in _VALID else "IND"
+
+
+# ---------------------------------------------------------------------------
+# 进程级共享单例
+#
+# 调用方（pipeline_meme_4phase）用 ThreadPoolExecutor 并发跑 N 个 episode，
+# 每个 episode 各建一个 MemorySystem。若每个 MemorySystem 各持一个 backend，
+# 首次 classify 时会各自把 Qwen3-0.6B backbone 加载进显存 → N 份 backbone
+# 同驻一卡直接 OOM。backbone 是只读前向、且 classify 全程持锁串行，
+# 故全进程共享一份即可（按 backbone_path/device 区分）。
+# ---------------------------------------------------------------------------
+_shared_lock = threading.Lock()
+_shared: dict = {}
+
+
+def get_shared_backend(backbone_path: Optional[str] = None,
+                       device: Optional[str] = None) -> "RelationClassifierBackend":
+    """返回按 (backbone_path, device) 缓存的进程级共享 backend 单例。"""
+    key = (backbone_path, device)
+    with _shared_lock:
+        inst = _shared.get(key)
+        if inst is None:
+            inst = RelationClassifierBackend(backbone_path=backbone_path,
+                                             device=device)
+            _shared[key] = inst
+        return inst

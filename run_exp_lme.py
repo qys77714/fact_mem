@@ -160,7 +160,7 @@ def stage_ingest(cfg: ExperimentConfig) -> None:
             if p.relation_user:
                 extra += ["--relation-user-template", p.relation_user]
             _run(base_args + extra)
-            _stage_fuse(cfg)
+            # relation_decision 现在灌库时就地融合答题记忆 C（同库），不再有独立的事后 fuse 阶段。
 
         elif method_name == "mem0":
             extra = [
@@ -183,36 +183,6 @@ def stage_ingest(cfg: ExperimentConfig) -> None:
                 "--evermemos-max-time-gap-days", method_cfg.max_time_gap_days,
             ]
             _run(base_args + extra)
-
-
-def _stage_fuse(cfg: ExperimentConfig) -> None:
-    """relation_decision 专用：关系包融合。"""
-    p = cfg.prompts
-    ec = cfg.parallel.ingest_episode_concurrency
-    fusion_model = cfg.methods.relation_decision.fusion_model or cfg.models.manager
-
-    _title(f"关系包融合 → {cfg.ingest_dir('relation_decision_fused')}")
-
-    args = [
-        _SRC / "pipeline" / "fuse_memory_bundles.py",
-        "--database-root", cfg.ingest_dir("relation_decision"),
-        "--fused-output-root", cfg.ingest_dir("relation_decision_fused"),
-        "--manager-model", fusion_model,
-        "--embedding-model", cfg.models.embedding,
-        "--language", cfg.extract.language,
-        "--fuse-max-new-tokens", cfg.token_limits.fusion_max_new_tokens,
-        "--episode-concurrency", ec.fusion_episodes,
-        "--package-concurrency", ec.fusion_packages,
-    ]
-    if p.fusion_bundle_en:
-        args += ["--fusion-bundle-template-en", p.fusion_bundle_en]
-    if p.fusion_bundle_zh:
-        args += ["--fusion-bundle-template-zh", p.fusion_bundle_zh]
-    if p.fusion_edge_labels_en:
-        args += ["--fusion-edge-labels-template-en", p.fusion_edge_labels_en]
-    if p.fusion_edge_labels_zh:
-        args += ["--fusion-edge-labels-template-zh", p.fusion_edge_labels_zh]
-    _run(args)
 
 
 def stage_generate(cfg: ExperimentConfig) -> None:
@@ -250,18 +220,20 @@ def stage_generate(cfg: ExperimentConfig) -> None:
     cfg.experiment_run_root.mkdir(parents=True, exist_ok=True)
 
     for method_name in methods:
-        # relation_decision uses fused DB
-        db_root = cfg.ingest_dir(
-            "relation_decision_fused" if method_name == "relation_decision" else method_name
-        )
+        # relation_decision：答题读灌库目录（同库），用 --answer-mode 只检索融合记忆 C + 孤立原子
+        db_root = cfg.ingest_dir(method_name)
         output = cfg.pred_file(method_name)
         trace_dir = cfg.experiment_run_root / "agent_trace" / method_name
 
         _title(f"生成预测: {method_name} → {output}")
 
+        method_args = list(common_args)
+        if method_name == "relation_decision":
+            method_args.append("--answer-mode")
+
         _run([
             _SRC / "pipeline_lme_generate.py",
-        ] + common_args + [
+        ] + method_args + [
             "--database_root", db_root,
             "--output", output,
             "--agent_trace_dir", trace_dir,

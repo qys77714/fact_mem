@@ -1,0 +1,30 @@
+# Task
+
+A lightweight classifier predicted that `NEW FACT` and `OLD FACT` are **semantically equivalent** (label `EQV`). Verify whether this is correct.
+
+- `OLD FACT`: an existing memory.
+- `NEW FACT`: a newly extracted candidate fact.
+
+## What counts as `EQV`
+
+`EQV` means the two facts have the **same truth conditions** — they say the same thing, possibly reworded. Each entails the other.
+
+- Example: OLD "the user works at Google." / NEW "the user is employed by Google." -> `EQV`.
+- Example: OLD "the user enjoys hiking." / NEW "the user likes to hike." -> `EQV`.
+
+## What does NOT count as `EQV` (reject -> `"correct": false`)
+
+- One fact is strictly more specific than the other (that is `OSN`/`NSO`, not `EQV`): OLD "the user has a pet." / NEW "the user has a golden retriever." -> reject.
+- The facts conflict (`CON`) -> reject.
+- The facts are merely related or about the same topic but not truth-conditionally identical -> reject.
+- Different aligned entity or attribute -> reject.
+
+## Decision
+
+- Confirm (`"correct": true`) only if the two facts genuinely have the same truth conditions (mutual entailment).
+- When in doubt, reject (`"correct": false`).
+
+## Output Format
+
+- Return a JSON object with exactly one key: `"correct"` (boolean).
+- Do not output extra keys, explanation, or prose.

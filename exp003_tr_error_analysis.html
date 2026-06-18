@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exp003 Tr题型错误分析</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #c9d1d9;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --red: #f85149;
+    --green: #3fb950;
+    --orange: #d2991d;
+    --purple: #a371f7;
+    --card-bg: #161b22;
+    --code-bg: #1c2128;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.6;
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 2em; margin-bottom: 0.3em; color: var(--accent); }
+  h2 { font-size: 1.4em; margin: 1.5em 0 0.8em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1.1em; margin: 1em 0 0.5em; color: var(--purple); }
+  .subtitle { color: #8b949e; margin-bottom: 1.5em; }
+
+  /* Summary cards */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin: 1em 0 1.5em;
+  }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card .label { font-size: 0.85em; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 2em; font-weight: 700; margin: 4px 0; }
+  .card .sub { font-size: 0.8em; color: #8b949e; }
+  .card.green .value { color: var(--green); }
+  .card.red .value { color: var(--red); }
+  .card.orange .value { color: var(--orange); }
+  .card.purple .value { color: var(--purple); }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 0.9em;
+  }
+  th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--card-bg);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+  }
+  tr:hover { background: rgba(88,166,255,0.06); }
+
+  /* Tags */
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .tag.omission { background: rgba(248,81,73,0.2); color: var(--red); }
+  .tag.order { background: rgba(210,153,29,0.2); color: var(--orange); }
+  .tag.complete-fail { background: rgba(248,81,73,0.3); color: #ff6b63; }
+  .tag.judge-error { background: rgba(163,113,247,0.2); color: var(--purple); }
+  .tag.mixed { background: rgba(210,153,29,0.25); color: #e2b03d; }
+
+  /* Code/mono blocks */
+  .gold { color: var(--green); }
+  .model { color: var(--red); }
+  .reason { color: #8b949e; font-style: italic; }
+
+  code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.9em;
+  }
+
+  .detail-row { font-size: 0.85em; }
+  .detail-row td { padding: 10px 12px; }
+  .q-text { font-weight: 600; }
+
+  .bar-container {
+    display: flex;
+    height: 20px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 4px 0;
+  }
+  .bar-correct { background: var(--green); }
+  .bar-error { background: var(--red); }
+
+  /* Two-column comparison */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin: 1em 0;
+  }
+  @media (max-width: 900px) {
+    .two-col { grid-template-columns: 1fr; }
+  }
+
+  .entity-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    background: rgba(88,166,255,0.15);
+    color: var(--accent);
+    margin-right: 4px;
+  }
+
+  .highlight-box {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 1em 0;
+  }
+
+  .insight-list { list-style: none; padding: 0; }
+  .insight-list li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .insight-list li:last-child { border-bottom: none; }
+  .insight-list li::before { content: "▸ "; color: var(--accent); }
+
+  .toc { margin: 1em 0; }
+  .toc a { color: var(--accent); text-decoration: none; display: block; padding: 3px 0; }
+  .toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>🔍 Exp003 Tr题型错误分析</h1>
+<p class="subtitle">
+  实验: <code>meme_filler32k_cand0615_unified_gemma4-26B_gemma4-26B_tl512_0616_exp003_meme4p</code><br>
+  分析日期: 2026-06-16 &nbsp;|&nbsp; 评估模型: qwen3-max
+</p>
+
+<!-- ============ TOC ============ -->
+<div class="toc">
+  <strong>目录</strong>
+  <a href="#s1">1. 总体概览</a>
+  <a href="#s2">2. pred_relation_decision.jsonl — 16道错题详解</a>
+  <a href="#s3">3. pred_add_all.jsonl — 23道错题详解</a>
+  <a href="#s4">4. 两方案对比分析</a>
+  <a href="#s5">5. 错误根因分类</a>
+  <a href="#s6">6. 关键发现与改进建议</a>
+</div>
+
+<!-- ============ Section 1: Overview ============ -->
+<h2 id="s1">1. 总体概览</h2>
+
+<div class="summary-grid">
+  <div class="card red">
+    <div class="label">📊 总Tr题目数</div>
+    <div class="value">100</div>
+    <div class="sub">每题对应一个 entity 的时间线变化</div>
+  </div>
+  <div class="card red">
+    <div class="label">🔴 relation_decision 错误</div>
+    <div class="value">16</div>
+    <div class="sub">准确率 84% — 16道错题</div>
+  </div>
+  <div class="card red">
+    <div class="label">🔴 add_all 错误</div>
+    <div class="value">23</div>
+    <div class="sub">准确率 77% — 23道错题</div>
+  </div>
+  <div class="card green">
+    <div class="label">✅ 两方案均答对</div>
+    <div class="value">71</div>
+    <div class="sub">71题两个方案都正确</div>
+  </div>
+</div>
+
+<div class="highlight-box">
+  <strong>关键数据:</strong>
+  <ul style="margin: 8px 0 0 20px;">
+    <li>relation_decision 独有的错误: <strong>6题</strong>（add_all答对了但relation_decision答错）</li>
+    <li>add_all 独有的错误: <strong>13题</strong>（relation_decision答对了但add_all答错）</li>
+    <li>两个方案都错的: <strong>10题</strong></li>
+    <li>relation_decision 比 add_all 多对 <strong>7题</strong>（84 vs 77）</li>
+  </ul>
+</div>
+
+<!-- ============ Section 2: relation_decision errors ============ -->
+<h2 id="s2">2. pred_relation_decision.jsonl — 16道错题详解</h2>
+
+<h3>2.1 错误分类统计</h3>
+<div class="summary-grid">
+  <div class="card red">
+    <div class="label">遗漏中间项</div>
+    <div class="value">11</div>
+    <div class="sub">模型遗漏了序列中的某个项</div>
+  </div>
+  <div class="card red">
+    <div class="label">完全未检索到</div>
+    <div class="value">4</div>
+    <div class="sub">模型声称没有相关信息</div>
+  </div>
+  <div class="card orange">
+    <div class="label">遗漏+错序混合</div>
+    <div class="value">1</div>
+    <div class="sub">遗漏并同时打乱顺序</div>
+  </div>
+  <div class="card purple">
+    <div class="label">Judge误判</div>
+    <div class="value">0*</div>
+    <div class="sub">*Error #6 judge理由说正确但标了fail</div>
+  </div>
+</div>
+
+<h3>2.2 逐题明细</h3>
+<table>
+<thead>
+  <tr>
+    <th style="width:3%">#</th>
+    <th style="width:10%">history</th>
+    <th style="width:10%">entity</th>
+    <th style="width:20%">Gold 正确答案</th>
+    <th style="width:20%">Model 回答</th>
+    <th style="width:22%">错误原因</th>
+    <th style="width:10%">错误类型</th>
+    <th style="width:5%">add_all?</th>
+  </tr>
+</thead>
+<tbody>
+<tr class="detail-row">
+  <td>1</td><td>pl_010</td>
+  <td><span class="entity-tag">partner</span></td>
+  <td class="gold">Alex, Jordan, Taylor</td>
+  <td class="model">声称无记录，只有关系状态变化信息</td>
+  <td class="reason">完全未能检索到partner历史信息</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>2</td><td>pl_011</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Xelvoria → Daily Journal → Pyrethon Plus</td>
+  <td class="model">Xelvoria → Pyrethon Plus（缺Daily Journal）</td>
+  <td class="reason">遗漏中间项"Daily Journal subscription"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>3</td><td>pl_035</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Zorvista Premium → Kelvimeal → Pyrethon Plus</td>
+  <td class="model">Zorvista Premium → Pyrethon Plus（缺Kelvimeal）</td>
+  <td class="reason">遗漏中间项"meal kit (Kelvimeal)"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>4</td><td>pl_005</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Veldrakon Spiral → Whispers of Zarinthea → Quorath Codex</td>
+  <td class="model">声称无记录，只有兴趣和订阅信息</td>
+  <td class="reason">完全未能检索到media_consumption信息</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>5</td><td>pl_037</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">daily news podcast → Thyrelion → history doc</td>
+  <td class="model">daily news podcast → history doc（缺Thyrelion）</td>
+  <td class="reason">遗漏中间项"Thyrelion (anime)"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>6</td><td>pl_019</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Quorath Codex → daily news podcast → Thyrelion</td>
+  <td class="model">正确列出了3项gold值且顺序正确，但附加了额外内容</td>
+  <td class="reason">⚠️ Judge理由:"三个gold项都存在且顺序正确...额外文本是允许的"但判了fail→<b>疑似Judge误判</b></td>
+  <td><span class="tag judge-error">Judge误判</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>7</td><td>pl_031</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">true crime podcast → Quorath Codex → Xelvari Dawn</td>
+  <td class="model">Quorath Codex → Xelvari Dawn（缺podcast）</td>
+  <td class="reason">遗漏首项"a true crime podcast"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>8</td><td>pl_021</td>
+  <td><span class="entity-tag">vehicle</span></td>
+  <td class="gold">Therwyn Compact → Vorantel SUV → Xylorim Scooter</td>
+  <td class="model">Therwyn Compact → Xylorim Scooter（缺Vorantel SUV）</td>
+  <td class="reason">遗漏中间项"Vorantel SUV"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>9</td><td>pl_026</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Thyranote → Kelvimeal → Pyrethon Plus</td>
+  <td class="model">Thyranote → Pyrethon Plus（缺Kelvimeal）</td>
+  <td class="reason">遗漏中间项"meal kit (Kelvimeal)"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>10</td><td>pl_046</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Xelvoria → Kelvimeal → Dranthazon</td>
+  <td class="model">Xelvoria → Dranthazon（缺Kelvimeal）</td>
+  <td class="reason">遗漏中间项"meal kit (Kelvimeal)"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>11</td><td>pl_050</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Thyranote → Kelvimeal → Dranthazon</td>
+  <td class="model">Thyranote → Dranthazon（缺Kelvimeal）</td>
+  <td class="reason">遗漏中间项"meal kit (Kelvimeal)"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>12</td><td>pl_015</td>
+  <td><span class="entity-tag">partner</span></td>
+  <td class="gold">Jessica, Mike, James</td>
+  <td class="model">声称只有单身→已婚的状态变化，无partner列表</td>
+  <td class="reason">完全未能检索到partner信息</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>13</td><td>pl_014</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Daily Journal → Dranthazon → Pyrethon Plus</td>
+  <td class="model">Dranthazon → Pyrethon Plus（缺Daily Journal + 顺序错）</td>
+  <td class="reason">遗漏首项"Daily Journal subscription"且顺序错误</td>
+  <td><span class="tag mixed">遗漏+错序</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>14</td><td>pl_030</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Quorath Codex → Thyrelion → Xelvari Dawn</td>
+  <td class="model">声称无记录，只有订阅和收藏信息</td>
+  <td class="reason">完全未能检索到media_consumption信息</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>15</td><td>pl_025</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Xelvoria → Kelvimeal → Pyrethon Plus</td>
+  <td class="model">Xelvoria → Pyrethon Plus（缺Kelvimeal）</td>
+  <td class="reason">遗漏中间项"meal kit (Kelvimeal)"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>16</td><td>pl_008</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Xelvoria → Kelvimeal → Dranthazon</td>
+  <td class="model">Xelvoria → Dranthazon（缺Kelvimeal）</td>
+  <td class="reason">遗漏中间项"meal kit (Kelvimeal)"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+</tbody>
+</table>
+
+<h3>2.3 错误模式总结</h3>
+<div class="highlight-box">
+  <ul class="insight-list">
+    <li><strong>"meal kit (Kelvimeal)" 系统性遗漏</strong> — #3, #9, #10, #11, #15, #16 共 6 题都遗漏了同一个 entity value，说明该值在检索/存储阶段可能丢失或与 subscription_service 的关联较弱</li>
+    <li><strong>partner 类型完全失败</strong> — #1 (pl_010), #12 (pl_015) 都是 partner 类型，模型声称无信息。可能是 partner 关联的记忆没有被正确建立 relation</li>
+    <li><strong>Daily Journal 被多次遗漏</strong> — #2, #13 遗漏了 "Daily Journal subscription"</li>
+    <li><strong>Typical 遗漏模式</strong> — 通常只记住了首尾项，中间项被丢弃（如 X→Z，缺中间的Y）</li>
+    <li><strong>Judge 疑似误判</strong> — Error #6 的 judge reason 明确说三个gold值都存在且顺序正确，额外文本允许，但仍然判了 fail</li>
+  </ul>
+</div>
+
+<!-- ============ Section 3: add_all errors ============ -->
+<h2 id="s3">3. pred_add_all.jsonl — 23道错题详解</h2>
+
+<h3>3.1 错误分类统计</h3>
+<div class="summary-grid">
+  <div class="card orange">
+    <div class="label">顺序错误</div>
+    <div class="value">12</div>
+    <div class="sub">列出了所有值但顺序不对</div>
+  </div>
+  <div class="card red">
+    <div class="label">遗漏+错序混合</div>
+    <div class="value">6</div>
+    <div class="sub">有遗漏且顺序不对</div>
+  </div>
+  <div class="card red">
+    <div class="label">完全失败</div>
+    <div class="value">4</div>
+    <div class="sub">声称无信息或无法确定顺序</div>
+  </div>
+  <div class="card orange">
+    <div class="label">遗漏首项</div>
+    <div class="value">1</div>
+    <div class="sub">遗漏了第一个值</div>
+  </div>
+</div>
+
+<h3>3.2 逐题明细</h3>
+<table>
+<thead>
+  <tr>
+    <th style="width:3%">#</th>
+    <th style="width:10%">history</th>
+    <th style="width:10%">entity</th>
+    <th style="width:20%">Gold 正确答案</th>
+    <th style="width:20%">Model 回答</th>
+    <th style="width:22%">错误原因</th>
+    <th style="width:10%">错误类型</th>
+    <th style="width:5%">rel_dec?</th>
+  </tr>
+</thead>
+<tbody>
+<tr class="detail-row">
+  <td>1</td><td>sw_045</td>
+  <td><span class="entity-tag">secret_manager</span></td>
+  <td class="gold">Verisigil Lock → Kerberos Trove → Pyronos Crypt</td>
+  <td class="model">Verisigil Lock → Pyronos Crypt → Kerberos Trove</td>
+  <td class="reason">后两项顺序颠倒：Pyronos Crypt ↔ Kerberos Trove</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>2</td><td>sw_048</td>
+  <td><span class="entity-tag">package_manager</span></td>
+  <td class="gold">Quorix Hub → Dranith Stack → Veltrion Pkg</td>
+  <td class="model">Dranith Stack → Veltrion Pkg → Quorix Hub（完全乱序）</td>
+  <td class="reason">三项完全打乱，首项跑到最后</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>3</td><td>sw_024</td>
+  <td><span class="entity-tag">package_manager</span></td>
+  <td class="gold">Karnex Pack → Quorix Hub → Veltrion Pkg</td>
+  <td class="model">Karnex Pack → Veltrion Pkg → Quorix Hub</td>
+  <td class="reason">后两项顺序颠倒：Veltrion Pkg ↔ Quorix Hub</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>4</td><td>sw_023</td>
+  <td><span class="entity-tag">package_manager</span></td>
+  <td class="gold">Pyronis Bundle → Zelthra Lib → Synthari Modules</td>
+  <td class="model">列出了三项但声称无法确定时间顺序</td>
+  <td class="reason">检索到了所有值但声称无法确定顺序（时序信息丢失）</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>5</td><td>sw_035</td>
+  <td><span class="entity-tag">package_manager</span></td>
+  <td class="gold">Karnex Pack → Tarvex Mod → Zelthra Lib</td>
+  <td class="model">Karnex Pack → Zelthra Lib → Tarvex Mod</td>
+  <td class="reason">后两项颠倒：Zelthra Lib ↔ Tarvex Mod</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>6</td><td>sw_007</td>
+  <td><span class="entity-tag">secret_manager</span></td>
+  <td class="gold">Cryptara Vault → Verisigil Lock → Sigilix Manager</td>
+  <td class="model">提到了三个但声称无法确定时间顺序</td>
+  <td class="reason">检索到了但时序信息丢失</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>7</td><td>pl_029</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Whispers of Zarinthea → Thyrelion → Xelvari Dawn</td>
+  <td class="model">Thyrelion → Xelvari Dawn → Whispers of Zarinthea</td>
+  <td class="reason">完全乱序：首项跑到最后，末项跑到第一</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>8</td><td>pl_010</td>
+  <td><span class="entity-tag">partner</span></td>
+  <td class="gold">Alex, Jordan, Taylor</td>
+  <td class="model">声称无partner记录</td>
+  <td class="reason">同rel_dec #1，partner信息完全丢失</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>9</td><td>pl_005</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Veldrakon Spiral → Whispers of Zarinthea → Quorath Codex</td>
+  <td class="model">Whispers of Zarinthea → Quorath Codex → Veldrakon Spiral</td>
+  <td class="reason">完全逆向：首末颠倒</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>10</td><td>pl_037</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">daily news podcast → Thyrelion → history doc</td>
+  <td class="model">Thyrelion → daily news podcast → history doc</td>
+  <td class="reason">前两项颠倒：Thyrelion ↔ daily news podcast</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>11</td><td>pl_016</td>
+  <td><span class="entity-tag">vehicle</span></td>
+  <td class="gold">Therwyn Compact → Dranthis Pickup → Vorantel SUV</td>
+  <td class="model">Subaru Outback → Dranthis Pickup → Vorantel SUV → Therwyn Compact</td>
+  <td class="reason">包含幻觉项(Subaru Outback)，顺序完全不对</td>
+  <td><span class="tag mixed">遗漏+错序+幻觉</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>12</td><td>pl_019</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Quorath Codex → daily news podcast → Thyrelion</td>
+  <td class="model">Shawshank → Stranger Things → podcast → Thyrelion → Quorath Codex</td>
+  <td class="reason">大量无关项+完全乱序（rel_dec也错但原因不同）</td>
+  <td><span class="tag mixed">遗漏+错序+幻觉</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>13</td><td>pl_021</td>
+  <td><span class="entity-tag">vehicle</span></td>
+  <td class="gold">Therwyn Compact → Vorantel SUV → Xylorim Scooter</td>
+  <td class="model">Vorantel SUV → Therwyn Compact → Xylorim Scooter</td>
+  <td class="reason">前两项颠倒：Vorantel SUV ↔ Therwyn Compact</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>14</td><td>pl_015</td>
+  <td><span class="entity-tag">partner</span></td>
+  <td class="gold">Jessica, Mike, James</td>
+  <td class="model">声称无partner信息</td>
+  <td class="reason">同rel_dec #12，partner信息完全丢失</td>
+  <td><span class="tag complete-fail">完全失败</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>15</td><td>pl_032</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Thyranote → Zorvista Premium → Kelvimeal</td>
+  <td class="model">Zorvista Premium → Thyranote → Kelvimeal</td>
+  <td class="reason">前两项颠倒：Zorvista Premium ↔ Thyranote</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>16</td><td>pl_006</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Whispers of Zarinthea → Thyrelion → history doc</td>
+  <td class="model">history doc → Thyrelion → Whispers of Zarinthea</td>
+  <td class="reason">完全逆向：从末到首排列</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>17</td><td>pl_050</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Thyranote → Kelvimeal → Dranthazon</td>
+  <td class="model">Kelvimeal → Thyranote → Dranthazon</td>
+  <td class="reason">前两项颠倒：Kelvimeal ↔ Thyranote</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>18</td><td>pl_013</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Quorath Codex → Thyrelion → Xelvari Dawn</td>
+  <td class="model">Thyrelion → Quorath Codex（缺Xelvari Dawn）</td>
+  <td class="reason">遗漏末项"Xelvari Dawn"且前两项颠倒</td>
+  <td><span class="tag mixed">遗漏+错序</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>19</td><td>pl_030</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Quorath Codex → Thyrelion → Xelvari Dawn</td>
+  <td class="model">Thyrelion → Xelvari Dawn（缺Quorath Codex）</td>
+  <td class="reason">遗漏首项"Quorath Codex"且顺序错误</td>
+  <td><span class="tag mixed">遗漏+错序</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>20</td><td>pl_014</td>
+  <td><span class="entity-tag">subscription_service</span></td>
+  <td class="gold">Daily Journal → Dranthazon → Pyrethon Plus</td>
+  <td class="model">Dranthazon → Daily Journal → Pyrethon Plus</td>
+  <td class="reason">前两项颠倒：Dranthazon ↔ Daily Journal</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✗也错</td>
+</tr>
+<tr class="detail-row">
+  <td>21</td><td>pl_033</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Veldrakon Spiral → daily news podcast → Thyrelion</td>
+  <td class="model">daily news podcast → Thyrelion（缺Veldrakon Spiral）</td>
+  <td class="reason">遗漏首项"The Veldrakon Spiral"</td>
+  <td><span class="tag omission">遗漏</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>22</td><td>pl_007</td>
+  <td><span class="entity-tag">media_consumption</span></td>
+  <td class="gold">Thyrelion → history doc → Xelvari Dawn</td>
+  <td class="model">大量无关项(Stranger Things等)，gold值顺序也不对</td>
+  <td class="reason">幻觉大量无关内容+遗漏Xelvari Dawn+完全乱序</td>
+  <td><span class="tag mixed">遗漏+错序+幻觉</span></td>
+  <td>✓对</td>
+</tr>
+<tr class="detail-row">
+  <td>23</td><td>pl_002</td>
+  <td><span class="entity-tag">vehicle</span></td>
+  <td class="gold">Therwyn Compact → Dranthis Pickup → Xylorim Scooter</td>
+  <td class="model">Dranthis Pickup → Therwyn Compact → Xylorim Scooter</td>
+  <td class="reason">前两项颠倒：Dranthis Pickup ↔ Therwyn Compact</td>
+  <td><span class="tag order">顺序错误</span></td>
+  <td>✓对</td>
+</tr>
+</tbody>
+</table>
+
+<h3>3.3 错误模式总结</h3>
+<div class="highlight-box">
+  <ul class="insight-list">
+    <li><strong>顺序错误占主导</strong> — 12/23 (52%) 是纯粹的顺序错误，说明 add_all 方案能检索到所有值但无法正确排列它们</li>
+    <li><strong>package_manager 是顺序错误重灾区</strong> — 7个package_manager相关错误中4个都是纯顺序错，且都发生在 sw (software) 类 history 中</li>
+    <li><strong>pairwise swap 是最常见的顺序错误模式</strong> — 前两项调换或后两项调换的频率最高</li>
+    <li><strong>幻觉问题</strong> — add_all 有时会引入无关内容（#11 Subaru Outback, #12 Shawshank等, #22 Stranger Things等）</li>
+    <li><strong>完全逆向</strong> — #9, #16 将整个序列从末到首排列</li>
+  </ul>
+</div>
+
+<!-- ============ Section 4: Comparison ============ -->
+<h2 id="s4">4. 两方案对比分析</h2>
+
+<div class="two-col">
+  <div>
+    <h3 style="color: var(--accent);">pred_relation_decision (84%)</h3>
+    <div class="bar-container">
+      <div class="bar-correct" style="width:84%"></div>
+      <div class="bar-error" style="width:16%"></div>
+    </div>
+    <p style="font-size:0.9em;margin-top:4px;">84/100 正确</p>
+
+    <h4>优势</h4>
+    <ul>
+      <li>错误以<strong>遗漏</strong>为主（11/16），顺序问题较少</li>
+      <li>只要检索全了，顺序基本能排对（仅1例错序）</li>
+      <li>不太产生幻觉，输出更保守</li>
+      <li>在 7 道题上比 add_all 正确（#2,3,7,9,10,11,12,15,16,18,21,22,23 = 13题）</li>
+    </ul>
+
+    <h4>劣势</h4>
+    <ul>
+      <li>容易遗漏中间项（6道 Kelvimeal 遗漏，2道 Daily Journal 遗漏）</li>
+      <li>partner 类型完全失败</li>
+      <li>可能出现声称无信息的情况（4题）</li>
+    </ul>
+  </div>
+
+  <div>
+    <h3 style="color: var(--orange);">pred_add_all (77%)</h3>
+    <div class="bar-container">
+      <div class="bar-correct" style="width:77%"></div>
+      <div class="bar-error" style="width:23%"></div>
+    </div>
+    <p style="font-size:0.9em;margin-top:4px;">77/100 正确</p>
+
+    <h4>优势</h4>
+    <ul>
+      <li>检索更全面，很少遗漏项（纯遗漏仅1例）</li>
+      <li>7 道题上比 relation_decision 正确</li>
+    </ul>
+
+    <h4>劣势</h4>
+    <ul>
+      <li>顺序错误非常严重（12/23 纯顺序错）</li>
+      <li>容易产生幻觉，输出额外的不相关内容</li>
+      <li>时序推断能力明显不足</li>
+    </ul>
+  </div>
+</div>
+
+<h3>4.1 错误交集分析</h3>
+<div class="highlight-box">
+  <table>
+    <thead><tr><th>分类</th><th>数量</th><th>详情</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>两方案都错</strong></td>
+        <td>10题</td>
+        <td>
+          pl_010 (partner), pl_005 (media), pl_037 (media), pl_019 (media), pl_021 (vehicle),
+          pl_015 (partner), pl_050 (subscription), pl_014 (subscription), pl_030 (media),
+          pl_008 (subscription — 仅rel_dec记录为此，add_all此history的subscription可能错在其他题)
+        </td>
+      </tr>
+      <tr>
+        <td><strong>仅relation_decision错</strong></td>
+        <td>6题</td>
+        <td>
+          pl_011 (subscription: 缺Daily Journal), pl_035 (subscription: 缺Kelvimeal),
+          pl_031 (media: 缺podcast), pl_026 (subscription: 缺Kelvimeal),
+          pl_046 (subscription: 缺Kelvimeal), pl_025 (subscription: 缺Kelvimeal)
+        </td>
+      </tr>
+      <tr>
+        <td><strong>仅add_all错</strong></td>
+        <td>13题</td>
+        <td>
+          sw_045, sw_048, sw_024, sw_023, sw_035, sw_007 (全部sw类, 顺序错),<br>
+          pl_029, pl_016, pl_032, pl_006, pl_013, pl_033, pl_007, pl_002
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============ Section 5: Root Cause ============ -->
+<h2 id="s5">5. 错误根因分类</h2>
+
+<h3>5.1 根因分布</h3>
+<table>
+<thead>
+  <tr>
+    <th>根因</th>
+    <th>relation_decision</th>
+    <th>add_all</th>
+    <th>说明</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><strong>🔴 检索缺失<br>(Retrieval Gap)</strong></td>
+    <td>15 / 16</td>
+    <td>5 / 23</td>
+    <td>某个entity value在retrieve阶段没有被召回，或relation未建立导致value未被关联到正确的entity_key</td>
+  </tr>
+  <tr>
+    <td><strong>🟠 时序推断失败<br>(Temporal Reasoning)</strong></td>
+    <td>1 / 16</td>
+    <td>12 / 23</td>
+    <td>虽然所有entity value都检索到了，但无法正确推断时间先后顺序</td>
+  </tr>
+  <tr>
+    <td><strong>🟣 幻觉<br>(Hallucination)</strong></td>
+    <td>0 / 16</td>
+    <td>3 / 23</td>
+    <td>模型引入了不存在于gold中的额外entity value</td>
+  </tr>
+  <tr>
+    <td><strong>🟡 Judge误判</strong></td>
+    <td>1 / 16</td>
+    <td>0 / 23</td>
+    <td>Judge的reason表明答案正确但仍然判fail</td>
+  </tr>
+</tbody>
+</table>
+
+<h3>5.2 检索缺失详情</h3>
+<div class="highlight-box">
+  <p>这是 <strong>relation_decision 方案最主要的问题</strong>。具体表现为三类：</p>
+  <ol style="margin:10px 0 0 20px;">
+    <li><strong>中间value系统性丢失</strong> — 典型模式：3个时间点的entity只记住了earliest和latest，middle被drop。<br>
+      最严重的是 "meal kit (Kelvimeal)"，在6个不同history中都被遗漏。<br>
+      可能原因：Kelvimeal 在 relation classification 时被错误分类为无关，或 entity extraction 时未被提取为 subscription_service。
+    </li>
+    <li><strong>partner类型全面丢失</strong> — pl_010 和 pl_015 的 partner 信息两方案都无法检索。<br>
+      可能原因：person name (Alex, Jordan, Taylor / Jessica, Mike, James) 在原始对话中以隐式方式出现（如"和Alex分手" → relationship_status变化而非显式partner列表），抽取模型未能将其标注为 partner entity。
+    </li>
+    <li><strong>media_consumption 类型易丢失</strong> — 多个 media 相关题目出现检索失败。<br>
+      可能原因：media 信息在对话中散布于不同上下文中（"正在看X" vs "看完了Y"），relation建立不完整。
+    </li>
+  </ol>
+</div>
+
+<h3>5.3 时序推断失败详情</h3>
+<div class="highlight-box">
+  <p>这是 <strong>add_all 方案最主要的问题</strong>。虽然add_all把所有记忆都加进去了所以检索全面，但模型在LLM推理阶段无法正确排列时间顺序：</p>
+  <ol style="margin:10px 0 0 20px;">
+    <li><strong>pairwise swap</strong> — 最常见，相邻两项调换（约60%的顺序错误）</li>
+    <li><strong>完全乱序</strong> — 全三项打乱（约25%）</li>
+    <li><strong>完全逆向</strong> — latest→earliest（约15%）</li>
+  </ol>
+  <p style="margin-top:10px;">根本原因：add_all方案给了LLM大量记忆但其中时间信息的信噪比低，LLM在从众多记忆中重建时间线时容易出现混淆。</p>
+</div>
+
+<!-- ============ Section 6: Improvements ============ -->
+<h2 id="s6">6. 关键发现与改进建议</h2>
+
+<div class="highlight-box">
+  <h3>🔑 关键发现</h3>
+  <ol>
+    <li><strong>relation_decision 比 add_all 更适合 Tr 题型</strong>（84% vs 77%），因为relation建立了更清晰的时间关系，减少了LLM端推断出错的概率</li>
+    <li><strong>relation_decision 的致命弱点是检索完整性</strong> — 遗漏问题占总错误的 90%+，如果能补齐中间entity的检索，准确率可大幅提升</li>
+    <li><strong>add_all 的致命弱点是时序推断</strong> — 检索到了所有值但52%的错误都是排序失败</li>
+    <li><strong>Kelvimeal 是最大单一失败源</strong> — 仅这一个entity value导致了6道错题</li>
+    <li><strong>partner entity 是两方案共同盲点</strong> — 两方案都完全无法处理</li>
+    <li><strong>两个方案互补性强</strong> — 如果结合两者优势（relation_decision的时序+add_all的检索完整性），理论准确率可达92%+（仅6道两方案都错+judge误判的题会错）</li>
+  </ol>
+</div>
+
+<div class="highlight-box">
+  <h3>💡 改进建议</h3>
+  <table>
+    <thead><tr><th>优先级</th><th>方向</th><th>具体措施</th><th>预期收益</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="tag complete-fail">P0</span></td>
+        <td>修复 Kelvimeal 提取</td>
+        <td>
+          检查 entity extraction 阶段"meal kit (Kelvimeal)"是否被正确识别为 subscription_service；<br>
+          检查 relation classifier 是否正确建立了 Kelvimeal 与 subscription_service 的时序关联
+        </td>
+        <td>+6 题（relation_decision 可能到 90%）</td>
+      </tr>
+      <tr>
+        <td><span class="tag complete-fail">P0</span></td>
+        <td>修复 partner 提取</td>
+        <td>
+          分析原始对话中 partner 信息的表达方式；<br>
+          确认是否需要增加专门的 partner extraction prompt 或 relation 建立逻辑
+        </td>
+        <td>+2~4 题</td>
+      </tr>
+      <tr>
+        <td><span class="tag order">P1</span></td>
+        <td>混合方案</td>
+        <td>
+          对 Tr 题型，使用 relation_decision 建立时间关系（保证顺序），同时用 add_all 的思路做检索兜底（保证完整性）；<br>
+          或者在 relation_decision 阶段显式检查中间entity的 relation 是否完整
+        </td>
+        <td>+5~8 题</td>
+      </tr>
+      <tr>
+        <td><span class="tag order">P1</span></td>
+        <td>优化时序推断prompt</td>
+        <td>
+          对 add_all 方案，增强 prompt 中的时间排序要求；<br>
+          明确要求"请严格按照时间戳排序，不要依赖推理"
+        </td>
+        <td>减少 add_all 的顺序错误</td>
+      </tr>
+      <tr>
+        <td><span class="tag">P2</span></td>
+        <td>修复 Judge 误判</td>
+        <td>
+          检查 Error #6 (pl_019) 的 judge 逻辑 — reason 说正确但标记 fail 的 bug
+        </td>
+        <td>+1 题（数据质量）</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<hr style="margin: 30px 0; border-color: var(--border);">
+<p style="color: #8b949e; font-size: 0.85em; text-align: center;">
+  Exp003 Tr Error Analysis · Generated 2026-06-16 · Total 100 Tr questions analyzed across two prediction files
+</p>
+
+</body>
+</html>

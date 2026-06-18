@@ -124,6 +124,57 @@ def build_evidence_gold_chunk_fields(
     }
 
 
+def merge_cas_rule_into_text(text: str, cas_rule: Optional[str]) -> str:
+    """Re-attach a parallel cas_update_rule onto the primary text (inverse of split).
+
+    Baselines (mem0/zep) only read ``candidate_memories`` and never see the parallel
+    ``cas_update_rules`` column. To keep the input information identical across all
+    methods, fold the condition back into the text with the same ``" — "`` separator
+    that ``split_golden_memory`` uses. Ours still consumes the structured column.
+    """
+    base = (text or "").strip()
+    rule = (cas_rule or "").strip()
+    if not rule:
+        return base
+    if not base:
+        return rule
+    if rule in base:
+        return base
+    return f"{base.rstrip('.')} — {rule}"
+
+
+def merged_candidate_texts(chunk: Dict[str, Any]) -> List[str]:
+    """Return chunk's candidate_memories as plain strings with cas_update_rules folded in.
+
+    Used by baselines so they receive the same information ours gets via the parallel
+    ``cas_update_rules`` column. Order and indexing match ``candidate_memories``.
+    """
+    mems = chunk.get("candidate_memories") or []
+    if not isinstance(mems, list):
+        return []
+    rules = chunk.get("cas_update_rules")
+    out: List[str] = []
+    for i, m in enumerate(mems):
+        text = candidate_memory_display_text(m).strip()
+        if not text:
+            continue
+        rule = rules[i] if isinstance(rules, list) and i < len(rules) else None
+        out.append(merge_cas_rule_into_text(text, rule))
+    return out
+
+
+def chunk_with_merged_candidates(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    """Shallow chunk copy whose ``candidate_memories`` have cas_update_rules folded in.
+
+    The ``cas_update_rules`` column is dropped so downstream baseline code cannot
+    accidentally read it; ours never goes through this path.
+    """
+    merged = dict(chunk)
+    merged["candidate_memories"] = merged_candidate_texts(chunk)
+    merged.pop("cas_update_rules", None)
+    return merged
+
+
 def text_mentions_exercise_routine(text: str) -> bool:
     return "exercise routine" in text.lower()
 

@@ -4,7 +4,7 @@
 labels: [IND, EQV, OSN, NSO, CON]
 
 # 特征抽取（须与训练一致）
-max_length: 256
+max_length: 192        # 精简 prefix 后(2026/06/16),须与 train_en/config.yaml 一致
 extract_batch_size: 64
 dtype: bfloat16
 

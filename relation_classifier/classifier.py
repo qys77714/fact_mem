@@ -22,9 +22,24 @@ ID2LABEL = {i: l for i, l in enumerate(LABELS)}
 DEFAULT_BACKBONE = "/mnt/data_oss/models/Qwen3-0.6B"
 
 
+# 五类定义前缀:与 train_en/dataset.py 的 RELATION_DEF 必须逐字一致。
+# 2026/06/16 已从67行长定义缩到一句话五类(max_length 1152→192)。
+# 改这里就会线上线下不一致——训练时带此前缀抽特征,推理也必须带。
+RELATION_DEF = (
+    "Decide the logical relation between two atomic memory statements 'old' and 'new', "
+    "both describing the SAME user's CURRENT state. Choose exactly one of five classes:\n"
+    "- IND (Independent): both facts can hold at once (different or accumulable things).\n"
+    "- EQV (Equivalent): same core fact, only wording differs.\n"
+    "- OSN (new contains old): new adds specific verifiable info that old lacks.\n"
+    "- NSO (old contains new): old adds specific verifiable info that new lacks.\n"
+    "- CON (Contradiction): mutually exclusive values of one single-valued attribute "
+    "(changing job/home counts as CON)."
+)
+
+
 def format_pair(old: str, new: str) -> str:
-    """与训练完全一致的输入拼接。改这里就会线上线下不一致。"""
-    return f"old: {old}\nnew: {new}"
+    """与训练完全一致的输入拼接（含 RELATION_DEF 前缀）。改这里就会线上线下不一致。"""
+    return f"{RELATION_DEF}\n\nold: {old}\nnew: {new}"
 
 
 def gather_last_token(hidden, attention_mask):

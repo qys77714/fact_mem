@@ -196,6 +196,10 @@ def stage_run(cfg: MemeExperimentConfig) -> None:
                 method_args.append("--deletion-enabled")
             else:
                 method_args.append("--no-deletion-enabled")
+            if getattr(method_cfg, "topic_aggregation_enabled", True):
+                method_args.append("--topic-aggregation")
+            else:
+                method_args.append("--no-topic-aggregation")
             method_args += [
                 "--condition-sim-threshold", getattr(method_cfg, "condition_sim_threshold", 0.5),
                 "--pairwise-sim-threshold", getattr(method_cfg, "pairwise_sim_threshold", 0.7),

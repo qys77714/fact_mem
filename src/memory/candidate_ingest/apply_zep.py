@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from memory.zep import ZepMemorySystem
 
 from .apply import _sorted_chunks, load_candidate_json
+from .cas_update import chunk_with_merged_candidates
 
 
 def apply_candidate_episode_zep(
@@ -30,6 +31,9 @@ def apply_candidate_episode_zep(
         raise ValueError("candidate json: missing history_name")
 
     sorted_c = _sorted_chunks(payload)
+    # Fold cas_update_rules back into candidate_memories so zep sees the same
+    # information ours consumes via the parallel column (input parity across methods).
+    sorted_c = [chunk_with_merged_candidates(c) for c in sorted_c]
 
     trace = memory.trace.get_logger_for(history_name)
     ep_scope = trace.create_scope(

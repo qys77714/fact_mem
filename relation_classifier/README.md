@@ -1,6 +1,6 @@
 # relation_classifier
 
-原子化记忆关系五分类器（IND/EQV/OSN/NSO/CON）的可交付推理包。冻结 Qwen3-0.6B + 线性探测头，test Macro F1 ≈ 0.936。
+原子化记忆关系五分类器（IND/EQV/OSN/NSO/CON）的可交付推理包。冻结 Qwen3-0.6B + 线性探测头，test Macro F1 ≈ 0.953。
 
 **给 agent / 集成方看的完整说明在 [`AGENT.md`](AGENT.md)。**
 

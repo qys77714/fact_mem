@@ -4,24 +4,22 @@
 
 experiment:
   benchmark: lme_s        # lme_o / lme_s / lme_m / meme_filler32k / meme_nofiller / ...
-  suffix: exp001          # 实验版本标签（区分同一 benchmark 的多次运行）
+  suffix: exp002          # 实验版本标签（区分同一 benchmark 的多次运行）
 
 models:
   extract: gemma4-26B               # 候选记忆抽取 LLM
-  manager: gemma4-e2b                 # 灌库管理 LLM（relation_decision / mem0 / zep / amac / evermemos）
-  answer: gemma4-e2b                # 答题 LLM
+  manager: gemma4-26B               # 灌库管理 LLM（relation_decision / mem0 / zep / amac / evermemos）
+  answer: gemma4-26B                # 答题 LLM
   judge: qwen3-max                  # LLM Judge
   embedding: qwen3-embedding-0.6b     # Embedding 模型
 
 extract:
-  candidate_suffix: 0507_as3  # 候选版本标签（改抽取策略时同步更改，避免沿用旧 state 跳过 episode）
+  candidate_suffix: 0615_unified  # 候选版本标签（改抽取策略时同步更改，避免沿用旧 state 跳过 episode）
   granularity: 4              # 每 N turn 一个 chunk（"all" = 整个 session 一个 chunk）
   turn_overlap: 0             # 相邻 chunk 共享 turn 数（须小于 granularity）
   language: en                # 提示语言：en / zh（改语言时同步换下方 _zh 版本模板）
-  aspect_templates:           # 三方面抽取模板：每方面独立 LLM 调用，结果合并
-    - "0_mem_extract_aspect_events_en.jinja"
-    - "0_mem_extract_aspect_preferences_en.jinja"
-    - "0_mem_extract_aspect_social_en.jinja"
+  aspect_templates:           # 单 pass 统一抽取（与 MEME 对齐：events+preferences+social 合并，含 user 中心显著性过滤）
+    - "0_mem_extract_aspect_unified_en.jinja"
 
 methods:
   # 在此控制运行哪些灌库方法；方法特定超参在各子节设置。
@@ -43,8 +41,13 @@ methods:
 
   relation_decision:
     enabled: true
-    related_top_k: 1          # 每条新事实 dense 检索已有记忆条数
-    fusion_model: ""          # 关系包融合 LLM（空 = 与 models.manager 相同）
+    related_top_k: 3
+    fusion_model: ""
+    cascade_enabled: false
+    deletion_enabled: false
+    topic_aggregation_enabled: false
+    condition_sim_threshold: 0.5
+    pairwise_sim_threshold: 0.5
 
   mem0:
     enabled: false
@@ -61,7 +64,7 @@ generate:
   memory_token_limit: 512            # 传入 Agent 的记忆 token 上限
   answer_stratified_sample: 500      # 分层抽样题数（0 = 全量；MEME 自动设为 0）
   answer_sample_seed: 43
-  show_memory_time: false            # true = 召回记忆展示时间戳
+  show_memory_time: true             # true = 召回记忆展示时间戳
 
   hybrid:                            # BM25 + dense 混合检索
     enabled: true
@@ -76,7 +79,7 @@ evaluate:
 
 parallel:
   extract_chunk_concurrency: 100
-  ingest_relation_concurrency: 10    # relation_decision：单 episode 内并发比较的 relation pair 数
+  ingest_relation_concurrency: 50    # relation_decision：单 episode 内并发比较的 relation pair 数
   ingest_episode_concurrency:        # 各方法 episode 间并发
     relation_decision: 100
     mem0: 50
@@ -88,14 +91,14 @@ parallel:
     fusion_packages: 10              # relation_decision 专用：关系包融合 package 并发
   generate_parallel_episodes: 100
   generate_answer_concurrency: 2
-  evaluate_max_concurrency: 5
+  evaluate_max_concurrency: 8
 
 token_limits:
   extract_max_new_tokens: 2048
   ingest_relation_max_new_tokens: 256
   ingest_manager_max_new_tokens: 2048
   fusion_max_new_tokens: 512
-  evaluate_max_new_tokens: 2048
+  evaluate_max_new_tokens: 512
 
 debug:
   evaluate_print_one_sample: false
@@ -107,10 +110,10 @@ prompts:
   relation_system_zh: "lme_relation_classification_system_zh_v2.jinja"
   relation_user: "lme_relation_classification_user.jinja"
   # --- fuse（relation_decision 专用）---
-  fusion_bundle_en: "lme_fuse_memory_bundle_en_v3.jinja"
+  fusion_bundle_en: "fuse_memory_bundle_en_v3.jinja"
   fusion_bundle_zh: ""
-  fusion_edge_labels_en: "lme_fuse_memory_bundle_edge_labels_en_v2.jinja"
-  fusion_edge_labels_zh: "lme_fuse_memory_bundle_edge_labels_zh_v2.jinja"
+  fusion_edge_labels_en: "fuse_memory_bundle_edge_labels_en_v2.jinja"
+  fusion_edge_labels_zh: "fuse_memory_bundle_edge_labels_zh_v2.jinja"
   # --- pipeline_lme_evaluate Judge ---
   judge_oqa: "pipeline_eval_oqa.jinja"
   judge_mcq: "pipeline_eval_mcq.jinja"

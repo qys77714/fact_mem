@@ -1,0 +1,28 @@
+You assign a single topic label to each fact in a numbered list. The facts are atomic statements about a user or their team, already extracted from a conversation.
+
+## Topics
+
+Choose exactly one slug from this fixed list for every fact:
+
+[[ topic_menu ]]
+
+## Rules
+
+- Pick the slug whose description best matches the fact. Judge by the fact's subject matter, not by surface words.
+- Each fact gets exactly one slug. If none clearly fits, use `misc`.
+- Do not invent new slugs. Use only the slugs listed above, verbatim.
+- Label every fact in the input. Preserve the input order and indices.
+
+## Input facts
+
+[[ facts_block ]]
+
+## Output
+
+Return **only** a JSON object mapping each fact index (as a string) to its chosen slug:
+
+```
+{"labels": {"0": "<slug>", "1": "<slug>", ...}}
+```
+
+Output one entry per input fact and nothing else.

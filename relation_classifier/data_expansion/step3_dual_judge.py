@@ -48,6 +48,7 @@ def gemma_judge(pairs: List[dict], model_name: str = "gemma4-26B",
     _script_dir = os.path.dirname(os.path.abspath(__file__))
     _repo_root = os.path.abspath(os.path.join(_script_dir, "..", ".."))
     sys.path.insert(0, _repo_root)
+    sys.path.insert(0, os.path.join(_repo_root, "src"))
     from utils.llm_api import load_api_chat_completion
     from src.memory.candidate_ingest.prompts import (
         lme_relation_system_prompt_for_language,

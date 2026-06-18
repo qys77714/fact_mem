@@ -49,11 +49,11 @@ def build_similar_pairs(
     for m in memories:
         by_persona[m["persona_id"]].append(m)
 
-    # 建立所有更新链 pair 的 (old_pref_id, new_pref_id) 集合，避免重复
-    update_pairs_set = set()
+    # 建立所有更新链 pair 的 (old_text, new_text) 集合，避免重复
+    update_pairs_text_set = set()
     for m in memories:
         if m["updated"] and m["prev_text"]:
-            update_pairs_set.add((m["pref_id"] + "_prev", m["pref_id"]))
+            update_pairs_text_set.add((m["prev_text"], m["text"]))
 
     # 加载 classifier 用于抽取 embedding
     clf = RelationClassifier()
@@ -82,9 +82,8 @@ def build_similar_pairs(
             for j in range(i + 1, n):
                 if sim[i, j] < similarity_threshold:
                     continue
-                pair_key_i = (mems[i]["pref_id"], mems[j]["pref_id"])
-                pair_key_j = (mems[j]["pref_id"], mems[i]["pref_id"])
-                if pair_key_i in update_pairs_set or pair_key_j in update_pairs_set:
+                if (mems[i]["text"], mems[j]["text"]) in update_pairs_text_set or \
+                   (mems[j]["text"], mems[i]["text"]) in update_pairs_text_set:
                     continue
                 candidates.append((sim[i, j], i, j))
 
@@ -115,10 +114,10 @@ def build_random_ind_pairs(
     target_count: int,
 ) -> List[dict]:
     """2c: 同 persona 内随机配对，作为 IND 候选。"""
-    existing_set = set()
+    existing_text_set = set()
     for p in existing_pairs:
-        existing_set.add((p["old_pref_id"], p["new_pref_id"]))
-        existing_set.add((p["new_pref_id"], p["old_pref_id"]))
+        existing_text_set.add((p["old"], p["new"]))
+        existing_text_set.add((p["new"], p["old"]))
 
     by_persona = defaultdict(list)
     for m in memories:
@@ -133,15 +132,14 @@ def build_random_ind_pairs(
             continue
         ids = list(range(len(mems)))
         random.shuffle(ids)
-        for i_idx in range(min(len(ids), len(ids))):
+        for i_idx in range(len(ids)):
             for j_idx in range(i_idx + 1, len(ids)):
                 i, j = ids[i_idx], ids[j_idx]
-                pair_key = (mems[i]["pref_id"], mems[j]["pref_id"])
-                if pair_key in existing_set:
+                if (mems[i]["text"], mems[j]["text"]) in existing_text_set:
                     continue
                 candidates.append((persona_id, i, j, mems))
-                existing_set.add(pair_key)
-                existing_set.add((pair_key[1], pair_key[0]))
+                existing_text_set.add((mems[i]["text"], mems[j]["text"]))
+                existing_text_set.add((mems[j]["text"], mems[i]["text"]))
 
     # 随机采样 target_count 条
     random.shuffle(candidates)

@@ -13,18 +13,9 @@ DEFAULT_CONFIG = os.path.join(HERE, "config.yaml")
 def load_config(config_path):
     cfg = {}
     if config_path and os.path.exists(config_path):
-        cfg = yaml.safe_load(open(config_path))
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
     return cfg
-
-
-def resolve_path(cfg, key, default_relative):
-    """解析配置中的路径：支持相对路径（相对 data_expansion 目录）。"""
-    val = cfg.get(key, default_relative)
-    if val and not os.path.isabs(val):
-        # 相对路径相对于 repo 根目录
-        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
-        val = os.path.join(repo_root, val)
-    return val
 
 
 def main():
@@ -39,16 +30,32 @@ def main():
     steps = [int(s.strip()) for s in args.steps.split(",")]
 
     # 解析路径
+    repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
+
     persona_dir = cfg.get("personamem_dir", "data/raw_data/PersonaMem-v2/data/raw_data")
     if not os.path.isabs(persona_dir):
-        repo_root = os.path.abspath(os.path.join(HERE, "..", ".."))
         persona_dir = os.path.join(repo_root, persona_dir)
 
     data_dir = cfg.get("data_dir", os.path.join(HERE, "data"))
+    if not os.path.isabs(data_dir):
+        data_dir = os.path.join(repo_root, data_dir)
+
     mem_path = cfg.get("atomic_memories_path", os.path.join(data_dir, "personamem_atomic_memories.jsonl"))
+    if not os.path.isabs(mem_path):
+        mem_path = os.path.join(repo_root, mem_path)
+
     pairs_path = cfg.get("pairs_all_path", os.path.join(data_dir, "pairs_all.jsonl"))
+    if not os.path.isabs(pairs_path):
+        pairs_path = os.path.join(repo_root, pairs_path)
+
     judged_path = cfg.get("pairs_judged_path", os.path.join(data_dir, "pairs_with_judgments.jsonl"))
+    if not os.path.isabs(judged_path):
+        judged_path = os.path.join(repo_root, judged_path)
+
     train_path = cfg.get("training_data_path", os.path.join(data_dir, "training_data_expanded.jsonl"))
+    if not os.path.isabs(train_path):
+        train_path = os.path.join(repo_root, train_path)
+
     original_path = cfg.get("original_training_data", "non_ind.jsonl")
     if not os.path.isabs(original_path):
         original_path = os.path.join(repo_root, original_path)

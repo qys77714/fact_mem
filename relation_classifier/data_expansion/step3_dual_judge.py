@@ -46,8 +46,8 @@ def gemma_judge(pairs: List[dict], model_name: str = "gemma4-26B",
                 max_concurrency: int = 10) -> List[dict]:
     """用 gemma4-26B 对全部 pair 做五分类。"""
     _script_dir = os.path.dirname(os.path.abspath(__file__))
-    _src = os.path.join(_script_dir, "..", "..", "src")
-    sys.path.insert(0, os.path.abspath(_src))
+    _repo_root = os.path.abspath(os.path.join(_script_dir, "..", ".."))
+    sys.path.insert(0, _repo_root)
     from utils.llm_api import load_api_chat_completion
     from src.memory.candidate_ingest.prompts import (
         lme_relation_system_prompt_for_language,

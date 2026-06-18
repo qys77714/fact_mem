@@ -3,6 +3,7 @@
 import json
 import os
 import random
+from collections import Counter
 import yaml
 from typing import List, Dict
 
@@ -51,7 +52,7 @@ def generate_training_data(
             "source": f"persona_{p.get('persona_id', 'unknown')}",
             "gemma_label": gemma_label,
             "classifier_label": p.get("classifier_label", ""),
-            "pref_type": p.get("source_detail", ""),
+            "pref_type": p.get("pref_type_original", p.get("source_detail", "")),
             "agree": agree,
         }
 
@@ -66,6 +67,7 @@ def generate_training_data(
         original = load_jsonl(original_path)
         # 原有数据统一补充字段
         for o in original:
+            o.setdefault("label", "IND")
             o.setdefault("source", "original")
             o.setdefault("gemma_label", "")
             o.setdefault("classifier_label", "")
@@ -103,7 +105,6 @@ def generate_training_data(
     random.shuffle(deduped)
 
     # 统计
-    from collections import Counter
     label_counts = Counter(s["label"] for s in deduped)
     ind_pct = label_counts.get("IND", 0) / len(deduped) if deduped else 0
 

@@ -28,13 +28,14 @@ def classifier_judge(pairs: List[dict]) -> List[dict]:
     return pairs
 
 
-def build_gemma_messages(old: str, new: str) -> List[dict]:
+def build_gemma_messages(old: str, new: str, language: str = "en") -> List[dict]:
     """构建 gemma4-26B 分类请求的 messages。"""
-    from prompts import render_prompt
-
-    system_prompt = render_prompt("lme_relation_classification_system_en_v2.jinja")
-    user_prompt = render_prompt("lme_relation_classification_user.jinja",
-                                m_old=old, m_new=new)
+    from src.memory.candidate_ingest.prompts import (
+        lme_relation_system_prompt_for_language,
+        build_lme_relation_classification_user_prompt,
+    )
+    system_prompt = lme_relation_system_prompt_for_language(language)
+    user_prompt = build_lme_relation_classification_user_prompt(old, new)
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -48,8 +49,19 @@ def gemma_judge(pairs: List[dict], model_name: str = "gemma4-26B",
     _src = os.path.join(_script_dir, "..", "..", "src")
     sys.path.insert(0, os.path.abspath(_src))
     from utils.llm_api import load_api_chat_completion
+    from src.memory.candidate_ingest.prompts import (
+        lme_relation_system_prompt_for_language,
+        build_lme_relation_classification_user_prompt,
+    )
 
-    messages_list = [build_gemma_messages(p["old"], p["new"]) for p in pairs]
+    system_prompt = lme_relation_system_prompt_for_language("en")
+    messages_list = []
+    for p in pairs:
+        user_prompt = build_lme_relation_classification_user_prompt(p["old"], p["new"])
+        messages_list.append([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ])
 
     print(f"发送 {len(messages_list)} 条分类请求到 {model_name}...")
     t0 = time.time()
@@ -84,11 +96,14 @@ def gemma_judge(pairs: List[dict], model_name: str = "gemma4-26B",
                     resp_clean = resp_clean.split("\n", 1)[-1]
                     resp_clean = resp_clean.rsplit("```", 1)[0]
                 obj = json.loads(resp_clean)
+                if not isinstance(obj, dict):
+                    raise ValueError(f"Expected dict, got {type(obj).__name__}")
                 label = obj.get("relation", "").strip().upper()
             except (json.JSONDecodeError, AttributeError):
                 # 尝试从文本中提取标签
+                import re as _re
                 for lbl in valid_labels:
-                    if lbl in resp:
+                    if _re.search(r'\b' + _re.escape(lbl) + r'\b', resp):
                         label = lbl
                         break
 

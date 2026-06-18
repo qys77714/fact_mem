@@ -18,15 +18,17 @@ def rewrite_to_first_person(text: str) -> str:
     4. "Do not remember 'X' in memory" → "the user wants to forget about X"
     """
     text = text.strip()
+    if not text:
+        return ""
 
     # Case 1: "My X ..."
-    m = re.match(r'^[Mm]y\s+(\S)(.*)', text)
+    m = re.match(r'^[Mm]y\s+(\S+)(.*)', text)
     if m:
-        rest = m.group(1).lower() + m.group(2)
+        rest = m.group(1) + m.group(2)
         return f"the user's {rest}"
 
     # Case 2: "I ..." (但排除 "In " "If " 等)
-    m = re.match(r'^[Ii]\s+(\S)(.*)', text)
+    m = re.match(r'^[Ii]\s+(\S+)(.*)', text)
     if m:
         rest = m.group(1).lower() + m.group(2)
         return f"the user {rest}"

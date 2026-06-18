@@ -28,6 +28,7 @@ def build_update_chain_pairs(memories: List[dict]) -> List[dict]:
                 "old_pref_id": m["pref_id"] + "_prev",
                 "new_pref_id": m["pref_id"],
                 "source_detail": f"pref_type={m['pref_type']}",
+                "pref_type_original": m.get("pref_type", ""),
             })
     return pairs
 
@@ -103,6 +104,7 @@ def build_similar_pairs(
                 "old_pref_id": old_m["pref_id"],
                 "new_pref_id": new_m["pref_id"],
                 "source_detail": f"cosine_sim={sim_score:.4f}",
+                "pref_type_original": "",
             })
 
     return pairs
@@ -159,6 +161,7 @@ def build_random_ind_pairs(
             "old_pref_id": old_m["pref_id"],
             "new_pref_id": new_m["pref_id"],
             "source_detail": "random_sampling",
+            "pref_type_original": "",
         })
 
     return pairs

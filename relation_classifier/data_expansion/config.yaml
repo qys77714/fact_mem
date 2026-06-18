@@ -1,0 +1,27 @@
+# PersonaMem 数据路径
+personamem_dir: "data/raw_data/PersonaMem-v2/data/raw_data"
+
+# 中间输出路径
+data_dir: "relation_classifier/data_expansion/data"
+atomic_memories_path: "relation_classifier/data_expansion/data/personamem_atomic_memories.jsonl"
+pairs_all_path: "relation_classifier/data_expansion/data/pairs_all.jsonl"
+pairs_judged_path: "relation_classifier/data_expansion/data/pairs_with_judgments.jsonl"
+training_data_path: "relation_classifier/data_expansion/data/training_data_expanded.jsonl"
+
+# 配对构造参数
+similarity_threshold: 0.85       # 同 persona 内相似配对的最低余弦相似度
+ind_ratio_target: 0.30           # IND 目标占比
+max_similar_pairs_per_persona: 50  # 每个 persona 相似配对数上限
+
+# gemma4-26B 裁判
+gemma_model: "gemma4-26B"
+gemma_max_concurrency: 10
+gemma_max_new_tokens: 128
+
+# classifier 配置（继承 relation_classifier/config.yaml）
+classifier_backbone: "/mnt/data_oss/models/Qwen3-0.6B"
+classifier_config: "relation_classifier/config.yaml"
+classifier_checkpoint: "relation_classifier/head_best.pt"
+
+# 原有训练数据
+original_training_data: "non_ind.jsonl"

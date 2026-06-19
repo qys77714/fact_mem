@@ -131,6 +131,7 @@ def main():
     ap.add_argument("--model", default="gemma4-26B")
     ap.add_argument("--concurrency", type=int, default=30)
     ap.add_argument("--limit-personas", type=int, default=0, help="仅处理前 N 个 persona")
+    ap.add_argument("--skip-personas", type=int, default=0, help="跳过前 N 个 persona")
     ap.add_argument("--chunk-size", type=int, default=12)
     ap.add_argument("--aspects", default="events,preferences,social", help="逗号分隔的 aspect")
     args = ap.parse_args()
@@ -158,6 +159,8 @@ def main():
         persona_files.setdefault(pid, []).append(fp)
 
     persona_list = list(persona_files.items())
+    if args.skip_personas > 0:
+        persona_list = persona_list[args.skip_personas:]
     if args.limit_personas > 0:
         persona_list = persona_list[:args.limit_personas]
 

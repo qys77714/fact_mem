@@ -189,10 +189,9 @@ def _try_lower_one(gen_client, emb_client, g_text, question, correct_answer, q_e
             if not _verify_same_answer(gen_client, rewritten, question, correct_answer):
                 continue
 
-            if r_q < best_q:
-                best_q = r_q
-                best_text = rewritten
-                best_emb = r_emb
+            best_q = r_q
+            best_text = rewritten
+            best_emb = r_emb
 
     return best_text, best_emb, best_q
 
@@ -228,6 +227,8 @@ def build_lowered_golden(gen_client, emb_client, rec, q_emb):
     或 None 如果某条 golden lowering 全部失败。
     """
     goldens = rec["golden_memory"]
+    if not goldens:
+        return None
     question = rec["question"]
     correct_answer = rec.get("answer", "")
 
@@ -247,6 +248,9 @@ def build_lowered_golden(gen_client, emb_client, rec, q_emb):
         best_text, best_emb, best_q = _try_lower_one(
             gen_client, emb_client, g_text, question, correct_answer, q_emb,
             orig_emb, orig_q, strategies)
+
+        if best_text == g_text:
+            return None
 
         drop = orig_q - best_q
         lowered_texts.append(best_text)

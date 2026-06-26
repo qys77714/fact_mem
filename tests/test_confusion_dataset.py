@@ -1,5 +1,5 @@
 # tests/test_confusion_dataset.py
-import os, sys
+import os, sys, json
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(REPO, "script"))
@@ -97,3 +97,18 @@ def test_generate_distractors_constraint():
         assert B.subject_is_user(d["text"])
     texts = [d["text"] for d in dists]
     assert len(set(texts)) == len(texts)        # 无完全重复
+
+
+def test_run_build_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(B, "OUT_MAIN", str(tmp_path / "main.json"))
+    monkeypatch.setattr(B, "OUT_PARTIAL", str(tmp_path / "partial.json"))
+    monkeypatch.setattr(B, "OUT_STATS", str(tmp_path / "stats.json"))
+    stats = B.run_build(limit=3, workers=3)
+    main = json.load(open(B.OUT_MAIN))
+    partial = json.load(open(B.OUT_PARTIAL))
+    assert stats["processed"] == 3
+    assert stats["main"] + stats["partial"] == 3
+    assert len(main) == stats["main"] and len(partial) == stats["partial"]
+    for rec in main:
+        assert rec["constraint_ok"] is True
+        assert len(rec["distractors"]) == 8

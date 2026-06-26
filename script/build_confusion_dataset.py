@@ -2,6 +2,7 @@
 用法：uv run --no-sync python script/build_confusion_dataset.py [--limit N] [--workers 16]
 """
 import os, sys, json, re, argparse
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 
@@ -171,9 +172,48 @@ def process_question(row, gen_client, emb_client):
     return assemble_record(lme_rec, golden, lowered, dists, EMB_MODEL)
 
 
+def run_build(limit=0, workers=16):
+    rows = load_sources()
+    if limit:
+        rows = rows[:limit]
+    gen = load_api_chat_completion("gemma4-26B")
+    emb = make_emb_client()
+
+    results = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(process_question, row, gen, emb): row["qid"] for row in rows}
+        for i, fut in enumerate(as_completed(futs), 1):
+            qid = futs[fut]
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                print(f"[{i}/{len(rows)}] {qid} FAILED: {e}")
+            if i % 20 == 0:
+                print(f"  {i}/{len(rows)} done")
+
+    main = [r for r in results if r["constraint_ok"]]
+    partial = [r for r in results if not r["constraint_ok"]]
+    json.dump(main, open(OUT_MAIN, "w"), ensure_ascii=False, indent=1)
+    json.dump(partial, open(OUT_PARTIAL, "w"), ensure_ascii=False, indent=1)
+
+    stats = {
+        "processed": len(results),
+        "main": len(main),
+        "partial": len(partial),
+        "main_by_type": dict(Counter(r["question_type"] for r in main)),
+        "partial_by_type": dict(Counter(r["question_type"] for r in partial)),
+        "partial_reason": {
+            "lt8_distractors": sum(1 for r in partial if len(r["distractors"]) < 8),
+            "no_lowered": sum(1 for r in partial if not r["lowered_golden"]),
+        },
+    }
+    json.dump(stats, open(OUT_STATS, "w"), ensure_ascii=False, indent=1)
+    print(f"main={len(main)} partial={len(partial)} -> {OUT_MAIN}")
+    return stats
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--workers", type=int, default=16)
     args = ap.parse_args()
-    print(f"load_sources: {len(load_sources())} answerable questions")
+    run_build(limit=args.limit, workers=args.workers)

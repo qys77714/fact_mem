@@ -144,6 +144,37 @@ SIMPLIFY_GOLDEN_PROMPT = (
     "Return ONLY the simplified statement, one sentence."
 )
 
+NARRATIVE_EMBED_PROMPT = (
+    "Rewrite the following factual statement about a user so the fact is mentioned only "
+    "as a BACKGROUND DETAIL within a DIFFERENT anecdote or everyday observation. "
+    "The main topic of the sentence should NOT be the factual claim itself — "
+    "instead, bury it inside a broader narrative about a different subject.\n\n"
+    "Rules:\n"
+    "1. The SAME factual information MUST still be present (numbers, names, dates unchanged)\n"
+    "2. The sentence's main topic must be something OTHER than what the fact states\n"
+    "3. Frame it as reminiscing, a past habit, or a recent observation\n"
+    "4. Keep the subject as \"The user\" (NOT \"I\" or first-person)\n"
+    "5. Use conversational, natural language, one sentence\n\n"
+    "Original: {golden}\n\n"
+    "Return ONLY the rewritten statement, one sentence."
+)
+
+VOCAB_SHIFT_PROMPT = (
+    "Rewrite the following factual statement about a user using COMPLETELY DIFFERENT vocabulary "
+    "and sentence structure, while preserving ALL factual information (numbers, names, dates).\n\n"
+    "Rules:\n"
+    "1. Change EVERY noun, verb, and modifier to a synonym or near-synonym\n"
+    "2. Restructure the sentence entirely (change from active to passive, change clause order, etc.)\n"
+    "3. Avoid any direct quotes or formulaic phrasing\n"
+    "4. **CRITICAL**: The sentence MUST begin with exactly \"The user\" followed by a verb. "
+    "No leading clauses, no introductory phrases, no \"While...\", no \"Although...\", no \"Having...\". "
+    "Start: 'The user ...'\n"
+    "5. The rewritten version must still clearly convey the same fact\n"
+    "6. Use natural, conversational language\n\n"
+    "Original: {golden}\n\n"
+    "Return ONLY the rewritten statement, one sentence that starts with 'The user'."
+)
+
 ANSWER_FROM_MEMORY_PROMPT = (
     "Based on the following memory about a user, answer the question.\n"
     "If the memory contains the answer (even indirectly), give it. "
@@ -158,7 +189,7 @@ SAME_ANSWER_PROMPT = (
     'Return ONLY a JSON object: {{"same": true/false}}'
 )
 
-GOLDEN_LOWER_MAX_ATTEMPTS = 5
+GOLDEN_LOWER_MAX_ATTEMPTS = 8
 
 
 def _try_lower_one(gen_client, emb_client, g_text, question, correct_answer, q_emb,
@@ -178,6 +209,9 @@ def _try_lower_one(gen_client, emb_client, g_text, question, correct_answer, q_e
             )
             rewritten = (resp or "").strip().strip('"').strip("'")
             if not rewritten or len(rewritten) < 12 or rewritten == g_text:
+                continue
+            # 强制 "The user" 开头
+            if not rewritten.startswith("The user"):
                 continue
 
             r_emb = normalize(embed_texts(emb_client, [rewritten], EMB_MODEL))[0]
@@ -235,6 +269,8 @@ def build_lowered_golden(gen_client, emb_client, rec, q_emb):
     strategies = [
         (CASUAL_REWRITE_PROMPT, 0.9),
         (SIMPLIFY_GOLDEN_PROMPT, 0.7),
+        (NARRATIVE_EMBED_PROMPT, 1.0),
+        (VOCAB_SHIFT_PROMPT, 0.8),
     ]
 
     lowered_texts = []
@@ -276,17 +312,21 @@ def build_lowered_golden(gen_client, emb_client, rec, q_emb):
 # ============================================================
 
 DISTRACTOR_GEN_PROMPT = (
-    "A user asked the following question in a conversation. Generate ONE plausible factual "
-    "statement about the user that satisfies ALL these rules:\n\n"
-    "1. SAME TOPIC DOMAIN: The statement must be about the same general topic area as the "
-    "   question, so it would appear semantically similar in a retrieval system.\n"
-    "2. DO NOT ANSWER THE QUESTION: The statement must NOT reveal the correct answer, NOR "
-    "   assert any alternative/wrong answer for the same attribute. It should describe a "
-    "   RELATED but DIFFERENT aspect of the same topic — e.g. for 'What degree did I get?', "
-    "   say something about university life (orientation, library, commute) rather than "
-    "   naming any degree at all.\n"
-    "3. NATURAL: Sound like a real user memory, not a test case.\n"
-    "4. SUBJECT: Use \"The user\" as the subject (third person, NOT \"I\" or \"You\").\n\n"
+    "Generate ONE factual statement about a user that is highly semantically similar to the "
+    "given question but does NOT answer it.\n\n"
+    "Rules:\n"
+    "1. REUSE the question's exact nouns, verbs, and key phrases to maximize cosine similarity.\n"
+    "2. DO NOT reveal the answer or assert any value for the attribute the question asks about.\n"
+    "3. Subject: \"The user\" (third person, NOT \"I\" or \"You\").\n\n"
+    "Examples:\n"
+    "  Q: What degree did I graduate with?\n"
+    "  A: The user spent many late nights studying at the university library during their degree program.\n\n"
+    "  Q: How long is my daily commute to work?\n"
+    "  A: The user's daily commute to work involves driving through heavy traffic on the highway.\n\n"
+    "  Q: Where did I redeem a $5 coupon on coffee creamer?\n"
+    "  A: The user found a great deal on coffee creamer and used a $5 coupon at checkout.\n\n"
+    "  Q: What is the name of the playlist I created on Spotify?\n"
+    "  A: The user listens to their Spotify playlist every morning while getting ready.\n\n"
     "Question: {question}\n\n"
     "Return ONLY the statement, one sentence."
 )
@@ -328,8 +368,8 @@ NO_ANSWER_CLAIM_PROMPT = (
 )
 
 DISTRACTOR_N = 8
-DISTRACTOR_MAX_ROUNDS = 6
-DISTRACTOR_SEEDS_PER_ROUND = 5  # 每轮生成 5 个候选
+DISTRACTOR_MAX_ROUNDS = 12
+DISTRACTOR_SEEDS_PER_ROUND = 12  # 每轮生成 12 个候选
 
 
 def _verify_no_answer_leak(gen_client, question, seed_text, correct_answer):
@@ -425,7 +465,7 @@ def build_distractors(gen_client, emb_client, rec, q_emb, lowered_min_sim,
                 max_new_tokens=256, temperature=0.8,
             )
             text = (resp or "").strip().strip('"').strip("'")
-            if text and len(text) >= 12:
+            if text and len(text) >= 12 and text.startswith("The user"):
                 candidates.append(text)
 
         round_stats["total_candidates"] += len(candidates)

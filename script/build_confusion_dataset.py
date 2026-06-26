@@ -48,12 +48,6 @@ def normalize(m: np.ndarray) -> np.ndarray:
     n[n == 0] = 1.0
     return m / n
 
-def emb_similarity(emb_client, texts: list[str], query_emb: np.ndarray) -> np.ndarray:
-    """返回 texts 与 query_emb 的余弦相似度 (n,)"""
-    if not texts:
-        return np.array([])
-    embs = normalize(embed_texts(emb_client, texts, EMB_MODEL))
-    return (embs @ query_emb).flatten()
 
 def _parse_json_obj(text):
     """从 LLM 回复中提取 JSON 对象，失败返回 None"""
@@ -645,7 +639,6 @@ def run_build(questions, raw_lme_map, out_dir, max_workers=8, resume=False):
 
     records = []
     partials = []
-    stats_entries = []
 
     to_process = [q for q in questions if q["question_id"] not in done_qids]
     print(f"[build] 需处理 {len(to_process)}/{len(questions)} 题, workers={max_workers}")
@@ -670,7 +663,6 @@ def run_build(questions, raw_lme_map, out_dir, max_workers=8, resume=False):
                 records.append(record)
             else:
                 partials.append(stats)  # 失败的存 stats 信息
-            stats_entries.append(stats)
             if (i + 1) % 20 == 0 or i + 1 == len(to_process):
                 elapsed = time.time() - t0
                 rate = (i + 1) / elapsed if elapsed > 0 else 0

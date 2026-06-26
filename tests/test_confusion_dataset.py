@@ -67,6 +67,23 @@ def test_embed_and_sim():
     assert abs(np.linalg.norm(vecs[0]) - 1.0) < 1e-5   # already normalized
 
 
+def test_process_question_shapes():
+    gen = B.load_api_chat_completion("gemma4-26B")
+    emb = B.make_emb_client()
+    row = B.load_sources()[0]
+    rec = B.process_question(row, gen, emb)
+    assert len(rec["lowered_golden"]) == len(rec["golden_memory"])
+    assert all("source_idx" in l and "sim_q" in l for l in rec["lowered_golden"])
+    # lowered sim_q 不高于对应 golden（尽量降）
+    for l in rec["lowered_golden"]:
+        assert l["sim_q"] <= rec["golden_memory"][l["source_idx"]]["sim_q"] + 1e-6
+    assert isinstance(rec["constraint_ok"], bool)
+    if rec["constraint_ok"]:
+        assert len(rec["distractors"]) == 8
+        lo = rec["lowered_golden_min_sim"]
+        assert all(d["sim_q"] > lo for d in rec["distractors"])
+
+
 def test_generate_distractors_constraint():
     gen = B.load_api_chat_completion("gemma4-26B")
     emb = B.make_emb_client()

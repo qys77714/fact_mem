@@ -145,6 +145,32 @@ def generate_distractors(gen_client, emb_client, question, correct_answer,
     return picked
 
 
+# ---- per-question orchestration ------------------------------------------------
+def _golden_with_sim(emb_client, goldens, q_vec):
+    vecs = embed_norm(emb_client, goldens)
+    sims = sim_to_q(vecs, q_vec)
+    return [{"text": g, "sim_q": round(s, 5)} for g, s in zip(goldens, sims)]
+
+def process_question(row, gen_client, emb_client):
+    grec, lme_rec = row["golden_rec"], row["lme_rec"]
+    question = grec["question"]
+    correct = grec.get("answer", "")
+    goldens = grec["golden_memory"]
+    q_vec = embed_norm(emb_client, [question])[0]
+
+    golden = _golden_with_sim(emb_client, goldens, q_vec)
+
+    low = lower_golden_casual(gen_client, emb_client, question, goldens, correct, q_vec)
+    lowered = []
+    for idx, (text, vec) in enumerate(zip(low["lowered"], low["emb"])):
+        lowered.append({"text": text, "sim_q": round(float(vec @ q_vec), 5), "source_idx": idx})
+
+    lo = lowered_min_sim(lowered)
+    dists = generate_distractors(gen_client, emb_client, question, correct, q_vec, lo)
+
+    return assemble_record(lme_rec, golden, lowered, dists, EMB_MODEL)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)

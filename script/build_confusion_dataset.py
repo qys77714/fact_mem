@@ -43,6 +43,47 @@ def load_sources():
     return rows
 
 
+# ---- 纯逻辑 helper --------------------------------------------------
+_BANNED_LEADING = {"i", "i'm", "i've", "you", "your", "you're", "they", "we", "he", "she", "my", "me", "his", "her"}
+
+def subject_is_user(text):
+    """如果 text 以"user"作主语返回 True（排除 I/you/they/he/she 等主语）。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    first = re.split(r"[\s,]+", t.lower(), maxsplit=1)[0].strip(".,'\"")
+    if first in _BANNED_LEADING:
+        return False
+    return "user" in t.lower()
+
+def lowered_min_sim(lowered):
+    """lowered 列表中最小的 sim_q（空列表返回 None）。"""
+    if not lowered:
+        return None
+    return min(l["sim_q"] for l in lowered)
+
+def compute_constraint_ok(lowered, distractors, n_required=N_DISTRACTORS):
+    """distractor 的 sim_q 是否全部 > lowered 最小 sim_q 且数量够。"""
+    if not lowered or len(distractors) != n_required:
+        return False
+    lo = lowered_min_sim(lowered)
+    return all(d["sim_q"] > lo for d in distractors)
+
+_LME_FIELDS = ("question_id", "question_type", "question", "question_date", "answer",
+               "answer_session_ids", "haystack_dates", "haystack_session_ids", "haystack_sessions")
+
+def assemble_record(lme_rec, golden, lowered, distractors, emb_model):
+    """装配一条完整的 confusion 记录。"""
+    rec = {k: lme_rec.get(k) for k in _LME_FIELDS}
+    rec["golden_memory"] = golden
+    rec["lowered_golden"] = lowered
+    rec["distractors"] = distractors
+    rec["embedding_model"] = emb_model
+    rec["lowered_golden_min_sim"] = lowered_min_sim(lowered)
+    rec["constraint_ok"] = compute_constraint_ok(lowered, distractors)
+    return rec
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)

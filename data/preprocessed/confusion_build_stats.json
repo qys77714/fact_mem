@@ -1,0 +1,25 @@
+{
+ "processed": 469,
+ "main": 346,
+ "partial": 123,
+ "main_by_type": {
+  "single-session-user": 46,
+  "multi-session": 100,
+  "single-session-preference": 29,
+  "temporal-reasoning": 84,
+  "knowledge-update": 50,
+  "single-session-assistant": 37
+ },
+ "partial_by_type": {
+  "single-session-user": 18,
+  "multi-session": 20,
+  "single-session-preference": 1,
+  "temporal-reasoning": 43,
+  "knowledge-update": 22,
+  "single-session-assistant": 19
+ },
+ "partial_reason": {
+  "lt8_distractors": 123,
+  "no_lowered": 0
+ }
+}

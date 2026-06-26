@@ -268,6 +268,193 @@ def build_lowered_golden(gen_client, emb_client, rec, q_emb):
     }
 
 
+# ============================================================
+# Step 2: distractors — 三道闸门保证每条达标
+#   闸1: sim_q > lowered_min_sim
+#   闸2: 不含正确答案 (verify_seed_answer)
+#   闸3: 不触及答案属性 (不做任何正确/错误声称)
+# ============================================================
+
+DISTRACTOR_GEN_PROMPT = (
+    "A user asked the following question in a conversation. Generate ONE plausible factual "
+    "statement about the user that satisfies ALL these rules:\n\n"
+    "1. SAME TOPIC DOMAIN: The statement must be about the same general topic area as the "
+    "   question, so it would appear semantically similar in a retrieval system.\n"
+    "2. DO NOT ANSWER THE QUESTION: The statement must NOT reveal the correct answer, NOR "
+    "   assert any alternative/wrong answer for the same attribute. It should describe a "
+    "   RELATED but DIFFERENT aspect of the same topic — e.g. for 'What degree did I get?', "
+    "   say something about university life (orientation, library, commute) rather than "
+    "   naming any degree at all.\n"
+    "3. NATURAL: Sound like a real user memory, not a test case.\n"
+    "4. SUBJECT: Use \"The user\" as the subject (third person, NOT \"I\" or \"You\").\n\n"
+    "Question: {question}\n\n"
+    "Return ONLY the statement, one sentence."
+)
+
+ANSWER_VERIFY_PROMPT = (
+    "You are given a question and a factual statement. "
+    "Your task: answer the question USING ONLY the information in the statement.\n"
+    "If the statement contains enough information to answer the question (even if it gives "
+    "a different answer than the truth), give that answer. If it doesn't contain relevant "
+    "information, say 'NO ANSWER'.\n\n"
+    "Question: {question}\nStatement: {seed}\n\n"
+    'Return ONLY a JSON object: {{"answer": "<your answer or NO ANSWER>"}}'
+)
+
+ANSWER_LEAK_PROMPT = (
+    "The correct answer to a question is:\n"
+    "  Correct: {correct}\n\n"
+    "A distractor memory gave this answer:\n"
+    "  Distractor: {distractor}\n\n"
+    "Does the distractor answer contain the SAME factual information as the correct answer? "
+    "In other words, if a reader sees the distractor answer, would they learn the correct answer?\n\n"
+    'Return ONLY a JSON object: {{"leaks": true/false}}'
+)
+
+NO_ANSWER_CLAIM_PROMPT = (
+    "You are evaluating a distractor memory for a retrieval experiment.\n\n"
+    "The correct answer to a question is:\n"
+    "  Correct answer: {correct}\n\n"
+    "A distractor statement about the user:\n"
+    "  Statement: {text}\n\n"
+    "Question: {question}\n\n"
+    "Does the statement make ANY claim about the answer attribute — i.e. does it assert "
+    "ANY value (correct OR incorrect) for the thing the question asks about?\n"
+    "For example, if the question asks 'What degree did the user graduate with?', "
+    "a statement that says 'The user graduated with a degree in CS' makes a claim "
+    "(even if CS is wrong). A statement that says 'The user attended the university "
+    "orientation in 2019' does NOT make a claim about what degree they got.\n\n"
+    'Return ONLY a JSON object: {{"makes_claim": true/false}}'
+)
+
+DISTRACTOR_N = 8
+DISTRACTOR_MAX_ROUNDS = 6
+DISTRACTOR_SEEDS_PER_ROUND = 5  # 每轮生成 5 个候选
+
+
+def _verify_no_answer_leak(gen_client, question, seed_text, correct_answer):
+    """闸2: 种子作为唯一上下文→LLM答题→答案是否泄露正确答案。"""
+    # Step 1: 用种子答题
+    resp = gen_client.get_response_chat(
+        [{"role": "user", "content": ANSWER_VERIFY_PROMPT.format(
+            question=question, seed=seed_text)}],
+        max_new_tokens=128, temperature=0,
+    )
+    obj = _parse_json_obj(resp)
+    if not obj:
+        return True, "parse_fail"
+
+    ans = str(obj.get("answer", "")).strip()
+    if ans.upper() == "NO ANSWER" or not ans:
+        return True, "no_answer"
+
+    # Step 2: 判断种子答案是否等于正确值
+    resp2 = gen_client.get_response_chat(
+        [{"role": "user", "content": ANSWER_LEAK_PROMPT.format(
+            correct=correct_answer, distractor=ans)}],
+        max_new_tokens=64, temperature=0,
+    )
+    obj2 = _parse_json_obj(resp2)
+    if obj2 and obj2.get("leaks"):
+        return False, "llm_leak"
+
+    # fallback substring check
+    correct_lower = correct_answer.lower().strip()
+    ans_lower = ans.lower().strip()
+    if len(correct_lower) > 3 and correct_lower in ans_lower:
+        return False, "substring_leak"
+    return True, "ok"
+
+
+def _verify_no_answer_claim(gen_client, text, question, correct_answer):
+    """闸3: distractor 不对答案属性做任何声称（不涉及正确/错误取值）。"""
+    resp = gen_client.get_response_chat(
+        [{"role": "user", "content": NO_ANSWER_CLAIM_PROMPT.format(
+            correct=correct_answer, text=text, question=question)}],
+        max_new_tokens=64, temperature=0,
+    )
+    obj = _parse_json_obj(resp)
+    if not obj:
+        return True, "parse_fail"  # 保守放行
+    makes_claim = obj.get("makes_claim", False)
+    return (not makes_claim), "makes_claim" if makes_claim else "ok"
+
+
+def _distractor_passes(gen_client, emb_client, text, q_emb, lowered_min_sim,
+                       question, correct_answer):
+    """三道闸合一体：sim_q > min + 不泄答案 + 不触答案属性"""
+    # 闸1: embedding similarity
+    sim_q = float(
+        normalize(embed_texts(emb_client, [text], EMB_MODEL))[0] @ q_emb
+    )
+    if sim_q <= lowered_min_sim:
+        return False, f"sim_q={sim_q:.3f}<={lowered_min_sim:.3f}"
+
+    # 闸2: 不含正确答案
+    ok2, info2 = _verify_no_answer_leak(gen_client, question, text, correct_answer)
+    if not ok2:
+        return False, info2
+
+    # 闸3: 不触及答案属性
+    ok3, info3 = _verify_no_answer_claim(gen_client, text, question, correct_answer)
+    if not ok3:
+        return False, info3
+
+    return True, {"sim_q": round(sim_q, 5), "gate2": info2, "gate3": info3}
+
+
+def build_distractors(gen_client, emb_client, rec, q_emb, lowered_min_sim,
+                      n=DISTRACTOR_N, max_rounds=DISTRACTOR_MAX_ROUNDS):
+    """生成-过滤循环：攒够 n 条严格达标的 distractor 即停。
+    返回 (distractors: list[dict] | None, stats: dict)
+      distractor = {"text": str, "sim_q": float}
+    """
+    question = rec["question"]
+    correct_answer = rec.get("answer", "")
+
+    kept = []
+    round_stats = {"rounds": 0, "total_candidates": 0, "reject_reasons": Counter()}
+
+    for _round in range(max_rounds):
+        round_stats["rounds"] = _round + 1
+        # 生成一批候选
+        candidates = []
+        for _ in range(DISTRACTOR_SEEDS_PER_ROUND):
+            resp = gen_client.get_response_chat(
+                [{"role": "user", "content": DISTRACTOR_GEN_PROMPT.format(question=question)}],
+                max_new_tokens=256, temperature=0.8,
+            )
+            text = (resp or "").strip().strip('"').strip("'")
+            if text and len(text) >= 12:
+                candidates.append(text)
+
+        round_stats["total_candidates"] += len(candidates)
+
+        # 逐条过滤
+        for text in candidates:
+            if len(kept) >= n:
+                break
+            # 去重
+            if text in [d["text"] for d in kept]:
+                continue
+            ok, info = _distractor_passes(
+                gen_client, emb_client, text, q_emb, lowered_min_sim,
+                question, correct_answer)
+            if ok:
+                kept.append({"text": text, "sim_q": info["sim_q"]})
+            else:
+                round_stats["reject_reasons"][info] += 1
+
+        if len(kept) >= n:
+            break
+
+    round_stats["kept"] = len(kept)
+    if len(kept) >= n:
+        return kept[:n], round_stats
+    else:
+        return None, round_stats
+
+
 if __name__ == "__main__":
     args = parse_args()
     questions, raw_lme_map = load_sources(args.golden, args.raw_lme)

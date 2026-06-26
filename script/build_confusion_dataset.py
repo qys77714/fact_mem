@@ -455,6 +455,114 @@ def build_distractors(gen_client, emb_client, rec, q_emb, lowered_min_sim,
         return None, round_stats
 
 
+# ============================================================
+# Step 3: 单题编排 — 串联 lowering + distractor 生成 + 装配为完整记录
+# ============================================================
+
+
+def _assemble_record(rec, raw_lme_rec, lowered_result, distractors, emb_model_name, q_emb):
+    """将各部分装配为完整 JSON 记录（schema §2）。
+    q_emb: question embedding，用于计算 lowered_golden 的 sim_q。
+    golden_memory.sim_q 在此为占位符 -1，后续由 process_one 填充正式值。
+    """
+    goldens = rec["golden_memory"]
+    # golden_memory.sim_q 在此为占位符 -1，后续由 process_one 填充正式值
+    record = {
+        # A. 原始 LME 字段（拷入）
+        "question_id": rec["question_id"],
+        "question_type": rec["question_type"],
+        "question": rec["question"],
+        "question_date": raw_lme_rec.get("question_date", ""),
+        "answer": rec.get("answer", ""),
+        "answer_session_ids": raw_lme_rec.get("answer_session_ids", []),
+        "haystack_dates": raw_lme_rec.get("haystack_dates", []),
+        "haystack_session_ids": raw_lme_rec.get("haystack_session_ids", []),
+        "haystack_sessions": raw_lme_rec.get("haystack_sessions", []),
+
+        # B. 三组记忆
+        "golden_memory": [
+            {"text": t, "sim_q": -1} for t in goldens
+        ],
+        "lowered_golden": [
+            {"text": t, "sim_q": round(float(e @ q_emb), 5),
+             "source_idx": i, "date": raw_lme_rec.get("question_date", "")}
+            for i, (t, e) in enumerate(zip(
+                lowered_result["lowered_texts"],
+                lowered_result["lowered_embs"]))
+        ],
+        "distractors": [
+            {"text": d["text"], "sim_q": d["sim_q"],
+             "date": raw_lme_rec.get("question_date", "")}
+            for d in distractors
+        ],
+
+        # C. 元信息
+        "embedding_model": emb_model_name,
+        "lowered_golden_min_sim": round(lowered_result["lowered_min_sim"], 5),
+        "constraint_ok": True,
+    }
+    return record
+
+
+def process_one(gen_client, emb_client, rec, raw_lme_rec, golden_date=""):
+    """单题全流程：lowered golden → distractors → 装配为完整记录。
+    返回 (record: dict | None, stats_entry: dict)
+      - record: 完整记录（constraint_ok=True）or None（失败）
+      - stats_entry: 统计信息（无论成功失败）
+    """
+    qid = rec["question_id"]
+    question = rec["question"]
+    goldens = rec["golden_memory"]
+
+    stats = {"qid": qid, "qtype": rec["question_type"], "n_golden": len(goldens)}
+
+    # 预计算 question embedding
+    q_emb = normalize(embed_texts(emb_client, [question], EMB_MODEL))[0]
+
+    # Step 1: lowered golden
+    lowered_result = build_lowered_golden(gen_client, emb_client, rec, q_emb)
+    if lowered_result is None:
+        stats["status"] = "lowered_fail"
+        return None, stats
+
+    stats["lowered_min_sim"] = round(lowered_result["lowered_min_sim"], 5)
+    stats["lowered_drops"] = lowered_result["drops"]
+    stats["lowered_n"] = len(lowered_result["lowered_texts"])
+
+    # Step 2: distractors (8 条严格达标)
+    distractors, dist_stats = build_distractors(
+        gen_client, emb_client, rec, q_emb, lowered_result["lowered_min_sim"])
+    stats["distractor_stats"] = dist_stats
+
+    if distractors is None:
+        stats["status"] = "distractor_fail"
+        return None, stats
+
+    # Step 3: 装配
+    record = _assemble_record(rec, raw_lme_rec, lowered_result, distractors, EMB_MODEL, q_emb)
+
+    # 填充 golden_memory.sim_q（用已 compute 的 q_emb）
+    golden_embs = normalize(embed_texts(emb_client, goldens, EMB_MODEL))
+    for i, g_emb in enumerate(golden_embs):
+        record["golden_memory"][i]["sim_q"] = round(float(g_emb @ q_emb), 5)
+
+    # 填充 date 字段
+    base_date = golden_date or raw_lme_rec.get("question_date", "")
+    if base_date:
+        parts = base_date.split(" ")
+        year = int(parts[0].split("/")[0]) if "/" in parts[0] else 2023
+        dist_date = f"{year-1}/01/01 (Tue) 00:00"
+        for d in record["distractors"]:
+            d["date"] = dist_date
+        for g in record["golden_memory"]:
+            g["date"] = base_date
+        for l in record["lowered_golden"]:
+            l["date"] = base_date
+
+    stats["status"] = "ok"
+    return record, stats
+
+
 if __name__ == "__main__":
     args = parse_args()
     questions, raw_lme_map = load_sources(args.golden, args.raw_lme)

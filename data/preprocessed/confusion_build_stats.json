@@ -1,25 +1,30 @@
 {
- "processed": 469,
- "main": 346,
- "partial": 123,
- "main_by_type": {
-  "single-session-user": 46,
-  "multi-session": 100,
-  "single-session-preference": 29,
-  "temporal-reasoning": 84,
-  "knowledge-update": 50,
-  "single-session-assistant": 37
- },
- "partial_by_type": {
-  "single-session-user": 18,
-  "multi-session": 20,
-  "single-session-preference": 1,
-  "temporal-reasoning": 43,
-  "knowledge-update": 22,
-  "single-session-assistant": 19
- },
- "partial_reason": {
-  "lt8_distractors": 123,
-  "no_lowered": 0
- }
+  "total_questions": 469,
+  "constraint_ok": 402,
+  "constraint_fail": 67,
+  "success_rate": 0.8571,
+  "elapsed_sec": 563.0,
+  "question_types": {
+    "single-session-user": 60,
+    "multi-session": 103,
+    "single-session-preference": 29,
+    "temporal-reasoning": 91,
+    "knowledge-update": 64,
+    "single-session-assistant": 55
+  },
+  "n_golden_distribution": {
+    "1": 147,
+    "2": 183,
+    "3": 41,
+    "4": 19,
+    "5": 10,
+    "6": 2
+  },
+  "avg_lowered_golden_per_question": 1.93,
+  "avg_lowered_drop": 0.02857,
+  "avg_distractor_sim_q": 0.74662,
+  "fail_reasons": {
+    "distractor_fail": 9,
+    "lowered_fail": 77
+  }
 }

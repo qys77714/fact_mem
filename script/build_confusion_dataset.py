@@ -257,8 +257,9 @@ def _verify_same_answer(gen_client, rewritten, question, correct_answer):
 
 def build_lowered_golden(gen_client, emb_client, rec, q_emb):
     """对一题的所有 golden 做多策略 lowering。
+    部分 golden 改写失败的保留原文 —— 只要至少有一条成功则整体成功。
     返回 {"lowered_texts": [...], "lowered_embs": np.ndarray, "drops": [...], "lowered_min_sim": float}
-    或 None 如果某条 golden lowering 全部失败。
+    或 None 如果所有 golden 改写全部失败（全部原文和改写一样）。
     """
     goldens = rec["golden_memory"]
     if not goldens:
@@ -276,6 +277,7 @@ def build_lowered_golden(gen_client, emb_client, rec, q_emb):
     lowered_texts = []
     lowered_embs = []
     drops = []
+    n_lowered = 0
 
     for g_text in goldens:
         orig_emb = normalize(embed_texts(emb_client, [g_text], EMB_MODEL))[0]
@@ -286,12 +288,19 @@ def build_lowered_golden(gen_client, emb_client, rec, q_emb):
             orig_emb, orig_q, strategies)
 
         if best_text == g_text:
-            return None
+            # 改写失败，保留原文
+            lowered_texts.append(g_text)
+            lowered_embs.append(orig_emb)
+            drops.append(0.0)
+        else:
+            n_lowered += 1
+            drop = orig_q - best_q
+            lowered_texts.append(best_text)
+            lowered_embs.append(best_emb)
+            drops.append(round(drop, 5))
 
-        drop = orig_q - best_q
-        lowered_texts.append(best_text)
-        lowered_embs.append(best_emb)
-        drops.append(round(drop, 5))
+    if n_lowered == 0:
+        return None
 
     lowered_embs_arr = np.stack(lowered_embs)
     lowered_min_sim = float((lowered_embs_arr @ q_emb).min())
@@ -554,7 +563,7 @@ def process_one(gen_client, emb_client, rec, raw_lme_rec, golden_date=""):
     question = rec["question"]
     goldens = rec["golden_memory"]
 
-    stats = {"qid": qid, "qtype": rec["question_type"], "n_golden": len(goldens)}
+    stats = {"qid": qid, "question_id": qid, "qtype": rec["question_type"], "n_golden": len(goldens)}
 
     # 预计算 question embedding
     q_emb = normalize(embed_texts(emb_client, [question], EMB_MODEL))[0]
@@ -568,6 +577,7 @@ def process_one(gen_client, emb_client, rec, raw_lme_rec, golden_date=""):
     stats["lowered_min_sim"] = round(lowered_result["lowered_min_sim"], 5)
     stats["lowered_drops"] = lowered_result["drops"]
     stats["lowered_n"] = len(lowered_result["lowered_texts"])
+    stats["n_lowered_success"] = sum(1 for d in lowered_result["drops"] if d > 0)
 
     # Step 2: distractors (8 条严格达标)
     distractors, dist_stats = build_distractors(
@@ -626,10 +636,9 @@ def run_build(questions, raw_lme_map, out_dir, max_workers=8, resume=False):
     if resume and os.path.exists(main_path):
         done = json.load(open(main_path))
         done_qids = {r["question_id"] for r in done}
-        print(f"[resume] 已有 {len(done_qids)} 完成题，跳过")
-    if resume and os.path.exists(partial_path):
-        done_p = json.load(open(partial_path))
-        done_qids.update({r["question_id"] for r in done_p})
+        print(f"[resume] 已有 {len(done_qids)} 条主集记录跳过")
+    # 注意：partial 条目不跳过——它们需要重试
+    # （旧代码曾错误地加入了 partial 条目导致它们被跳过）
 
     gen_client = load_api_chat_completion(GEN_MODEL)
     emb_client = OpenAI(api_key=EMB_API_KEY, base_url=EMB_BASE_URL)
@@ -674,11 +683,18 @@ def run_build(questions, raw_lme_map, out_dir, max_workers=8, resume=False):
     # 合并断点续跑旧结果
     if resume:
         if os.path.exists(main_path):
-            records = json.load(open(main_path)) + records
+            old_main = json.load(open(main_path))
+            old_main_qids = {r["question_id"] for r in old_main}
+            records = old_main + records
         if os.path.exists(partial_path):
             old_p = json.load(open(partial_path))
-            old_qids = {p["qid"] for p in old_p}
-            partials = [p for p in partials if p["qid"] not in old_qids] + old_p
+            # 排除已成功的旧 partial 条目（它们现在在 records 里）
+            record_qids = {r["question_id"] for r in records}
+            old_p_filtered = [p for p in old_p
+                              if p.get("qid") not in record_qids
+                              and p.get("question_id") not in record_qids]
+            old_qids = {p.get("qid") or p.get("question_id") for p in old_p_filtered}
+            partials = [p for p in partials if (p.get("qid") or p.get("question_id")) not in old_qids] + old_p_filtered
 
     # 落盘
     with open(main_path, "w") as f:

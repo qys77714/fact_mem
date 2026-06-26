@@ -65,3 +65,18 @@ def test_embed_and_sim():
     assert all(-1.0 <= s <= 1.0 for s in sims)
     assert sims[0] > sims[1]              # same topic more similar
     assert abs(np.linalg.norm(vecs[0]) - 1.0) < 1e-5   # already normalized
+
+
+def test_generate_distractors_constraint():
+    gen = B.load_api_chat_completion("gemma4-26B")
+    emb = B.make_emb_client()
+    question = "Where does the user take yoga classes?"
+    q = B.embed_norm(emb, [question])[0]
+    lowered_min = 0.55   # 故意设低，便于在小预算内凑齐
+    dists = B.generate_distractors(gen, emb, question, "Serenity Yoga", q, lowered_min)
+    assert len(dists) <= 8
+    for d in dists:
+        assert d["sim_q"] > lowered_min
+        assert B.subject_is_user(d["text"])
+    texts = [d["text"] for d in dists]
+    assert len(set(texts)) == len(texts)        # 无完全重复

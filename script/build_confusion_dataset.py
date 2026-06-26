@@ -96,6 +96,55 @@ def sim_to_q(vecs, q_vec):
     return [float(v @ q_vec) for v in vecs]
 
 
+# ---- distractor 生成-过滤循环 --------------------------------------------------
+DISTRACTOR_PROMPT = (
+    "A user asked the following question in a conversation. Create ONE distractor memory "
+    "for adversarial robustness testing — a plausible factual statement ABOUT THE USER that:\n"
+    "1. TOPIC: same topic domain as the question, so a retriever embeds it near the answer.\n"
+    "2. WRONG VALUE: asserts a DIFFERENT, INCORRECT value than the true answer.\n"
+    "3. DIFFERENT STRUCTURE: rephrase entirely, do not just swap one word.\n"
+    "4. SUBJECT: the sentence MUST be third person with subject \"The user\" "
+    "(never \"I\", \"you\", \"they\").\n"
+    "5. NATURAL: sound like a real user memory.\n"
+    "{avoid}\n"
+    "Question: {question}\n\n"
+    "Return ONLY the statement, one sentence starting with \"The user\"."
+)
+DEDUP_COS = 0.97
+
+
+def generate_distractors(gen_client, emb_client, question, correct_answer,
+                         q_vec, lowered_min, existing_vecs=None):
+    picked = []
+    picked_vecs = [] if existing_vecs is None else list(existing_vecs)
+    for _round in range(MAX_ROUNDS):
+        if len(picked) >= N_DISTRACTORS:
+            break
+        avoid = ""
+        if picked:
+            avoid = "Avoid repeating these existing memories:\n- " + "\n- ".join(
+                d["text"] for d in picked) + "\n"
+        resp = gen_client.get_response_chat(
+            [{"role": "user", "content": DISTRACTOR_PROMPT.format(question=question, avoid=avoid)}],
+            max_new_tokens=128, temperature=0.9,
+        )
+        text = (resp or "").strip().strip('"').strip("'")
+        if not text or len(text) < 15 or not subject_is_user(text):
+            continue
+        vec = embed_norm(emb_client, [text])[0]
+        sim_q = float(vec @ q_vec)
+        if sim_q <= lowered_min:
+            continue
+        if any(float(vec @ pv) >= DEDUP_COS for pv in picked_vecs):
+            continue
+        ok, _info = verify_seed_answer(gen_client, question, text, correct_answer)
+        if not ok:
+            continue
+        picked.append({"text": text, "sim_q": round(sim_q, 5)})
+        picked_vecs.append(vec)
+    return picked
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)

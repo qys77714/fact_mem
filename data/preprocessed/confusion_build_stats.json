@@ -24,7 +24,7 @@
   "avg_lowered_drop": 0.02857,
   "avg_distractor_sim_q": 0.74662,
   "fail_reasons": {
-    "distractor_fail": 9,
-    "lowered_fail": 77
+    "distractor_fail": 8,
+    "lowered_fail": 59
   }
 }

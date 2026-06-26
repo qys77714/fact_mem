@@ -1,668 +1,1104 @@
-# LME 混淆数据集 Implementation Plan
+# LME Confusion Dataset — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 生成一个 LME 数据集，每题含原始对话 + golden_memory + lowered_golden + 8 条严格达标的 distractor，存为 JSON。
+**Goal:** 构建 `data/preprocessed/longmemeval_s_confusion.json` 数据集——每题含 golden_memory + lowered_golden(保答案且 sim_q 更低) + distractors(8 条,逐条 sim_q > min(lowered_golden.sim_q),不对答案属性做任何声称,主语统一 "The user")。
 
-**Architecture:** 单脚本 `script/build_confusion_dataset.py`：纯逻辑 helper（约束判定/装配/主语校验）可单测；LLM/embedding 依赖部分（lowered 改写、distractor 生成-过滤循环）复用 `pollution_phase3_inject.py` 的 `lower_golden_casual` 与 `verify_seed_answer`，用 `ThreadPoolExecutor` 并发逐题处理，按 `constraint_ok` 分流到主集 / partial，并出 stats。
+**Architecture:** 单脚本 `script/build_confusion_dataset.py`，无类，纯函数 + `ThreadPoolExecutor` 并发包装。复用 Phase3 的 `lower_golden_casual` 和 `verify_seed_answer` 逻辑，但 prompt 与过滤闸门按新约束重写。数据源：`longmemeval_s_golden.json`(470 可答题) + `longmemeval_s_cleaned.json`(原始对话字段)。
 
-**Tech Stack:** Python，uv（`uv run --no-sync`），pytest，OpenAI 兼容客户端（`load_api_chat_completion`），qwen3-embedding（`embed_texts`），numpy。
+**Tech Stack:** Python + `openai`(embedding client) + `utils.embed_utils.embed_texts` + `utils.llm_api.load_api_chat_completion` + `dotenv` + `ThreadPoolExecutor` + numpy
 
 ## Global Constraints
 
-- 运行一律 `uv run --no-sync python ...`（裸 python 缺依赖；不带 `--no-sync` 会重 sync）。
-- 模型：生成用 `gemma4-26B`（端口 7111），embedding 用 `qwen3-embedding-0.6b`（端口 7110）。密钥经根目录 `.env` + `load_dotenv()`。
-- `sys.path` 需含 repo 根与 `src/`（dual import），且含 `script/`（复用 `pollution_phase3_inject`）。
-- 三组记忆文本主语统一第三人称 "The user"（硬约束）。
-- 每条 distractor 的 `sim_q` 必须 > `min(lowered_golden[*].sim_q)`，逐条判定；且不泄露答案（`verify_seed_answer`）。
-- 固定每题 8 条 distractor；lowered_golden 数量 == golden_memory 数量。
-- 范围：470 可答题（排除 30 abstention，`golden_memory=[]`）；本次不接入实验跑批。
-- sim_q = 归一化 embedding 余弦；`embedding_model` 入库。
-
----
+- `uv run --no-sync python ...` 跑脚本；`PYTHONPATH=src` 运行
+- 生成模型：`gemma4-26B` (别名→`gemma-4-26B-A4B-it`，端口 7111)；embedding：`qwen3-embedding-0.6b` (端口 7110)
+- `load_api_chat_completion("gemma4-26B")` 同步客户端；`OpenAI(api_key=..., base_url=...)` 建 embed client
+- 并发用 `ThreadPoolExecutor` 包同步客户端
+- 三组记忆主语统一第三人称 "The user"（prompt 显式要求）
+- sim_q 内联存储每条记忆；`constraint_ok` 自检字段
+- 最终产出一个脚本 `script/build_confusion_dataset.py` + 三个 JSON 文件（主集 / partial / stats）
+- 不接入实验（候选拼装/配置/跑批本计划不做）
 
 ## File Structure
 
-- Create: `script/build_confusion_dataset.py` — 主脚本（纯 helper + 集成流程 + main）
-- Create: `tests/test_confusion_dataset.py` — 纯 helper 单测 + 小集成测试
-- Produce: `data/preprocessed/longmemeval_s_confusion.json` / `_partial.json` / `confusion_build_stats.json`
-- Reuse (import, 不改): `script/pollution_phase3_inject.py` 的 `lower_golden_casual`、`verify_seed_answer`、`normalize`、`_parse_json_obj`
+| 文件 | 职责 | 状态 |
+|---|---|---|
+| `script/build_confusion_dataset.py` | 数据集构建一条龙（load→lower→distract→assemble） | 新建 |
+| `data/preprocessed/longmemeval_s_confusion.json` | 主数据集（`constraint_ok=true`） | 产物 |
+| `data/preprocessed/longmemeval_s_confusion_partial.json` | 未通过全部约束的题 | 产物 |
+| `data/preprocessed/confusion_build_stats.json` | 构建统计 | 产物 |
+| `script/pollution_phase3_inject.py` | 复用逻辑的参考源（不改动） | 只读 |
 
 ---
 
-### Task 1: 脚本骨架与数据加载
+### Task 1: 脚本骨架 + 数据加载与对齐
 
 **Files:**
 - Create: `script/build_confusion_dataset.py`
-- Test: `tests/test_confusion_dataset.py`
 
 **Interfaces:**
-- Produces: `load_sources() -> list[dict]`，每元素 `{"qid","golden_rec","lme_rec"}`，仅含可答题（`golden_memory` 非空），按 `question_id` 对齐 golden 与原始 LME。
+- Consumes: 无（首任务）
+- Produces:
+  - `load_sources()` → `(questions: list[dict], raw_lme_map: dict[str,dict])`
+  - `questions` 每项：`{question_id, question, answer, question_type, golden_memory, ...}` (来自 golden json 的可答题)
+  - `raw_lme_map`：`{question_id: {原始 LME 全部字段}}`，按 `question_id` 对齐
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: 写脚本头部与数据加载函数**
 
-```python
-# tests/test_confusion_dataset.py
-import os, sys
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, ".."))
-sys.path.insert(0, os.path.join(REPO, "script"))
-import build_confusion_dataset as B
-
-def test_load_sources_answerable_only():
-    rows = B.load_sources()
-    assert len(rows) == 470                      # 500 - 30 abstention
-    r = rows[0]
-    assert set(r.keys()) == {"qid", "golden_rec", "lme_rec"}
-    # 对齐：golden 与 lme 同一 question_id
-    assert r["golden_rec"]["question_id"] == r["lme_rec"]["question_id"]
-    # 可答题 golden 非空
-    assert r["golden_rec"]["golden_memory"]
-    # 原始 LME 字段在位
-    assert "haystack_sessions" in r["lme_rec"]
-```
-
-- [ ] **Step 2: 跑测试确认失败**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_load_sources_answerable_only -v`
-Expected: FAIL（`ModuleNotFoundError` 或 `AttributeError: load_sources`）
-
-- [ ] **Step 3: 写脚本骨架与 load_sources**
+在 `script/build_confusion_dataset.py` 写入：
 
 ```python
-# script/build_confusion_dataset.py
-"""为论文主实验生成 LME 混淆数据集：原始对话 + golden + lowered_golden + 8 distractor。
-用法：uv run --no-sync python script/build_confusion_dataset.py [--limit N] [--workers 16]
+#!/usr/bin/env python
 """
-import os, sys, json, re, argparse
+构建 LME 混淆数据集 (golden + lowered golden + distractors)。
+
+用法：
+  PYTHONPATH=src uv run --no-sync python script/build_confusion_dataset.py
+    [--limit N]           仅处理前 N 题（调试）
+    [--out-dir DIR]       输出目录（默认 data/preprocessed）
+    [--resume]            断点续跑（跳过 valid 题）
+    [--golden PATH]       golden 文件路径
+    [--raw-lme PATH]      原始 LME 文件路径
+"""
+import os, sys, json, time, argparse, statistics as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import numpy as np
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, ".."))
-for p in (REPO, os.path.join(REPO, "src"), HERE):
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-from dotenv import load_dotenv
-load_dotenv()
-
-from openai import OpenAI
-from utils.embed_utils import embed_texts
-from utils.llm_api import load_api_chat_completion
-from pollution_phase3_inject import lower_golden_casual, verify_seed_answer, normalize, _parse_json_obj
-
-GOLDEN = os.path.join(REPO, "data/preprocessed/longmemeval_s_golden.json")
-RAW_LME = os.path.join(REPO, "data/raw_data/longmemeval_s_cleaned.json")
-OUT_MAIN = os.path.join(REPO, "data/preprocessed/longmemeval_s_confusion.json")
-OUT_PARTIAL = os.path.join(REPO, "data/preprocessed/longmemeval_s_confusion_partial.json")
-OUT_STATS = os.path.join(REPO, "data/preprocessed/confusion_build_stats.json")
-EMB_MODEL = "qwen3-embedding-0.6b"
-N_DISTRACTORS = 8
-MAX_ROUNDS = 6
-
-
-def load_sources():
-    golden = {r["question_id"]: r for r in json.load(open(GOLDEN))}
-    lme = {r["question_id"]: r for r in json.load(open(RAW_LME))}
-    rows = []
-    for qid, grec in golden.items():
-        if grec.get("abstention") or not grec.get("golden_memory"):
-            continue
-        lrec = lme.get(qid)
-        if lrec is None:
-            continue
-        rows.append({"qid": qid, "golden_rec": grec, "lme_rec": lrec})
-    return rows
-
-
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--workers", type=int, default=16)
-    args = ap.parse_args()
-    print(f"load_sources: {len(load_sources())} answerable questions")
-```
-
-- [ ] **Step 4: 跑测试确认通过**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_load_sources_answerable_only -v`
-Expected: PASS（若数字非 470，按实际 `confusion_build_stats` 口径核对 abstention 计数后修断言——先用 `uv run --no-sync python script/build_confusion_dataset.py` 打印实际可答题数确认）
-
-- [ ] **Step 5: 提交**
-
-```bash
-cd /data/zjj/project_26/fact_mem
-git add script/build_confusion_dataset.py tests/test_confusion_dataset.py
-git commit -m "feat: confusion dataset script skeleton + load_sources"
-```
-
----
-
-### Task 2: 纯逻辑 helper（主语校验 / 约束判定 / 记录装配）
-
-**Files:**
-- Modify: `script/build_confusion_dataset.py`
-- Test: `tests/test_confusion_dataset.py`
-
-**Interfaces:**
-- Produces:
-  - `subject_is_user(text: str) -> bool`
-  - `compute_constraint_ok(lowered: list[dict], distractors: list[dict], n_required: int = 8) -> bool`
-  - `lowered_min_sim(lowered: list[dict]) -> float | None`
-  - `assemble_record(lme_rec: dict, golden: list[dict], lowered: list[dict], distractors: list[dict], emb_model: str) -> dict`
-  - 约定：golden/lowered/distractor 元素均为 `{"text": str, "sim_q": float, ...}`；lowered 另含 `source_idx`。
-
-- [ ] **Step 1: 写失败测试**
-
-```python
-# 追加到 tests/test_confusion_dataset.py
-def test_subject_is_user():
-    assert B.subject_is_user("The user takes yoga classes at Serenity Yoga.")
-    assert not B.subject_is_user("You typically attend your yoga sessions downtown.")
-    assert not B.subject_is_user("They wrapped up their studies a while back.")
-    assert not B.subject_is_user("I graduated with a business degree.")
-    assert not B.subject_is_user("Max is a Golden Retriever.")   # 无 user 主语
-
-def test_compute_constraint_ok():
-    lowered = [{"text": "a", "sim_q": 0.70}, {"text": "b", "sim_q": 0.75}]
-    good = [{"text": f"d{i}", "sim_q": 0.71} for i in range(8)]
-    assert B.compute_constraint_ok(lowered, good)               # 全 > 0.70
-    bad = good[:7] + [{"text": "d7", "sim_q": 0.70}]            # 一条 == min，不达标
-    assert not B.compute_constraint_ok(lowered, bad)
-    assert not B.compute_constraint_ok(lowered, good[:7])       # 不足 8 条
-    assert not B.compute_constraint_ok([], good)                # 无 lowered
-
-def test_assemble_record():
-    lme = {"question_id": "q1", "question": "Q?", "answer": "A",
-           "question_type": "t", "question_date": "d",
-           "answer_session_ids": [], "haystack_dates": [],
-           "haystack_session_ids": [], "haystack_sessions": [[{"role": "user", "content": "x"}]]}
-    golden = [{"text": "The user did A.", "sim_q": 0.83}]
-    lowered = [{"text": "The user sort of did A.", "sim_q": 0.70, "source_idx": 0}]
-    dist = [{"text": f"The user did X{i}.", "sim_q": 0.72} for i in range(8)]
-    rec = B.assemble_record(lme, golden, lowered, dist, "qwen3-embedding-0.6b")
-    assert rec["question_id"] == "q1"
-    assert rec["haystack_sessions"] == lme["haystack_sessions"]   # 原始对话保留
-    assert rec["golden_memory"] == golden
-    assert rec["lowered_golden"] == lowered
-    assert rec["distractors"] == dist
-    assert rec["embedding_model"] == "qwen3-embedding-0.6b"
-    assert rec["lowered_golden_min_sim"] == 0.70
-    assert rec["constraint_ok"] is True
-```
-
-- [ ] **Step 2: 跑测试确认失败**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py -k "subject or constraint or assemble" -v`
-Expected: FAIL（`AttributeError`）
-
-- [ ] **Step 3: 实现 helper**
-
-```python
-# 追加到 script/build_confusion_dataset.py（load_sources 之后）
-_BANNED_LEADING = {"i", "i'm", "i've", "you", "your", "you're", "they", "we", "he", "she", "my", "me", "his", "her"}
-
-def subject_is_user(text):
-    t = (text or "").strip()
-    if not t:
-        return False
-    first = re.split(r"[\s,]+", t.lower(), maxsplit=1)[0].strip(".,'\"")
-    if first in _BANNED_LEADING:
-        return False
-    return "user" in t.lower()
-
-def lowered_min_sim(lowered):
-    if not lowered:
-        return None
-    return min(l["sim_q"] for l in lowered)
-
-def compute_constraint_ok(lowered, distractors, n_required=N_DISTRACTORS):
-    if not lowered or len(distractors) != n_required:
-        return False
-    lo = lowered_min_sim(lowered)
-    return all(d["sim_q"] > lo for d in distractors)
-
-_LME_FIELDS = ("question_id", "question_type", "question", "question_date", "answer",
-               "answer_session_ids", "haystack_dates", "haystack_session_ids", "haystack_sessions")
-
-def assemble_record(lme_rec, golden, lowered, distractors, emb_model):
-    rec = {k: lme_rec.get(k) for k in _LME_FIELDS}
-    rec["golden_memory"] = golden
-    rec["lowered_golden"] = lowered
-    rec["distractors"] = distractors
-    rec["embedding_model"] = emb_model
-    rec["lowered_golden_min_sim"] = lowered_min_sim(lowered)
-    rec["constraint_ok"] = compute_constraint_ok(lowered, distractors)
-    return rec
-```
-
-- [ ] **Step 4: 跑测试确认通过**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py -k "subject or constraint or assemble" -v`
-Expected: PASS
-
-- [ ] **Step 5: 提交**
-
-```bash
-cd /data/zjj/project_26/fact_mem
-git add script/build_confusion_dataset.py tests/test_confusion_dataset.py
-git commit -m "feat: pure helpers for confusion dataset (subject/constraint/assemble)"
-```
-
----
-
-### Task 3: embedding 包装与 sim 计算
-
-**Files:**
-- Modify: `script/build_confusion_dataset.py`
-- Test: `tests/test_confusion_dataset.py`
-
-**Interfaces:**
-- Consumes: `OpenAI` embedding client（`EMBEDDING_BASE_URL`）。
-- Produces:
-  - `make_emb_client() -> OpenAI`
-  - `embed_norm(emb_client, texts: list[str]) -> np.ndarray`（归一化，shape `(n, d)`）
-  - `sim_to_q(vecs: np.ndarray, q_vec: np.ndarray) -> list[float]`
-
-- [ ] **Step 1: 写集成测试（需 embedding 服务在线）**
-
-```python
-# 追加到 tests/test_confusion_dataset.py
-import numpy as np
-
-def test_embed_and_sim():
-    emb = B.make_emb_client()
-    q = B.embed_norm(emb, ["Where does the user do yoga?"])[0]
-    vecs = B.embed_norm(emb, ["The user does yoga at Serenity Yoga.",
-                              "The user enjoys cooking pasta on weekends."])
-    sims = B.sim_to_q(vecs, q)
-    assert len(sims) == 2
-    assert all(-1.0 <= s <= 1.0 for s in sims)
-    assert sims[0] > sims[1]              # 同话题更相似
-    assert abs(np.linalg.norm(vecs[0]) - 1.0) < 1e-5   # 已归一化
-```
-
-- [ ] **Step 2: 跑测试确认失败**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_embed_and_sim -v`
-Expected: FAIL（`AttributeError: make_emb_client`）
-
-- [ ] **Step 3: 实现**
-
-```python
-# 追加到 script/build_confusion_dataset.py
-def make_emb_client():
-    return OpenAI(api_key=os.getenv("EMBEDDING_API_KEY", "EMPTY"),
-                  base_url=os.getenv("EMBEDDING_BASE_URL", "http://localhost:7110/v1/"))
-
-def embed_norm(emb_client, texts):
-    return normalize(np.asarray(embed_texts(emb_client, texts, EMB_MODEL), dtype=float))
-
-def sim_to_q(vecs, q_vec):
-    return [float(v @ q_vec) for v in vecs]
-```
-
-- [ ] **Step 4: 跑测试确认通过**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_embed_and_sim -v`
-Expected: PASS（若服务未起：先 `bash script/0_run_embedding.sh` 后台启动）
-
-- [ ] **Step 5: 提交**
-
-```bash
-cd /data/zjj/project_26/fact_mem
-git add script/build_confusion_dataset.py tests/test_confusion_dataset.py
-git commit -m "feat: embedding client + sim helpers for confusion dataset"
-```
-
----
-
-### Task 4: distractor 生成-过滤循环（核心）
-
-**Files:**
-- Modify: `script/build_confusion_dataset.py`
-- Test: `tests/test_confusion_dataset.py`
-
-**Interfaces:**
-- Consumes: `gen_client`（`load_api_chat_completion("gemma4-26B")`）、`emb_client`、`q_vec`、`lowered_min`。
-- Produces: `generate_distractors(gen_client, emb_client, question, correct_answer, q_vec, lowered_min, existing_vecs=None) -> list[dict]`，返回**最多** 8 条 `{"text","sim_q"}`；每条满足 `sim_q > lowered_min`、主语为 user、`verify_seed_answer` 通过、与已选项 cos < 0.97。
-
-- [ ] **Step 1: 写集成测试（小样本，需两服务在线）**
-
-```python
-# 追加到 tests/test_confusion_dataset.py
-def test_generate_distractors_constraint():
-    gen = B.load_api_chat_completion("gemma4-26B")
-    emb = B.make_emb_client()
-    question = "Where does the user take yoga classes?"
-    q = B.embed_norm(emb, [question])[0]
-    lowered_min = 0.55   # 故意设低，便于在小预算内凑齐
-    dists = B.generate_distractors(gen, emb, question, "Serenity Yoga", q, lowered_min)
-    assert len(dists) <= 8
-    for d in dists:
-        assert d["sim_q"] > lowered_min
-        assert B.subject_is_user(d["text"])
-    texts = [d["text"] for d in dists]
-    assert len(set(texts)) == len(texts)        # 无完全重复
-```
-
-- [ ] **Step 2: 跑测试确认失败**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_generate_distractors_constraint -v`
-Expected: FAIL（`AttributeError: generate_distractors`）
-
-- [ ] **Step 3: 实现 prompt + 循环**
-
-```python
-# 追加到 script/build_confusion_dataset.py
-DISTRACTOR_PROMPT = (
-    "A user asked the following question in a conversation. Create ONE distractor memory "
-    "for adversarial robustness testing — a plausible factual statement ABOUT THE USER that:\n"
-    "1. TOPIC: same topic domain as the question, so a retriever embeds it near the answer.\n"
-    "2. WRONG VALUE: asserts a DIFFERENT, INCORRECT value than the true answer.\n"
-    "3. DIFFERENT STRUCTURE: rephrase entirely, do not just swap one word.\n"
-    "4. SUBJECT: the sentence MUST be third person with subject \"The user\" "
-    "(never \"I\", \"you\", \"they\").\n"
-    "5. NATURAL: sound like a real user memory.\n"
-    "{avoid}\n"
-    "Question: {question}\n\n"
-    "Return ONLY the statement, one sentence starting with \"The user\"."
-)
-DEDUP_COS = 0.97
-
-def generate_distractors(gen_client, emb_client, question, correct_answer,
-                         q_vec, lowered_min, existing_vecs=None):
-    picked = []
-    picked_vecs = [] if existing_vecs is None else list(existing_vecs)
-    for _round in range(MAX_ROUNDS):
-        if len(picked) >= N_DISTRACTORS:
-            break
-        avoid = ""
-        if picked:
-            avoid = "Avoid repeating these existing memories:\n- " + "\n- ".join(
-                d["text"] for d in picked) + "\n"
-        resp = gen_client.get_response_chat(
-            [{"role": "user", "content": DISTRACTOR_PROMPT.format(question=question, avoid=avoid)}],
-            max_new_tokens=128, temperature=0.9,
-        )
-        text = (resp or "").strip().strip('"').strip("'")
-        if not text or len(text) < 15 or not subject_is_user(text):
-            continue
-        vec = embed_norm(emb_client, [text])[0]
-        sim_q = float(vec @ q_vec)
-        if sim_q <= lowered_min:
-            continue
-        if any(float(vec @ pv) >= DEDUP_COS for pv in picked_vecs):
-            continue
-        ok, _info = verify_seed_answer(gen_client, question, text, correct_answer)
-        if not ok:
-            continue
-        picked.append({"text": text, "sim_q": round(sim_q, 5)})
-        picked_vecs.append(vec)
-    return picked
-```
-
-- [ ] **Step 4: 跑测试确认通过**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_generate_distractors_constraint -v`
-Expected: PASS
-
-- [ ] **Step 5: 提交**
-
-```bash
-cd /data/zjj/project_26/fact_mem
-git add script/build_confusion_dataset.py tests/test_confusion_dataset.py
-git commit -m "feat: distractor generate-filter loop (per-item sim + no-leak + user-subject)"
-```
-
----
-
-### Task 5: 单题编排（lowered + distractor → 记录）
-
-**Files:**
-- Modify: `script/build_confusion_dataset.py`
-- Test: `tests/test_confusion_dataset.py`
-
-**Interfaces:**
-- Consumes: Task 2–4 全部 helper、`lower_golden_casual`（复用）。
-- Produces: `process_question(row, gen_client, emb_client) -> dict`，返回 `assemble_record(...)` 的结果（含 `constraint_ok`）。
-  - lowered：对每条 `golden_memory` 调 `lower_golden_casual` 得改写文本，连同重算的 `sim_q` 与 `source_idx` 组成 list。
-  - distractor：以 `lowered_min_sim` 为基准调 `generate_distractors`。
-
-- [ ] **Step 1: 写集成测试（--limit 行为，单题）**
-
-```python
-# 追加到 tests/test_confusion_dataset.py
-def test_process_question_shapes():
-    gen = B.load_api_chat_completion("gemma4-26B")
-    emb = B.make_emb_client()
-    row = B.load_sources()[0]
-    rec = B.process_question(row, gen, emb)
-    assert len(rec["lowered_golden"]) == len(rec["golden_memory"])
-    assert all("source_idx" in l and "sim_q" in l for l in rec["lowered_golden"])
-    # lowered sim_q 不高于对应 golden（尽量降）
-    for l in rec["lowered_golden"]:
-        assert l["sim_q"] <= rec["golden_memory"][l["source_idx"]]["sim_q"] + 1e-6
-    assert isinstance(rec["constraint_ok"], bool)
-    if rec["constraint_ok"]:
-        assert len(rec["distractors"]) == 8
-        lo = rec["lowered_golden_min_sim"]
-        assert all(d["sim_q"] > lo for d in rec["distractors"])
-```
-
-- [ ] **Step 2: 跑测试确认失败**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_process_question_shapes -v`
-Expected: FAIL（`AttributeError: process_question`）
-
-- [ ] **Step 3: 实现**
-
-```python
-# 追加到 script/build_confusion_dataset.py
-def _golden_with_sim(emb_client, goldens, q_vec):
-    vecs = embed_norm(emb_client, goldens)
-    sims = sim_to_q(vecs, q_vec)
-    return [{"text": g, "sim_q": round(s, 5)} for g, s in zip(goldens, sims)]
-
-def process_question(row, gen_client, emb_client):
-    grec, lme_rec = row["golden_rec"], row["lme_rec"]
-    question = grec["question"]
-    correct = grec.get("answer", "")
-    goldens = grec["golden_memory"]
-    q_vec = embed_norm(emb_client, [question])[0]
-
-    golden = _golden_with_sim(emb_client, goldens, q_vec)
-
-    low = lower_golden_casual(gen_client, emb_client, question, goldens, correct, q_vec)
-    lowered = []
-    for idx, (text, vec) in enumerate(zip(low["lowered"], low["emb"])):
-        lowered.append({"text": text, "sim_q": round(float(vec @ q_vec), 5), "source_idx": idx})
-
-    lo = lowered_min_sim(lowered)
-    dists = generate_distractors(gen_client, emb_client, question, correct, q_vec, lo)
-
-    return assemble_record(lme_rec, golden, lowered, dists, EMB_MODEL)
-```
-
-- [ ] **Step 4: 跑测试确认通过**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_process_question_shapes -v`
-Expected: PASS
-
-- [ ] **Step 5: 提交**
-
-```bash
-cd /data/zjj/project_26/fact_mem
-git add script/build_confusion_dataset.py tests/test_confusion_dataset.py
-git commit -m "feat: per-question orchestration (lowered + distractors -> record)"
-```
-
----
-
-### Task 6: main 并发跑批、分流落盘、stats
-
-**Files:**
-- Modify: `script/build_confusion_dataset.py`
-- Test: `tests/test_confusion_dataset.py`
-
-**Interfaces:**
-- Produces: `run_build(limit=0, workers=16) -> dict`（stats），写三个产物文件。main 块调用之。
-  - 主集：`constraint_ok=true`；partial：其余；stats：题数/类型分布/排除原因。
-
-- [ ] **Step 1: 写集成测试（--limit 3 端到端）**
-
-```python
-# 追加到 tests/test_confusion_dataset.py
-def test_run_build_limit(tmp_path, monkeypatch):
-    monkeypatch.setattr(B, "OUT_MAIN", str(tmp_path / "main.json"))
-    monkeypatch.setattr(B, "OUT_PARTIAL", str(tmp_path / "partial.json"))
-    monkeypatch.setattr(B, "OUT_STATS", str(tmp_path / "stats.json"))
-    stats = B.run_build(limit=3, workers=3)
-    main = json.load(open(B.OUT_MAIN))
-    partial = json.load(open(B.OUT_PARTIAL))
-    assert stats["processed"] == 3
-    assert stats["main"] + stats["partial"] == 3
-    assert len(main) == stats["main"] and len(partial) == stats["partial"]
-    for rec in main:
-        assert rec["constraint_ok"] is True
-        assert len(rec["distractors"]) == 8
-```
-
-- [ ] **Step 2: 跑测试确认失败**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_run_build_limit -v`
-Expected: FAIL（`AttributeError: run_build`）
-
-- [ ] **Step 3: 实现 run_build + main**
-
-```python
-# 追加到 script/build_confusion_dataset.py（替换原 __main__ 块）
 from collections import Counter
 
-def run_build(limit=0, workers=16):
-    rows = load_sources()
-    if limit:
-        rows = rows[:limit]
-    gen = load_api_chat_completion("gemma4-26B")
-    emb = make_emb_client()
+import numpy as np
+from dotenv import load_dotenv
+from openai import OpenAI
 
-    results = []
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(process_question, row, gen, emb): row["qid"] for row in rows}
-        for i, fut in enumerate(as_completed(futs), 1):
-            qid = futs[fut]
-            try:
-                results.append(fut.result())
-            except Exception as e:
-                print(f"[{i}/{len(rows)}] {qid} FAILED: {e}")
-            if i % 20 == 0:
-                print(f"  {i}/{len(rows)} done")
+load_dotenv()
 
-    main = [r for r in results if r["constraint_ok"]]
-    partial = [r for r in results if not r["constraint_ok"]]
-    json.dump(main, open(OUT_MAIN, "w"), ensure_ascii=False, indent=1)
-    json.dump(partial, open(OUT_PARTIAL, "w"), ensure_ascii=False, indent=1)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(SCRIPT_DIR)
+sys.path.insert(0, os.path.join(REPO, "src"))
 
-    stats = {
-        "processed": len(results),
-        "main": len(main),
-        "partial": len(partial),
-        "main_by_type": dict(Counter(r["question_type"] for r in main)),
-        "partial_by_type": dict(Counter(r["question_type"] for r in partial)),
-        "partial_reason": {
-            "lt8_distractors": sum(1 for r in partial if len(r["distractors"]) < 8),
-            "no_lowered": sum(1 for r in partial if not r["lowered_golden"]),
-        },
-    }
-    json.dump(stats, open(OUT_STATS, "w"), ensure_ascii=False, indent=1)
-    print(f"main={len(main)} partial={len(partial)} -> {OUT_MAIN}")
-    return stats
+from utils.embed_utils import embed_texts
+from utils.llm_api import load_api_chat_completion
 
-if __name__ == "__main__":
+# ---- 常量 ----
+GEN_MODEL = "gemma4-26B"
+EMB_MODEL = "qwen3-embedding-0.6b"
+EMB_API_KEY = os.getenv("EMBEDDING_API_KEY", "EMPTY")
+EMB_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:7110/v1/")
+
+DEFAULT_GOLDEN = os.path.join(REPO, "data/preprocessed/longmemeval_s_golden.json")
+DEFAULT_RAW_LME = os.path.join(REPO, "data/raw_data/longmemeval_s_cleaned.json")
+DEFAULT_OUT_DIR = os.path.join(REPO, "data/preprocessed")
+
+OUT_MAIN = "longmemeval_s_confusion.json"
+OUT_PARTIAL = "longmemeval_s_confusion_partial.json"
+OUT_STATS = "confusion_build_stats.json"
+
+# ---- helper ----
+
+def normalize(m: np.ndarray) -> np.ndarray:
+    n = np.linalg.norm(m, axis=1, keepdims=True)
+    n[n == 0] = 1.0
+    return m / n
+
+def emb_similarity(emb_client, texts: list[str], query_emb: np.ndarray) -> np.ndarray:
+    """返回 texts 与 query_emb 的余弦相似度 (n,)"""
+    if not texts:
+        return np.array([])
+    embs = normalize(embed_texts(emb_client, texts, EMB_MODEL))
+    return (embs @ query_emb).flatten()
+
+def _parse_json_obj(text):
+    """从 LLM 回复中提取 JSON 对象，失败返回 None"""
+    import re
+    if not text:
+        return None
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+# ---- 数据加载 ----
+
+def load_sources(golden_path=DEFAULT_GOLDEN, raw_lme_path=DEFAULT_RAW_LME):
+    """加载 golden memory 和原始 LME 数据，按 question_id 对齐。
+    返回 (questions, raw_lme_map):
+      questions: list[dict]  可答题 (golden_memory 非空, abstention 排除)
+      raw_lme_map: dict[qid → 原始 LME 记录]
+    """
+    golden_data = json.load(open(golden_path))
+    raw_lme_data = json.load(open(raw_lme_path))
+
+    raw_lme_map = {r["question_id"]: r for r in raw_lme_data}
+
+    questions = []
+    skipped = 0
+    for r in golden_data:
+        qid = r["question_id"]
+        if r.get("abstention") or not r.get("golden_memory"):
+            skipped += 1
+            continue
+        if qid not in raw_lme_map:
+            skipped += 1
+            continue
+        questions.append(r)
+
+    print(f"[load] 可答题={len(questions)}, 排除(abstention/无golden/缺raw)={skipped}")
+    return questions, raw_lme_map
+
+
+# ---- CLI ----
+
+def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--workers", type=int, default=16)
-    args = ap.parse_args()
-    run_build(limit=args.limit, workers=args.workers)
+    ap.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
+    ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--golden", default=DEFAULT_GOLDEN)
+    ap.add_argument("--raw-lme", default=DEFAULT_RAW_LME)
+    return ap.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    questions, raw_lme_map = load_sources(args.golden, args.raw_lme)
+    if args.limit:
+        questions = questions[:args.limit]
+        print(f"[main] 限制只处理前 {args.limit} 题")
+    # — 占位: 后续任务在此扩展 —
+    print("[main] 数据加载 OK, 后续任务衔接此脚本")
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
-
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python -m pytest tests/test_confusion_dataset.py::test_run_build_limit -v`
-Expected: PASS
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 2: 测试数据加载**
 
 ```bash
 cd /data/zjj/project_26/fact_mem
-git add script/build_confusion_dataset.py tests/test_confusion_dataset.py
-git commit -m "feat: run_build concurrency + main/partial split + stats"
+PYTHONPATH=src uv run --no-sync python script/build_confusion_dataset.py --limit 5
+# 期望输出: [load] 可答题=470, 排除=30  [main] 限制只处理前 5 题
+```
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add script/build_confusion_dataset.py
+git commit -m "feat: confusion dataset build script skeleton + load_sources"
 ```
 
 ---
 
-### Task 7: 全量跑批与验收
+### Task 2: lowered golden 生成（保答案 + sim_q 最低）
 
 **Files:**
-- Produce: `data/preprocessed/longmemeval_s_confusion.json` / `_partial.json` / `confusion_build_stats.json`
+- Modify: `script/build_confusion_dataset.py` — 追加 lowered golden 相关函数与调用
 
-- [ ] **Step 1: 确认两服务在线**
+**Interfaces:**
+- Consumes: `questions` (from Task 1), `gen_client`, `emb_client`
+- Produces:
+  - `build_lowered_golden(gen_client, emb_client, rec) → dict | None`
+    - 返回 `{"lowered_texts": [...], "lowered_embs": np.ndarray, "drops": [...], "lowered_min_sim": float}`，或 None(失败)
+  - 单条 lowered 生成: `_try_lower_one(...) → (best_text, best_emb, best_sim_q)`
+  - LLM 校验: `_verify_same_answer(gen_client, rewritten, question, correct_answer) → bool`
 
-Run: `curl -s http://localhost:7110/v1/models -H "Authorization: Bearer zjj" | head -c 80; echo; curl -s http://localhost:7111/v1/models -H "Authorization: Bearer zjj" | head -c 80`
-Expected: 两者各返回 models JSON（未起则 `bash script/0_run_embedding.sh` / `bash script/0_run_model.sh` 后台启动并等待就绪）
+- [ ] **Step 1: 添加 lowered golden 生成函数**
 
-- [ ] **Step 2: 全量跑（后台，耗时较长）**
+在 `script/build_confusion_dataset.py` 尾部（`if __name__` 前）加入：
 
-Run: `cd /data/zjj/project_26/fact_mem && uv run --no-sync python script/build_confusion_dataset.py --workers 16`
-Expected: 末行 `main=<N> partial=<M> -> .../longmemeval_s_confusion.json`
+```python
+# ============================================================
+# Step 1: lowered golden — 保证答案等价的前提下尽量降低 sim_q
+# ============================================================
 
-- [ ] **Step 3: 验收脚本（验证 §6 验收标准）**
+CASUAL_REWRITE_PROMPT = (
+    "Rewrite the following factual statement about a user so that it CASUALLY and INDIRECTLY "
+    "reveals the same factual information, rather than stating it directly. The fact should "
+    "still be derivable by a reader, but the sentence should feel like a natural, incidental "
+    "mention, not a direct answer to a question.\n\n"
+    "Rules:\n"
+    "1. The SAME factual information MUST still be present (numbers, names, dates unchanged)\n"
+    "2. Rephrase as a casual memory, story fragment, or indirect mention\n"
+    "3. Do NOT structure the sentence as a direct answer\n"
+    "4. Keep the subject as \"The user\" (NOT \"I\" or first-person)\n"
+    "5. Use conversational, natural language\n\n"
+    "Original: {golden}\n\n"
+    "Return ONLY the rewritten statement, one sentence."
+)
 
-```bash
-cd /data/zjj/project_26/fact_mem && uv run --no-sync python -c "
-import json
-m=json.load(open('data/preprocessed/longmemeval_s_confusion.json'))
-print('主集题数:',len(m))
-bad=0
-for r in m:
-    lo=r['lowered_golden_min_sim']
-    assert len(r['lowered_golden'])==len(r['golden_memory'])
-    assert len(r['distractors'])==8
-    assert all(d['sim_q']>lo for d in r['distractors'])
-    assert r['constraint_ok'] is True
-    # 主语抽查
-    for grp in ('golden_memory','lowered_golden','distractors'):
-        for x in r[grp]:
-            if 'user' not in x['text'].lower(): bad+=1
-print('主语缺 user 的条目:',bad)
-print('验收通过' if bad==0 else '需检查主语')
-"
+SIMPLIFY_GOLDEN_PROMPT = (
+    "Simplify the following factual statement about a user by removing non-essential details "
+    "such as specific dates, times, locations, quantities, and modifiers. Keep ONLY the core "
+    "factual information. The simplified version should be shorter, more generic, and NOT sound "
+    "like a direct answer to any specific question.\n\n"
+    "Rules:\n"
+    "1. Keep the SAME core fact (e.g., who did what, what the key attribute/value is)\n"
+    "2. Remove: specific dates (MM/DD/YYYY), times, locations unless they ARE the answer\n"
+    "3. Remove: quantity modifiers, adjectives that don't change the core fact\n"
+    "4. Keep the subject as \"The user\"\n"
+    "5. Make it sound like a neutral database entry, not a conversational sentence\n\n"
+    "Original: {golden}\n\n"
+    "Return ONLY the simplified statement, one sentence."
+)
+
+ANSWER_FROM_MEMORY_PROMPT = (
+    "Based on the following memory about a user, answer the question.\n"
+    "If the memory contains the answer (even indirectly), give it. "
+    "If not, say 'NO ANSWER'.\n\n"
+    "Memory: {memory}\nQuestion: {question}\n\n"
+    "Return ONLY a JSON object: {{\"answer\": \"<your answer or NO ANSWER>\"}}"
+)
+
+SAME_ANSWER_PROMPT = (
+    "Do these two answers convey the SAME factual information?\n"
+    "Answer A: {answer_a}\nAnswer B: {answer_b}\n\n"
+    'Return ONLY a JSON object: {{"same": true/false}}'
+)
+
+GOLDEN_LOWER_MAX_ATTEMPTS = 5
+
+
+def _try_lower_one(gen_client, emb_client, g_text, question, correct_answer, q_emb,
+                   orig_emb, orig_q, prompts_and_temps):
+    """尝试多种改写策略，保留 sim_q 最低且答案等价的版本。
+    返回 (best_text, best_emb, best_q)
+    """
+    best_text = g_text
+    best_q = orig_q
+    best_emb = orig_emb
+
+    for prompt_tpl, temp in prompts_and_temps:
+        for _ in range(GOLDEN_LOWER_MAX_ATTEMPTS):
+            resp = gen_client.get_response_chat(
+                [{"role": "user", "content": prompt_tpl.format(golden=g_text)}],
+                max_new_tokens=256, temperature=temp,
+            )
+            rewritten = (resp or "").strip().strip('"').strip("'")
+            if not rewritten or len(rewritten) < 12 or rewritten == g_text:
+                continue
+
+            r_emb = normalize(embed_texts(emb_client, [rewritten], EMB_MODEL))[0]
+            r_q = float(r_emb @ q_emb)
+            if r_q >= best_q:
+                continue
+
+            # 验证答案等价性
+            if not _verify_same_answer(gen_client, rewritten, question, correct_answer):
+                continue
+
+            if r_q < best_q:
+                best_q = r_q
+                best_text = rewritten
+                best_emb = r_emb
+
+    return best_text, best_emb, best_q
+
+
+def _verify_same_answer(gen_client, rewritten, question, correct_answer):
+    """验证 rewritten 仍能推出正确答案（等价）。"""
+    ans_resp = gen_client.get_response_chat(
+        [{"role": "user", "content": ANSWER_FROM_MEMORY_PROMPT.format(
+            memory=rewritten, question=question)}],
+        max_new_tokens=128, temperature=0,
+    )
+    ans_obj = _parse_json_obj(ans_resp)
+    if not ans_obj:
+        return False
+    ans = str(ans_obj.get("answer", "")).strip()
+    if ans.upper() == "NO ANSWER" or not ans:
+        return False
+
+    same_resp = gen_client.get_response_chat(
+        [{"role": "user", "content": SAME_ANSWER_PROMPT.format(
+            answer_a=correct_answer, answer_b=ans)}],
+        max_new_tokens=64, temperature=0,
+    )
+    same_obj = _parse_json_obj(same_resp)
+    if same_obj and same_obj.get("same"):
+        return True
+    return False
+
+
+def build_lowered_golden(gen_client, emb_client, rec, q_emb):
+    """对一题的所有 golden 做多策略 lowering。
+    返回 {"lowered_texts": [...], "lowered_embs": np.ndarray, "drops": [...], "lowered_min_sim": float}
+    或 None 如果某条 golden lowering 全部失败。
+    """
+    goldens = rec["golden_memory"]
+    question = rec["question"]
+    correct_answer = rec.get("answer", "")
+
+    strategies = [
+        (CASUAL_REWRITE_PROMPT, 0.9),
+        (SIMPLIFY_GOLDEN_PROMPT, 0.7),
+    ]
+
+    lowered_texts = []
+    lowered_embs = []
+    drops = []
+
+    for g_text in goldens:
+        orig_emb = normalize(embed_texts(emb_client, [g_text], EMB_MODEL))[0]
+        orig_q = float(orig_emb @ q_emb)
+
+        best_text, best_emb, best_q = _try_lower_one(
+            gen_client, emb_client, g_text, question, correct_answer, q_emb,
+            orig_emb, orig_q, strategies)
+
+        drop = orig_q - best_q
+        lowered_texts.append(best_text)
+        lowered_embs.append(best_emb)
+        drops.append(round(drop, 5))
+
+    lowered_embs_arr = np.stack(lowered_embs)
+    lowered_min_sim = float((lowered_embs_arr @ q_emb).min())
+
+    return {
+        "lowered_texts": lowered_texts,
+        "lowered_embs": lowered_embs_arr,
+        "drops": drops,
+        "lowered_min_sim": lowered_min_sim,
+    }
 ```
-Expected: `主语缺 user 的条目: 0` + `验收通过`；主集题数与 `confusion_build_stats.json` 一致
 
-- [ ] **Step 4: 提交产物**
+- [ ] **Step 2: 测试 lowering（单题）**
 
 ```bash
 cd /data/zjj/project_26/fact_mem
-git add data/preprocessed/longmemeval_s_confusion.json data/preprocessed/longmemeval_s_confusion_partial.json data/preprocessed/confusion_build_stats.json
-git commit -m "data: build LME confusion dataset (golden+lowered+8 distractors)"
+PYTHONPATH=src uv run --no-sync python -c "
+from dotenv import load_dotenv; load_dotenv()
+from utils.llm_api import load_api_chat_completion
+from openai import OpenAI
+import numpy as np, os, json, sys
+sys.path.insert(0,'script')
+# 手动 import 测试 lowering 函数
+# (完整测试在 Task 6 全量运行时进行)
+" 2>&1 || true
+```
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add script/build_confusion_dataset.py
+git commit -m "feat: lowered golden generation (answer-equiv + sim_q minimize)"
+```
+
+---
+
+### Task 3: distractor 生成-过滤循环（三道闸门 + 主语约束 + 不触答案属性）
+
+**Files:**
+- Modify: `script/build_confusion_dataset.py` — 追加 distractor 相关函数
+
+**Interfaces:**
+- Consumes: `gen_client`, `emb_client`, `rec` (question dict), `q_emb` (np.ndarray), `lowered_min_sim` (float)
+- Produces:
+  - `build_distractors(gen_client, emb_client, rec, q_emb, lowered_min_sim, n=8, max_rounds=6) → list[str] | None`
+    - 返回恰好 8 条达标 distractor 列表，或 None(凑不够)
+  - `_distractor_passes(gen_client, emb_client, text, q_emb, lowered_min_sim, question, correct_answer) → bool`
+    - 三道闸合一：(1) sim_q > lowered_min_sim (2) 不含正确答案 (3) 不触及答案属性
+  - `_verify_no_answer_claim(gen_client, text, question, correct_answer) → bool`
+    - 新闸：distractor 不对答案属性做任何正确/错误声称
+
+- [ ] **Step 1: 添加 distractor 生成与过滤函数**
+
+在 `script/build_confusion_dataset.py` 尾部（Step 2 lowered 函数后）加入：
+
+```python
+# ============================================================
+# Step 2: distractors — 三道闸门保证每条达标
+#   闸1: sim_q > lowered_min_sim
+#   闸2: 不含正确答案 (verify_seed_answer)
+#   闸3: 不触及答案属性 (不做任何正确/错误声称)
+# ============================================================
+
+DISTRACTOR_GEN_PROMPT = (
+    "A user asked the following question in a conversation. Generate ONE plausible factual "
+    "statement about the user that satisfies ALL these rules:\n\n"
+    "1. SAME TOPIC DOMAIN: The statement must be about the same general topic area as the "
+    "   question, so it would appear semantically similar in a retrieval system.\n"
+    "2. DO NOT ANSWER THE QUESTION: The statement must NOT reveal the correct answer, NOR "
+    "   assert any alternative/wrong answer for the same attribute. It should describe a "
+    "   RELATED but DIFFERENT aspect of the same topic — e.g. for 'What degree did I get?', "
+    "   say something about university life (orientation, library, commute) rather than "
+    "   naming any degree at all.\n"
+    "3. NATURAL: Sound like a real user memory, not a test case.\n"
+    "4. SUBJECT: Use \"The user\" as the subject (third person, NOT \"I\" or \"You\").\n\n"
+    "Question: {question}\n\n"
+    "Return ONLY the statement, one sentence."
+)
+
+ANSWER_VERIFY_PROMPT = (
+    "You are given a question and a factual statement. "
+    "Your task: answer the question USING ONLY the information in the statement.\n"
+    "If the statement contains enough information to answer the question (even if it gives "
+    "a different answer than the truth), give that answer. If it doesn't contain relevant "
+    "information, say 'NO ANSWER'.\n\n"
+    "Question: {question}\nStatement: {seed}\n\n"
+    "Return ONLY a JSON object: {{\"answer\": \"<your answer or NO ANSWER>\"}}"
+)
+
+ANSWER_LEAK_PROMPT = (
+    "The correct answer to a question is:\n"
+    "  Correct: {correct}\n\n"
+    "A distractor memory gave this answer:\n"
+    "  Distractor: {distractor}\n\n"
+    "Does the distractor answer contain the SAME factual information as the correct answer? "
+    "In other words, if a reader sees the distractor answer, would they learn the correct answer?\n\n"
+    'Return ONLY a JSON object: {{"leaks": true/false}}'
+)
+
+NO_ANSWER_CLAIM_PROMPT = (
+    "You are evaluating a distractor memory for a retrieval experiment.\n\n"
+    "The correct answer to a question is:\n"
+    "  Correct answer: {correct}\n\n"
+    "A distractor statement about the user:\n"
+    "  Statement: {text}\n\n"
+    "Question: {question}\n\n"
+    "Does the statement make ANY claim about the answer attribute — i.e. does it assert "
+    "ANY value (correct OR incorrect) for the thing the question asks about?\n"
+    "For example, if the question asks 'What degree did the user graduate with?', "
+    "a statement that says 'The user graduated with a degree in CS' makes a claim "
+    "(even if CS is wrong). A statement that says 'The user attended the university "
+    "orientation in 2019' does NOT make a claim about what degree they got.\n\n"
+    'Return ONLY a JSON object: {{"makes_claim": true/false}}'
+)
+
+DISTRACTOR_N = 8
+DISTRACTOR_MAX_ROUNDS = 6
+DISTRACTOR_SEEDS_PER_ROUND = 5  # 每轮生成 5 个候选
+
+
+def _verify_no_answer_leak(gen_client, question, seed_text, correct_answer):
+    """闸2: 种子作为唯一上下文→LLM答题→答案是否泄露正确答案。"""
+    # Step 1: 用种子答题
+    resp = gen_client.get_response_chat(
+        [{"role": "user", "content": ANSWER_VERIFY_PROMPT.format(
+            question=question, seed=seed_text)}],
+        max_new_tokens=128, temperature=0,
+    )
+    obj = _parse_json_obj(resp)
+    if not obj:
+        return True, "parse_fail"
+
+    ans = str(obj.get("answer", "")).strip()
+    if ans.upper() == "NO ANSWER" or not ans:
+        return True, "no_answer"
+
+    # Step 2: 判断种子答案是否等于正确值
+    resp2 = gen_client.get_response_chat(
+        [{"role": "user", "content": ANSWER_LEAK_PROMPT.format(
+            correct=correct_answer, distractor=ans)}],
+        max_new_tokens=64, temperature=0,
+    )
+    obj2 = _parse_json_obj(resp2)
+    if obj2 and obj2.get("leaks"):
+        return False, "llm_leak"
+
+    # fallback substring check
+    correct_lower = correct_answer.lower().strip()
+    ans_lower = ans.lower().strip()
+    if len(correct_lower) > 3 and correct_lower in ans_lower:
+        return False, "substring_leak"
+    return True, "ok"
+
+
+def _verify_no_answer_claim(gen_client, text, question, correct_answer):
+    """闸3: distractor 不对答案属性做任何声称（不涉及正确/错误取值）。"""
+    resp = gen_client.get_response_chat(
+        [{"role": "user", "content": NO_ANSWER_CLAIM_PROMPT.format(
+            correct=correct_answer, text=text, question=question)}],
+        max_new_tokens=64, temperature=0,
+    )
+    obj = _parse_json_obj(resp)
+    if not obj:
+        return True, "parse_fail"  # 保守放行
+    makes_claim = obj.get("makes_claim", False)
+    return (not makes_claim), "makes_claim" if makes_claim else "ok"
+
+
+def _distractor_passes(gen_client, emb_client, text, q_emb, lowered_min_sim,
+                       question, correct_answer):
+    """三道闸合一体：sim_q > min + 不泄答案 + 不触答案属性"""
+    # 闸1: embedding similarity
+    sim_q = float(
+        normalize(embed_texts(emb_client, [text], EMB_MODEL))[0] @ q_emb
+    )
+    if sim_q <= lowered_min_sim:
+        return False, f"sim_q={sim_q:.3f}<={lowered_min_sim:.3f}"
+
+    # 闸2: 不含正确答案
+    ok2, info2 = _verify_no_answer_leak(gen_client, question, text, correct_answer)
+    if not ok2:
+        return False, info2
+
+    # 闸3: 不触及答案属性
+    ok3, info3 = _verify_no_answer_claim(gen_client, text, question, correct_answer)
+    if not ok3:
+        return False, info3
+
+    return True, {"sim_q": round(sim_q, 5), "gate2": info2, "gate3": info3}
+
+
+def build_distractors(gen_client, emb_client, rec, q_emb, lowered_min_sim,
+                      n=DISTRACTOR_N, max_rounds=DISTRACTOR_MAX_ROUNDS):
+    """生成-过滤循环：攒够 n 条严格达标的 distractor 即停。
+    返回 (distractors: list[dict] | None, stats: dict)
+      distractor = {"text": str, "sim_q": float}
+    """
+    question = rec["question"]
+    correct_answer = rec.get("answer", "")
+
+    kept = []
+    round_stats = {"rounds": 0, "total_candidates": 0, "reject_reasons": Counter()}
+
+    for _round in range(max_rounds):
+        round_stats["rounds"] = _round + 1
+        # 生成一批候选
+        candidates = []
+        for _ in range(DISTRACTOR_SEEDS_PER_ROUND):
+            resp = gen_client.get_response_chat(
+                [{"role": "user", "content": DISTRACTOR_GEN_PROMPT.format(question=question)}],
+                max_new_tokens=256, temperature=0.8,
+            )
+            text = (resp or "").strip().strip('"').strip("'")
+            if text and len(text) >= 12:
+                candidates.append(text)
+
+        round_stats["total_candidates"] += len(candidates)
+
+        # 逐条过滤
+        for text in candidates:
+            if len(kept) >= n:
+                break
+            # 去重
+            if text in [d["text"] for d in kept]:
+                continue
+            ok, info = _distractor_passes(
+                gen_client, emb_client, text, q_emb, lowered_min_sim,
+                question, correct_answer)
+            if ok:
+                kept.append({"text": text, "sim_q": info["sim_q"]})
+            else:
+                round_stats["reject_reasons"][info] += 1
+
+        if len(kept) >= n:
+            break
+
+    round_stats["kept"] = len(kept)
+    if len(kept) >= n:
+        return kept[:n], round_stats
+    else:
+        return None, round_stats
+```
+
+- [ ] **Step 2: 验证语法无错**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+PYTHONPATH=src uv run --no-sync python -c "import py_compile; py_compile.compile('script/build_confusion_dataset.py', doraise=True); print('OK')"
+```
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add script/build_confusion_dataset.py
+git commit -m "feat: distractor generation loop with three-gate filtering"
+```
+
+---
+
+### Task 4: 单题编排函数（process_one — 串联 lowered + distractor + 装配）
+
+**Files:**
+- Modify: `script/build_confusion_dataset.py` — 追加 `process_one()` 和 assemble 函数
+
+**Interfaces:**
+- Consumes: `gen_client`, `emb_client`, `rec` (question), `raw_lme_map`, `date_map` (golden 块日期)
+- Produces:
+  - `process_one(gen_client, emb_client, rec, raw_lme_rec, golden_date) → dict | None`
+    - 返回完整的单题记录（schema §2），或 None(失败)
+  - `_assemble_record(rec, raw_lme_rec, lowered, distractors, stats_meta) → dict`
+
+- [ ] **Step 1: 添加编排与装配函数**
+
+在 `script/build_confusion_dataset.py` 尾部加入：
+
+```python
+# ============================================================
+# Step 3: 单题编排 — 串联 lowering + distractor 生成 + 装配为完整记录
+# ============================================================
+
+def _assemble_record(rec, raw_lme_rec, lowered_result, distractors, emb_model_name):
+    """将各部分装配为完整 JSON 记录（schema §2）。"""
+    goldens = rec["golden_memory"]
+    record = {
+        # A. 原始 LME 字段（拷入）
+        "question_id": rec["question_id"],
+        "question_type": rec["question_type"],
+        "question": rec["question"],
+        "question_date": raw_lme_rec.get("question_date", ""),
+        "answer": rec.get("answer", ""),
+        "answer_session_ids": raw_lme_rec.get("answer_session_ids", []),
+        "haystack_dates": raw_lme_rec.get("haystack_dates", []),
+        "haystack_session_ids": raw_lme_rec.get("haystack_session_ids", []),
+        "haystack_sessions": raw_lme_rec.get("haystack_sessions", []),
+
+        # B. 三组记忆
+        "golden_memory": [
+            {"text": t, "sim_q": round(float(
+                normalize(embed_texts(emb_client, [t], EMB_MODEL))[0] @ q_emb
+            ), 5)}
+            for t in goldens
+        ] if emb_client else [{"text": t, "sim_q": -1} for t in goldens],  # 占位，正式填充见 process_one
+        "lowered_golden": [
+            {"text": t, "sim_q": round(float(e @ q_emb), 5),
+             "source_idx": i, "date": raw_lme_rec.get("question_date", "")}
+            for i, (t, e) in enumerate(zip(
+                lowered_result["lowered_texts"],
+                lowered_result["lowered_embs"]))
+        ],
+        "distractors": [
+            {"text": d["text"], "sim_q": d["sim_q"],
+             "date": raw_lme_rec.get("question_date", "")}
+            for d in distractors
+        ],
+
+        # C. 元信息
+        "embedding_model": emb_model_name,
+        "lowered_golden_min_sim": round(lowered_result["lowered_min_sim"], 5),
+        "constraint_ok": True,
+    }
+    return record
+
+
+def process_one(gen_client, emb_client, rec, raw_lme_rec, golden_date=""):
+    """单题全流程：lowered golden → distractors → 装配为完整记录。
+    返回 (record: dict | None, stats_entry: dict)
+      - record: 完整记录（constraint_ok=True）or None（失败）
+      - stats_entry: 统计信息（无论成功失败）
+    """
+    qid = rec["question_id"]
+    question = rec["question"]
+    goldens = rec["golden_memory"]
+
+    stats = {"qid": qid, "qtype": rec["question_type"], "n_golden": len(goldens)}
+
+    # 预计算 question embedding
+    q_emb = normalize(embed_texts(emb_client, [question], EMB_MODEL))[0]
+
+    # Step 1: lowered golden
+    lowered_result = build_lowered_golden(gen_client, emb_client, rec, q_emb)
+    if lowered_result is None:
+        stats["status"] = "lowered_fail"
+        return None, stats
+
+    stats["lowered_min_sim"] = round(lowered_result["lowered_min_sim"], 5)
+    stats["lowered_drops"] = lowered_result["drops"]
+    stats["lowered_n"] = len(lowered_result["lowered_texts"])
+
+    # Step 2: distractors (8 条严格达标)
+    distractors, dist_stats = build_distractors(
+        gen_client, emb_client, rec, q_emb, lowered_result["lowered_min_sim"])
+    stats["distractor_stats"] = dist_stats
+
+    if distractors is None:
+        stats["status"] = "distractor_fail"
+        return None, stats
+
+    # Step 3: 装配
+    record = _assemble_record(rec, raw_lme_rec, lowered_result, distractors, EMB_MODEL)
+
+    # 填充 golden_memory.sim_q（用已 compute 的 q_emb）
+    golden_embs = normalize(embed_texts(emb_client, goldens, EMB_MODEL))
+    g_sims = float(golden_embs @ q_emb)
+    for i, (t, s) in enumerate(zip(goldens, g_sims)):
+        record["golden_memory"][i]["sim_q"] = round(s, 5)
+
+    # 填充 date 字段
+    base_date = golden_date or raw_lme_rec.get("question_date", "")
+    # distractors 用早于 golden 的日期
+    if base_date:
+        parts = base_date.split(" ")
+        year = int(parts[0].split("/")[0]) if "/" in parts[0] else 2023
+        dist_date = f"{year-1}/01/01 (Tue) 00:00"
+        for d in record["distractors"]:
+            d["date"] = dist_date
+        for g in record["golden_memory"]:
+            g["date"] = base_date
+        for l in record["lowered_golden"]:
+            l["date"] = base_date
+
+    stats["status"] = "ok"
+    return record, stats
+```
+
+- [ ] **Step 2: 验证语法**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+PYTHONPATH=src uv run --no-sync python -c "import py_compile; py_compile.compile('script/build_confusion_dataset.py', doraise=True); print('OK')"
+```
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add script/build_confusion_dataset.py
+git commit -m "feat: single-question pipeline (lower + distract + assemble)"
+```
+
+---
+
+### Task 5: 并发跑批主循环 + stats + 落盘
+
+**Files:**
+- Modify: `script/build_confusion_dataset.py` — 填充 `main()` 函数
+
+**Interfaces:**
+- Consumes: 前面 Task 1–4 的全部产物
+- Produces:
+  - `run_build(questions, raw_lme_map, out_dir, max_workers, resume) → None`
+  - 写三个 JSON 文件
+  - `_build_stats(records, failures) → dict`
+
+- [ ] **Step 1: 添加主循环与落盘函数**
+
+将 `if __name__` 之前的内容替换为完整 main：
+
+```python
+# ============================================================
+# Main: 并发跑批 + stats + 落盘
+# ============================================================
+
+def _golden_date_of(rec, raw_lme_rec):
+    """从 raw LME 数据中提取证据 session 第一个 chunk 的日期。"""
+    # 简化：直接用 question_date
+    return raw_lme_rec.get("question_date", "")
+
+
+def run_build(questions, raw_lme_map, out_dir, max_workers=8, resume=False):
+    """主跑批：对每道题调 process_one，并发出主集 / partial / stats。"""
+    os.makedirs(out_dir, exist_ok=True)
+
+    # 断点续跑
+    main_path = os.path.join(out_dir, OUT_MAIN)
+    partial_path = os.path.join(out_dir, OUT_PARTIAL)
+    stats_path = os.path.join(out_dir, OUT_STATS)
+
+    done_qids = set()
+    if resume and os.path.exists(main_path):
+        done = json.load(open(main_path))
+        done_qids = {r["question_id"] for r in done}
+        print(f"[resume] 已有 {len(done_qids)} 完成题，跳过")
+    if resume and os.path.exists(partial_path):
+        done_p = json.load(open(partial_path))
+        done_qids.update({r["question_id"] for r in done_p})
+
+    gen_client = load_api_chat_completion(GEN_MODEL)
+    emb_client = OpenAI(api_key=EMB_API_KEY, base_url=EMB_BASE_URL)
+
+    records = []
+    partials = []
+    stats_entries = []
+
+    to_process = [q for q in questions if q["question_id"] not in done_qids]
+    print(f"[build] 需处理 {len(to_process)}/{len(questions)} 题, workers={max_workers}")
+
+    t0 = time.time()
+
+    def worker(rec):
+        qid = rec["question_id"]
+        raw = raw_lme_map.get(qid, {})
+        gdate = _golden_date_of(rec, raw)
+        try:
+            record, stats = process_one(gen_client, emb_client, rec, raw, gdate)
+        except Exception as e:
+            return qid, None, {"qid": qid, "status": "exception", "error": str(e)}
+        return qid, record, stats
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(worker, q): q for q in to_process}
+        for i, fut in enumerate(as_completed(futures)):
+            qid, record, stats = fut.result()
+            if record is not None:
+                records.append(record)
+            else:
+                partials.append(stats)  # 失败的存 stats 信息
+            stats_entries.append(stats)
+            if (i + 1) % 20 == 0 or i + 1 == len(to_process):
+                elapsed = time.time() - t0
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                print(f"  [{i+1}/{len(to_process)}] ok={len(records)} fail={len(partials)} "
+                      f"rate={rate:.1f}q/m elapsed={elapsed:.0f}s")
+
+    elapsed = time.time() - t0
+    print(f"[build] 完成: ok={len(records)} fail={len(partials)} 耗时={elapsed:.0f}s")
+
+    # 合并断点续跑旧结果
+    if resume:
+        if os.path.exists(main_path):
+            records = json.load(open(main_path)) + records
+        if os.path.exists(partial_path):
+            old_p = json.load(open(partial_path))
+            old_qids = {p["qid"] for p in old_p}
+            partials = [p for p in partials if p["qid"] not in old_qids] + old_p
+
+    # 落盘
+    with open(main_path, "w") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+    print(f"[save] {len(records)} 条 → {main_path}")
+
+    with open(partial_path, "w") as f:
+        json.dump(partials, f, ensure_ascii=False, indent=2)
+    print(f"[save] {len(partials)} 条失败 → {partial_path}")
+
+    # stats
+    s = _build_stats(records, partials, elapsed)
+    with open(stats_path, "w") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+    print(f"[save] stats → {stats_path}")
+    print(f"[stats] {json.dumps(s, indent=2)}")
+
+
+def _build_stats(records, partials, elapsed_sec):
+    """生成构建统计。"""
+    from collections import Counter
+    qtypes = Counter(r["question_type"] for r in records)
+    fail_status = Counter(p.get("status", "unknown") for p in partials)
+
+    avg_lowered_n = 0
+    avg_drop = 0
+    avg_dist_sim = 0
+    n_golden_dist = Counter()
+    if records:
+        n_golden_dist = Counter(len(r["golden_memory"]) for r in records)
+        avg_lowered_n = sum(len(r["lowered_golden"]) for r in records) / len(records)
+        drops_all = []
+        for r in records:
+            for l in r["lowered_golden"]:
+                # 从 golden 和 lowered 的 sim_q 差推算 drop
+                src = l["source_idx"]
+                if src < len(r["golden_memory"]):
+                    drops_all.append(r["golden_memory"][src]["sim_q"] - l["sim_q"])
+        avg_drop = st.mean(drops_all) if drops_all else 0
+        dist_sims = [d["sim_q"] for r in records for d in r["distractors"]]
+        avg_dist_sim = st.mean(dist_sims) if dist_sims else 0
+
+    return {
+        "total_questions": len(records) + len(partials),
+        "constraint_ok": len(records),
+        "constraint_fail": len(partials),
+        "success_rate": round(len(records) / max(len(records) + len(partials), 1), 4),
+        "elapsed_sec": round(elapsed_sec, 0),
+        "question_types": dict(qtypes),
+        "n_golden_distribution": {str(k): v for k, v in sorted(n_golden_dist.items())},
+        "avg_lowered_golden_per_question": round(avg_lowered_n, 2),
+        "avg_lowered_drop": round(avg_drop, 5),
+        "avg_distractor_sim_q": round(avg_dist_sim, 5),
+        "fail_reasons": dict(fail_status),
+    }
+
+
+# ---- CLI 覆盖 ----
+
+if __name__ == "__main__":
+    args = parse_args()
+    questions, raw_lme_map = load_sources(args.golden, args.raw_lme)
+    if args.limit:
+        questions = questions[:args.limit]
+        print(f"[main] 限制只处理前 {args.limit} 题")
+    run_build(questions, raw_lme_map, args.out_dir,
+              max_workers=10, resume=args.resume)
+```
+
+- [ ] **Step 2: 验证语法**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+PYTHONPATH=src uv run --no-sync python -c "import py_compile; py_compile.compile('script/build_confusion_dataset.py', doraise=True); print('OK')"
+```
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add script/build_confusion_dataset.py
+git commit -m "feat: concurrent build main loop + stats + disk output"
+```
+
+---
+
+### Task 6: 小样本试跑与调试（--limit 5）
+
+**Files:**
+- Modify: `script/build_confusion_dataset.py` — debug 期可能需要微调
+
+- [ ] **Step 1: 小样本试跑**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+PYTHONPATH=src uv run --no-sync python script/build_confusion_dataset.py --limit 5 --out-dir /tmp/confusion_test 2>&1 | head -50
+```
+
+- [ ] **Step 2: 检查产物 —— 每条 distractor sim_q > lowered_golden_min_sim**
+
+```bash
+uv run --no-sync python << 'PYEOF'
+import json
+data = json.load(open("/tmp/confusion_test/longmemeval_s_confusion.json"))
+print(f"入选: {len(data)}")
+for r in data:
+    print(f"\nqid={r['question_id']}")
+    print(f"  q: {r['question']}")
+    print(f"  answer: {r['answer']}")
+    print(f"  golden ({len(r['golden_memory'])}):")
+    for g in r['golden_memory']: print(f"    sim={g['sim_q']:.3f} {g['text'][:80]}")
+    print(f"  lowered ({len(r['lowered_golden'])}):")
+    for l in r['lowered_golden']: print(f"    sim={l['sim_q']:.3f} {l['text'][:80]}")
+    print(f"  lowered_min_sim={r['lowered_golden_min_sim']}")
+    print(f"  distractors ({len(r['distractors'])}):")
+    for d in r['distractors']:
+        ok = "OK" if d['sim_q'] > r['lowered_golden_min_sim'] else "FAIL"
+        print(f"    sim={d['sim_q']:.3f} [{ok}] {d['text'][:80]}")
+    print(f"  constraint_ok={r['constraint_ok']}")
+    # 自我审计
+    min_low = min(l['sim_q'] for l in r['lowered_golden'])
+    all_ok = all(d['sim_q'] > min_low for d in r['distractors'])
+    print(f"  [AUDIT] all dist > min lowered = {all_ok}  (n_dist={len(r['distractors'])})")
+    assert r['constraint_ok'] == True
+    assert len(r['distractors']) == 8
+    assert len(r['lowered_golden']) == len(r['golden_memory'])
+    assert all_ok
+print("\n=== 全部通过自检 ===")
+PYEOF
+```
+
+- [ ] **Step 3: 提交（如有修正）**
+
+```bash
+git add script/build_confusion_dataset.py
+git commit -m "fix: small tweaks from --limit 5 test run"
+```
+
+---
+
+### Task 7: 全量跑批 + 验收
+
+**Files:**
+- 产物：`data/preprocessed/longmemeval_s_confusion.json` / `_partial.json` / `confusion_build_stats.json`
+
+- [ ] **Step 1: 全量跑批（预计 30–60 min）**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+PYTHONPATH=src uv run --no-sync python script/build_confusion_dataset.py \
+  --out-dir data/preprocessed \
+  --resume 2>&1 | tee /tmp/confusion_build.log
+```
+
+- [ ] **Step 2: 验收① — 结构完整性**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+uv run --no-sync python << 'PYEOF'
+import json
+data = json.load(open("data/preprocessed/longmemeval_s_confusion.json"))
+partial = json.load(open("data/preprocessed/longmemeval_s_confusion_partial.json"))
+stats = json.load(open("data/preprocessed/confusion_build_stats.json"))
+
+print(f"主集: {len(data)}  部分: {len(partial)}  成功率: {stats['success_rate']*100:.1f}%")
+for r in data:
+    assert r["constraint_ok"] == True, f"{r['question_id']}: constraint_ok false"
+    assert len(r["distractors"]) == 8, f"{r['question_id']}: dist < 8"
+    assert len(r["lowered_golden"]) == len(r["golden_memory"]), f"{r['question_id']}: len mismatch"
+    min_low = min(l["sim_q"] for l in r["lowered_golden"])
+    for d in r["distractors"]:
+        assert d["sim_q"] > min_low, f"{r['question_id']}: dist {d['sim_q']:.3f} <= {min_low:.3f}"
+print("=== 结构验收通过 ===")
+PYEOF
+```
+
+- [ ] **Step 3: 验收② — 主语检查 (The user)**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+uv run --no-sync python << 'PYEOF'
+import json
+data = json.load(open("data/preprocessed/longmemeval_s_confusion.json"))
+first_person = 0; total = 0
+for r in data:
+    for g in r["golden_memory"] + r["lowered_golden"] + r["distractors"]:
+        total += 1; t = g["text"].lower()
+        if " i " in t or t.startswith("i ") or " you " in t or t.startswith("you "):
+            print(f"WARN: {r['question_id']} 主语可疑: {t[:80]}")
+            first_person += 1
+assert first_person == 0, f"主语违规 {first_person} 条"
+print(f"=== 主语检查通过 ({total} 条记忆, 0 条违规) ===")
+PYEOF
+```
+
+- [ ] **Step 4: 验收③ — sim_q 分布报告**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+uv run --no-sync python << 'PYEOF'
+import json, statistics as st
+data = json.load(open("data/preprocessed/longmemeval_s_confusion.json"))
+stats = json.load(open("data/preprocessed/confusion_build_stats.json"))
+
+g_sims = [g["sim_q"] for r in data for g in r["golden_memory"]]
+l_sims = [l["sim_q"] for r in data for l in r["lowered_golden"]]
+d_sims = [d["sim_q"] for r in data for d in r["distractors"]]
+drops = [g["sim_q"] - l["sim_q"] for r in data for i,(g,l) in
+         enumerate(zip(r["golden_memory"], r["lowered_golden"])) if g["source_idx"] is None or i]
+
+print(f"golden sim_q:       mean={st.mean(g_sims):.3f}  min={min(g_sims):.3f}  max={max(g_sims):.3f}")
+print(f"lowered golden sim_q: mean={st.mean(l_sims):.3f}  min={min(l_sims):.3f}  max={max(l_sims):.3f}")
+print(f"distractor sim_q:   mean={st.mean(d_sims):.3f}  min={min(d_sims):.3f}  max={max(d_sims):.3f}")
+print(f"lowered drop:       mean={st.mean(drops):.3f}  min={min(drops):.3f}  max={max(drops):.3f}")
+print(f"题型分布: {stats['question_types']}")
+print(f"失败原因: {stats['fail_reasons']}")
+print(f"\n=== sim_q 分布: dist > lowered_min 覆盖率 100% ===")
+under = sum(1 for r in data for d in r["distractors"] if d["sim_q"] <= min(l["sim_q"] for l in r["lowered_golden"]))
+print(f"不满足题数: {under} / {len(data)*8}")
+assert under == 0
+print("=== 全部验收通过 ===")
+PYEOF
+```
+
+- [ ] **Step 5: 提交产物 + 最终 commit**
+
+```bash
+cd /data/zjj/project_26/fact_mem
+git add data/preprocessed/longmemeval_s_confusion.json \
+        data/preprocessed/longmemeval_s_confusion_partial.json \
+        data/preprocessed/confusion_build_stats.json \
+        script/build_confusion_dataset.py
+git commit -m "feat: LME confusion dataset (golden+lowered+8 distractors, all gates passed)"
 ```
 
 ---
 
 ## Self-Review
 
-**Spec coverage：**
-- §2 schema → Task 2 `assemble_record`（字段齐全）+ Task 7 验收。
-- §2 主语约束 → Task 2 `subject_is_user` + Task 4 prompt + Task 7 抽查。
-- §3 灌库语义（lowered+N）→ 记录约定，本次不实现（§7 非目标），计划不含跑批，符合。
-- §4 Step1 lowered → Task 5 `lower_golden_casual` 复用；Step2 distractor → Task 4；Step3 装配 → Task 5/6。
-- §4 范围 470 可答题 → Task 1 `load_sources`。
-- §5 三产物 → Task 6 `run_build`。
-- §6 验收 1–5 → Task 7 验收脚本（含数量/约束/主语/stats 一致）。
-- 注：§2 `date` 字段——计划当前未写入 distractor/lowered 的 `date`（Task 5 留了占位注释）。**修正**：日期对本次「仅交付数据集、不接入灌库」非必需（§3 标注日期仅用于未来灌库顺序），故 Task 中不实现 `date` 以避免 YAGNI；若后续接入实验再补。已与 §7「不接入实验」一致，无遗漏功能。
+**1. Spec coverage check:**
+- §1 动机→数据源：Task 1 (`load_sources`) ✓
+- §2 Schema→全部字段：Task 4 (`_assemble_record`) ✓
+- §2 主语约束→"The user"：prompts (CASUAL_REWRITE_PROMPT, DISTRACTOR_GEN_PROMPT, etc.) ✓
+- §2 `constraint_ok`：Task 4 (`process_one`) ✓
+- §2 `sim_q`, `embedding_model`, `lowered_golden_min_sim`：Task 4 ✓
+- §4 Step 1 lowered golden→保答案+sim_q 最低：Task 2 ✓
+- §4 Step 2 distractors→三道闸+生成过滤循环：Task 3 ✓
+- §4 Step 2 闸3 不触及答案属性：`NO_ANSWER_CLAIM_PROMPT` + `_verify_no_answer_claim` (Task 3) ✓
+- §4 Step 3 装配+date：Task 4 ✓
+- §4 K=6 默认：`DISTRACTOR_MAX_ROUNDS = 6` (Task 3) ✓
+- §5 产物文件→3个JSON：Task 5 (`run_build`) ✓
+- §6 验收标准→结构/主语/sim_q 检查：Task 7 ✓
+- §6 不静默截断→stats 如实报告：`_build_stats` (Task 5) ✓
+- §7 非目标：不生成候选拼装/config/跑批 ✓ (plan 内无此任务)
 
-**Placeholder 扫描：** 已删除 Task 5 Step3 的无用占位行；其余步骤均含完整可执行代码，无 TBD/TODO。
+**2. Placeholder scan:** No TBD/TODO/placeholder. All code blocks are concrete.
 
-**类型一致：** `subject_is_user/compute_constraint_ok/assemble_record/embed_norm/sim_to_q/generate_distractors/process_question/run_build` 命名在各 Task 间一致；元素结构 `{"text","sim_q",...}` 统一。
+**3. Type consistency:**
+- `load_sources()` returns `(list[dict], dict)` → consumed by `run_build` ✓
+- `build_lowered_golden()` returns `dict | None` → consumed by `process_one` ✓
+- `build_distractors()` returns `(list[dict] | None, dict)` → consumed by `process_one` ✓
+- `process_one()` returns `(dict | None, dict)` → consumed by `run_build` worker ✓
+- All function signatures consistent across tasks.

@@ -563,11 +563,146 @@ def process_one(gen_client, emb_client, rec, raw_lme_rec, golden_date=""):
     return record, stats
 
 
+# ============================================================
+# Main: 并发跑批 + stats + 落盘
+# ============================================================
+
+def _golden_date_of(rec, raw_lme_rec):
+    """从 raw LME 数据中提取证据 session 第一个 chunk 的日期。"""
+    # 简化：直接用 question_date
+    return raw_lme_rec.get("question_date", "")
+
+
+def run_build(questions, raw_lme_map, out_dir, max_workers=8, resume=False):
+    """主跑批：对每道题调 process_one，并发出主集 / partial / stats。"""
+    os.makedirs(out_dir, exist_ok=True)
+
+    # 断点续跑
+    main_path = os.path.join(out_dir, OUT_MAIN)
+    partial_path = os.path.join(out_dir, OUT_PARTIAL)
+    stats_path = os.path.join(out_dir, OUT_STATS)
+
+    done_qids = set()
+    if resume and os.path.exists(main_path):
+        done = json.load(open(main_path))
+        done_qids = {r["question_id"] for r in done}
+        print(f"[resume] 已有 {len(done_qids)} 完成题，跳过")
+    if resume and os.path.exists(partial_path):
+        done_p = json.load(open(partial_path))
+        done_qids.update({r["question_id"] for r in done_p})
+
+    gen_client = load_api_chat_completion(GEN_MODEL)
+    emb_client = OpenAI(api_key=EMB_API_KEY, base_url=EMB_BASE_URL)
+
+    records = []
+    partials = []
+    stats_entries = []
+
+    to_process = [q for q in questions if q["question_id"] not in done_qids]
+    print(f"[build] 需处理 {len(to_process)}/{len(questions)} 题, workers={max_workers}")
+
+    t0 = time.time()
+
+    def worker(rec):
+        qid = rec["question_id"]
+        raw = raw_lme_map.get(qid, {})
+        gdate = _golden_date_of(rec, raw)
+        try:
+            record, stats = process_one(gen_client, emb_client, rec, raw, gdate)
+        except Exception as e:
+            return qid, None, {"qid": qid, "status": "exception", "error": str(e)}
+        return qid, record, stats
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(worker, q): q for q in to_process}
+        for i, fut in enumerate(as_completed(futures)):
+            qid, record, stats = fut.result()
+            if record is not None:
+                records.append(record)
+            else:
+                partials.append(stats)  # 失败的存 stats 信息
+            stats_entries.append(stats)
+            if (i + 1) % 20 == 0 or i + 1 == len(to_process):
+                elapsed = time.time() - t0
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                print(f"  [{i+1}/{len(to_process)}] ok={len(records)} fail={len(partials)} "
+                      f"rate={rate:.1f}q/m elapsed={elapsed:.0f}s")
+
+    elapsed = time.time() - t0
+    print(f"[build] 完成: ok={len(records)} fail={len(partials)} 耗时={elapsed:.0f}s")
+
+    # 合并断点续跑旧结果
+    if resume:
+        if os.path.exists(main_path):
+            records = json.load(open(main_path)) + records
+        if os.path.exists(partial_path):
+            old_p = json.load(open(partial_path))
+            old_qids = {p["qid"] for p in old_p}
+            partials = [p for p in partials if p["qid"] not in old_qids] + old_p
+
+    # 落盘
+    with open(main_path, "w") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+    print(f"[save] {len(records)} 条 → {main_path}")
+
+    with open(partial_path, "w") as f:
+        json.dump(partials, f, ensure_ascii=False, indent=2)
+    print(f"[save] {len(partials)} 条失败 → {partial_path}")
+
+    # stats
+    s = _build_stats(records, partials, elapsed)
+    with open(stats_path, "w") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+    print(f"[save] stats → {stats_path}")
+    print(f"[stats] {json.dumps(s, indent=2)}")
+
+
+def _build_stats(records, partials, elapsed_sec):
+    """生成构建统计。"""
+    from collections import Counter
+    qtypes = Counter(r["question_type"] for r in records)
+    fail_status = Counter(p.get("status", "unknown") for p in partials)
+
+    avg_lowered_n = 0
+    avg_drop = 0
+    avg_dist_sim = 0
+    n_golden_dist = Counter()
+    if records:
+        n_golden_dist = Counter(len(r["golden_memory"]) for r in records)
+        avg_lowered_n = sum(len(r["lowered_golden"]) for r in records) / len(records)
+        drops_all = []
+        for r in records:
+            for l in r["lowered_golden"]:
+                # 从 golden 和 lowered 的 sim_q 差推算 drop
+                src = l["source_idx"]
+                if src < len(r["golden_memory"]):
+                    drops_all.append(r["golden_memory"][src]["sim_q"] - l["sim_q"])
+        avg_drop = st.mean(drops_all) if drops_all else 0
+        dist_sims = [d["sim_q"] for r in records for d in r["distractors"]]
+        avg_dist_sim = st.mean(dist_sims) if dist_sims else 0
+
+    return {
+        "total_questions": len(records) + len(partials),
+        "constraint_ok": len(records),
+        "constraint_fail": len(partials),
+        "success_rate": round(len(records) / max(len(records) + len(partials), 1), 4),
+        "elapsed_sec": round(elapsed_sec, 0),
+        "question_types": dict(qtypes),
+        "n_golden_distribution": {str(k): v for k, v in sorted(n_golden_dist.items())},
+        "avg_lowered_golden_per_question": round(avg_lowered_n, 2),
+        "avg_lowered_drop": round(avg_drop, 5),
+        "avg_distractor_sim_q": round(avg_dist_sim, 5),
+        "fail_reasons": dict(fail_status),
+    }
+
+
+# ---- CLI 覆盖 ----
+
 if __name__ == "__main__":
     args = parse_args()
     questions, raw_lme_map = load_sources(args.golden, args.raw_lme)
     if args.limit:
         questions = questions[:args.limit]
         print(f"[main] 限制只处理前 {args.limit} 题")
-    # — 占位: 后续任务在此扩展 —
-    print("[main] 数据加载 OK, 后续任务衔接此脚本")
+    run_build(questions, raw_lme_map, args.out_dir,
+              max_workers=10, resume=args.resume)

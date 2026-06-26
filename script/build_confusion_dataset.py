@@ -27,7 +27,7 @@ OUT_PARTIAL = os.path.join(REPO, "data/preprocessed/longmemeval_s_confusion_part
 OUT_STATS = os.path.join(REPO, "data/preprocessed/confusion_build_stats.json")
 EMB_MODEL = "qwen3-embedding-0.6b"
 N_DISTRACTORS = 8
-MAX_ROUNDS = 6
+MAX_ROUNDS = 48
 
 
 def load_sources():
@@ -42,6 +42,34 @@ def load_sources():
             continue
         rows.append({"qid": qid, "golden_rec": grec, "lme_rec": lrec})
     return rows
+
+
+# ---- subject normalization (确保 golden/lowered 主语为 "The user") --------
+NORMALIZE_PROMPT = (
+    "Rewrite the following statement so it is ABOUT THE USER.\n"
+    "Rules:\n"
+    "1. Subject must be \"The user\" (never names, \"I\", \"you\", \"they\", \"he\", \"she\")\n"
+    "2. Keep ALL factual details exactly (dates, numbers, names of third parties, locations)\n"
+    "3. If about a third party (friend/family/pet), reframe as \"The user's [relation] ...\"\n"
+    "4. If about an object/event/song/restaurant, reframe as \"The user has/owns/received/knows ...\"\n"
+    "5. If about the assistant, reframe as \"The user and the assistant discussed ...\"\n"
+    "6. One sentence only, concise\n\n"
+    "Original: {text}\n\n"
+    "Return ONLY the rewritten statement."
+)
+
+def normalize_golden_text(gen_client, text):
+    """如果 text 不含 'user'，用 LLM 重写使主语为 'The user'。"""
+    if subject_is_user(text):
+        return text
+    resp = gen_client.get_response_chat(
+        [{"role": "user", "content": NORMALIZE_PROMPT.format(text=text)}],
+        max_new_tokens=128, temperature=0.3,
+    )
+    rewritten = (resp or "").strip().strip('"').strip("'")
+    if len(rewritten) > 15 and subject_is_user(rewritten):
+        return rewritten
+    return text  # fallback: 保留原文
 
 
 # ---- 纯逻辑 helper --------------------------------------------------
@@ -156,7 +184,7 @@ def process_question(row, gen_client, emb_client):
     grec, lme_rec = row["golden_rec"], row["lme_rec"]
     question = grec["question"]
     correct = grec.get("answer", "")
-    goldens = grec["golden_memory"]
+    goldens = [normalize_golden_text(gen_client, g) for g in grec["golden_memory"]]
     q_vec = embed_norm(emb_client, [question])[0]
 
     golden = _golden_with_sim(emb_client, goldens, q_vec)

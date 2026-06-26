@@ -23,7 +23,8 @@ def chunk_messages(messages: List[dict], chunk_size: int = 12) -> List[str]:
     """将 chat_history 消息分块，转为 extraction prompt 期望的 user/assistant 文本格式。"""
     chunks = []
     # 跳过 system 消息
-    dial = [(m["role"], m["content"]) for m in messages if m["role"] != "system"]
+    dial = [(m["role"], m["content"]) for m in messages
+            if m["role"] != "system" and isinstance(m.get("content"), str) and m["content"].strip()]
 
     for i in range(0, len(dial), chunk_size):
         batch = dial[i:i + chunk_size]

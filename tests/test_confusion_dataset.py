@@ -50,3 +50,18 @@ def test_assemble_record():
     assert rec["embedding_model"] == "qwen3-embedding-0.6b"
     assert rec["lowered_golden_min_sim"] == 0.70
     assert rec["constraint_ok"] is True
+
+
+import numpy as np
+
+
+def test_embed_and_sim():
+    emb = B.make_emb_client()
+    q = B.embed_norm(emb, ["Where does the user do yoga?"])[0]
+    vecs = B.embed_norm(emb, ["The user does yoga at Serenity Yoga.",
+                              "The user enjoys cooking pasta on weekends."])
+    sims = B.sim_to_q(vecs, q)
+    assert len(sims) == 2
+    assert all(-1.0 <= s <= 1.0 for s in sims)
+    assert sims[0] > sims[1]              # same topic more similar
+    assert abs(np.linalg.norm(vecs[0]) - 1.0) < 1e-5   # already normalized

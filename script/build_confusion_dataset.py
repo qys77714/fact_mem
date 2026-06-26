@@ -84,6 +84,18 @@ def assemble_record(lme_rec, golden, lowered, distractors, emb_model):
     return rec
 
 
+# ---- embedding wrapper & sim helpers ----------------------------------------
+def make_emb_client():
+    return OpenAI(api_key=os.getenv("EMBEDDING_API_KEY", "EMPTY"),
+                  base_url=os.getenv("EMBEDDING_BASE_URL", "http://localhost:7110/v1/"))
+
+def embed_norm(emb_client, texts):
+    return normalize(np.asarray(embed_texts(emb_client, texts, EMB_MODEL), dtype=float))
+
+def sim_to_q(vecs, q_vec):
+    return [float(v @ q_vec) for v in vecs]
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)

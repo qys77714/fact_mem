@@ -57,7 +57,7 @@
 - `sim_q`：该条记忆文本与 `question` 的归一化 embedding 余弦相似度（qwen3-embedding-0.6b）。
 - `lowered_golden.source_idx`：指向对应的 `golden_memory` 下标，保证一一对应。
 - `lowered_golden_min_sim = min(lowered_golden[*].sim_q)`，是 distractor 的约束基准线。
-- `date`：用于实验灌库顺序（distractor 较早、lowered golden 用 golden 日期）；纯 Dup 不涉冲突，日期只影响展示/灌库顺序，不影响答案正确性。
+- `date`（**预留，本次不写入**）：未来接入实验时用于灌库顺序（distractor 较早、lowered golden 用 golden 日期）；纯 Dup 不涉冲突，日期只影响展示/灌库顺序，不影响答案正确性。本次仅交付数据集、不接入灌库，故按 YAGNI 暂不生成；schema 示例中的 `date` 仅示意未来形态。
 
 **主语约束（硬性）**：`golden_memory` / `lowered_golden` / `distractors` 三组文本**全部用第三人称、主语统一为 "The user"**，对齐 golden_memory 既有风格。生成 prompt 必须显式要求，并在校验阶段抽查。
 

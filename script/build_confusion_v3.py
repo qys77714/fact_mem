@@ -858,7 +858,7 @@ def process_one(gen_client, emb_client, q_input, raw_map):
             for i, d in enumerate(distractors)
         ],
         "embedding_model": EMB_MODEL,
-        "constraint_ok": True,
+        "constraint_ok": n_dist >= TARGET_DISTRACTORS,
     }
 
     stats["status"] = "ok"

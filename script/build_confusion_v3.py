@@ -172,6 +172,35 @@ Rules:
 Question: {question}
 
 Return a JSON array of {n} strings: {{"statements": [...]}}"""),
+
+    "keyword-dense": textwrap.dedent("""\
+You are creating "confusion memories" for a retrieval experiment.
+Given a question someone asked about a user, generate {n} DIFFERENT factual statements about the user.
+
+Strategy: KEYWORD DENSE — extract ALL content words (nouns, verbs, proper names) from the question and use AS MANY of them as possible in each statement. The goal is MAXIMUM vocabulary overlap with the question.
+
+Step 1: Identify the key content words in the question.
+Step 2: Write statements that use ALL or MOST of these words EXACTLY AS WRITTEN.
+Step 3: BUT ensure each statement is about a DIFFERENT ASPECT that does NOT answer the question.
+
+Rules:
+1. Extract and REUSE every content word from the question verbatim — nouns, verbs, proper names, numbers should all appear
+2. The factual claim must be about something DIFFERENT from what the question asks
+3. CRITICAL: MUST NOT provide the SPECIFIC information the question is asking for
+4. Start with "The user" and write ONE sentence
+5. The {n} statements should be diverse in their themes
+
+Example:
+Q: "How many largemouth bass did I catch on my fishing trip to Lake Michigan?"
+Content words: largemouth, bass, catch/caught, fishing, trip, Lake, Michigan
+GOOD: "The user spent weeks planning their fishing trip to Lake Michigan, researching the best spots to find largemouth bass."
+  → uses ALL keywords, talks about PLANNING not CATCHING, doesn't say how many
+GOOD: "The user recalled that largemouth bass were particularly active in Lake Michigan during their fishing trip."
+  → uses ALL keywords, talks about fish ACTIVITY not catch count
+
+Question: {question}
+
+Return a JSON array of {n} strings: {{"statements": [...]}}"""),
 }
 
 IDK_BATCH_PROMPT = textwrap.dedent("""\
@@ -335,7 +364,7 @@ def generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim):
     目标 TARGET_SEEDS 条种子，最多 SEED_MAX_ROUNDS 轮。
     返回 (kept_seeds, stats)。
     """
-    gate_threshold = anchor_sim - GATE_OFFSET
+    gate_threshold = min(anchor_sim - GATE_OFFSET, 0.7)  # 高 anchor 题放宽闸门
     kept = []
     stats = {"rounds": 0, "llm_seed_calls": 0, "llm_idk_calls": 0, "emb_calls": 0}
 
@@ -755,7 +784,7 @@ def process_one(gen_client, emb_client, q_input, raw_map):
         stats["lowering_details"] = lowering_details
         stats["lowering_status"] = lowering_status
 
-    gate_threshold = anchor_sim - GATE_OFFSET
+    gate_threshold = min(anchor_sim - GATE_OFFSET, 0.7)  # 高 anchor 题放宽闸门
     stats["anchor_sim"] = anchor_sim
     stats["gate_threshold"] = round(gate_threshold, 5)
 
@@ -763,7 +792,7 @@ def process_one(gen_client, emb_client, q_input, raw_map):
     seeds, seed_stats = generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim)
     stats["seed_stats"] = seed_stats
 
-    if len(seeds) < TARGET_SEEDS:
+    if len(seeds) == 0:
         stats["status"] = "seed_fail"
         stats["elapsed"] = round(time.time() - t_start, 1)
         return None, stats
@@ -772,12 +801,7 @@ def process_one(gen_client, emb_client, q_input, raw_map):
     distractors, rw_stats, expand_info = rewrite_and_expand(
         gen_client, emb_client, seeds, question, q_emb, gate_threshold)
     stats["expand_stats"] = expand_info
-
-    if len(distractors) < TARGET_DISTRACTORS:
-        stats["status"] = "expand_fail"
-        stats["n_distractors"] = len(distractors)
-        stats["elapsed"] = round(time.time() - t_start, 1)
-        return None, stats
+    n_dist = len(distractors)
 
     # ---- Step 4: 装配 ----
     # Golden memory 记录

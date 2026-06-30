@@ -884,6 +884,113 @@ def process_one(gen_client, emb_client, q_input, raw_map):
     return record, stats
 
 
-if __name__ == "__main__":
+# ============================================================
+# Main 入口 — 并发编排、断点续跑、统计
+# ============================================================
+
+
+def main():
     args = parse_args()
-    print(f"[confusion_v3] out_dir={args.out_dir}, max_workers={args.max_workers}, resume={args.resume}")
+    os.makedirs(args.out_dir, exist_ok=True)
+    out_main = os.path.join(args.out_dir, f"{args.out_name}.json")
+    out_partial = os.path.join(args.out_dir, f"{args.out_name}_partial.json")
+    out_stats = os.path.join(args.out_dir, "confusion_v3_build_stats.json")
+
+    questions, raw_map = load_data(args.golden, args.raw)
+
+    # 断点续跑
+    done_qids = set()
+    if args.resume and os.path.exists(out_main):
+        done = json.load(open(out_main))
+        done_qids = {r["question_id"] for r in done}
+        print(f"[resume] 已有 {len(done_qids)} 条跳过")
+
+    gen_client = load_api_chat_completion(GEN_MODEL)
+    emb_client = OpenAI(api_key=EMB_API_KEY, base_url=EMB_BASE_URL)
+
+    records, partials = [], []
+    to_process = [q for q in questions if q["question_id"] not in done_qids]
+    n_total = len(to_process)
+    t0 = time.time()
+
+    print(f"\n{'='*60}")
+    print(f"开始处理 {n_total} 题 (workers={args.max_workers})")
+    print(f"{'='*60}\n")
+
+    with ThreadPoolExecutor(max_workers=args.max_workers) as ex:
+        futures = {}
+        for q in to_process:
+            fut = ex.submit(process_one, gen_client, emb_client, q, raw_map)
+            futures[fut] = q
+
+        for i, fut in enumerate(as_completed(futures)):
+            q_input = futures[fut]
+            qid = q_input["question_id"]
+            record, stats = fut.result()
+
+            if record:
+                records.append(record)
+            else:
+                partials.append(stats)
+
+            elapsed = time.time() - t0
+            n_ok, n_fail = len(records), len(partials)
+            status_icon = "OK" if record else "FAIL"
+            detail = f'dist={len(record["distractors"])}' if record else f'status={stats.get("status", "?")}'
+            rate = (i + 1) / elapsed * 60 if elapsed > 0 else 0
+
+            if (i + 1) % 10 == 0 or record is None:
+                print(f"  [{i+1}/{n_total}] {status_icon} {qid} | {detail} | "
+                      f"ok={n_ok} fail={n_fail} | {elapsed:.0f}s | {rate:.1f}q/m")
+
+    elapsed = time.time() - t0
+    print(f"\n{'='*60}")
+    print(f"完成: ok={len(records)} fail={len(partials)} 耗时={elapsed:.0f}s")
+    print(f"{'='*60}")
+
+    # 合并断点续跑
+    if args.resume and os.path.exists(out_main):
+        old = json.load(open(out_main))
+        old_qids = {r["question_id"] for r in old}
+        records = old + [r for r in records if r["question_id"] not in old_qids]
+
+    # 落盘
+    with open(out_main, "w") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+    print(f"[save] {len(records)} 条 -> {out_main}")
+
+    with open(out_partial, "w") as f:
+        json.dump(partials, f, ensure_ascii=False, indent=2)
+    print(f"[save] {len(partials)} 条失败 -> {out_partial}")
+
+    # 统计
+    sims = [d["sim_q"] for r in records for d in r["distractors"]]
+    import statistics as st
+    fail_reasons = Counter(p.get("status", "?") for p in partials)
+    n_partial_lowered = sum(1 for r in records if r["lowering_status"] == "partial")
+    n_full_fallback = sum(1 for r in records if r["lowering_status"] == "full_fallback")
+
+    s = {
+        "time": datetime.now().isoformat(),
+        "total_questions": len(questions),
+        "constraint_ok": len(records),
+        "constraint_fail": len(partials),
+        "success_rate": round(len(records) / max(len(records) + len(partials), 1), 4),
+        "elapsed_sec": round(elapsed, 0),
+        "sim_q_mean": round(st.mean(sims), 4) if sims else 0,
+        "sim_q_median": round(st.median(sims), 4) if sims else 0,
+        "sim_q_min": round(min(sims), 4) if sims else 0,
+        "sim_q_max": round(max(sims), 4) if sims else 0,
+        "fail_reasons": dict(fail_reasons),
+        "lowering_partial": n_partial_lowered,
+        "lowering_full_fallback": n_full_fallback,
+        "lowering_success_rate": round(
+            n_partial_lowered / max(n_partial_lowered + n_full_fallback, 1), 4),
+    }
+    with open(out_stats, "w") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+    print(f"[stats] -> {out_stats}")
+
+
+if __name__ == "__main__":
+    main()

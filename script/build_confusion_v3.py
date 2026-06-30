@@ -356,15 +356,15 @@ def batch_embed(emb_client, texts):
 # ============================================================
 
 
-def generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim):
+def generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim, skip_gates=False):
     """
     多策略种子生成。每种策略独立 prompt，每轮 batch 生成 SEED_BATCH_SIZE 条。
-    闸1: sim_q > anchor_sim - GATE_OFFSET
-    闸2: IDK 测试
+    闸1: sim_q > anchor_sim - GATE_OFFSET（skip_gates=True 时跳过）
+    闸2: IDK 测试（skip_gates=True 时跳过）
     目标 TARGET_SEEDS 条种子，最多 SEED_MAX_ROUNDS 轮。
     返回 (kept_seeds, stats)。
     """
-    gate_threshold = min(anchor_sim - GATE_OFFSET, 0.7)  # 高 anchor 题放宽闸门
+    gate_threshold = -999 if skip_gates else min(anchor_sim - GATE_OFFSET, 0.7)
     kept = []
     stats = {"rounds": 0, "llm_seed_calls": 0, "llm_idk_calls": 0, "emb_calls": 0}
 
@@ -400,26 +400,30 @@ def generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim):
         stats["emb_calls"] += 1
         sims = [float(e @ q_emb) for e in embs]
 
-        # 闸2: 批量 IDK
-        statements_str = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
-        idk_resp = gen_client.get_response_chat(
-            [{"role": "user", "content": IDK_BATCH_PROMPT.format(question=question, statements=statements_str)}],
-            max_new_tokens=512, temperature=0,
-        )
-        stats["llm_idk_calls"] += 1
-        idk_array = extract_json_array(idk_resp)
-        idk_map = {}
-        if idk_array:
-            for entry in idk_array:
-                if isinstance(entry, dict) and "index" in entry:
-                    idk_map[entry["index"]] = str(entry.get("answer", "")).strip().upper()
+        # 闸2: 批量 IDK（skip_gates 时跳过）
+        if skip_gates:
+            idk_map = {}  # 不检查，全通过
+        else:
+            statements_str = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+            idk_resp = gen_client.get_response_chat(
+                [{"role": "user", "content": IDK_BATCH_PROMPT.format(question=question, statements=statements_str)}],
+                max_new_tokens=512, temperature=0,
+            )
+            stats["llm_idk_calls"] += 1
+            idk_array = extract_json_array(idk_resp)
+            idk_map = {}
+            if idk_array:
+                for entry in idk_array:
+                    if isinstance(entry, dict) and "index" in entry:
+                        idk_map[entry["index"]] = str(entry.get("answer", "")).strip().upper()
 
         for i, (text, source) in enumerate(round_candidates):
             if sims[i] <= gate_threshold:
                 continue
-            idk_ans = idk_map.get(i, "PARSE_FAIL")
-            if idk_ans not in ("I DON'T KNOW", "I DONT KNOW", "I DON'T KNOW.", "I DO NOT KNOW"):
-                continue
+            if not skip_gates:
+                idk_ans = idk_map.get(i, "PARSE_FAIL")
+                if idk_ans not in ("I DON'T KNOW", "I DONT KNOW", "I DON'T KNOW.", "I DO NOT KNOW"):
+                    continue
             if text.lower() in [k["text"].lower() for k in kept]:
                 continue
             kept.append({"text": text, "sim_q": round(sims[i], 5), "source": source,
@@ -436,8 +440,9 @@ def generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim):
 # ============================================================
 
 
-def rewrite_and_expand(gen_client, emb_client, seeds, question, q_emb, gate_threshold):
-    """改写扩充 + 闸门过滤。返回 top 8 distractors 和 stats。"""
+def rewrite_and_expand(gen_client, emb_client, seeds, question, q_emb, gate_threshold, skip_gates=False):
+    """改写扩充 + 闸门过滤。返回 top 8 distractors 和 stats。
+    skip_gates=True 时跳过所有闸门，直接取 sim 最高的 8 条。"""
     stats = {"llm_rewrite_calls": 0, "llm_idk_calls": 0, "emb_calls": 0}
     all_items = list(seeds)
 
@@ -465,24 +470,28 @@ def rewrite_and_expand(gen_client, emb_client, seeds, question, q_emb, gate_thre
             stats["emb_calls"] += 1
             sims = [float(e @ q_emb) for e in embs]
 
-            statements_str = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
-            idk_resp = gen_client.get_response_chat(
-                [{"role": "user", "content": IDK_BATCH_PROMPT.format(question=question, statements=statements_str)}],
-                max_new_tokens=512, temperature=0,
-            )
-            stats["llm_idk_calls"] += 1
-            idk_array = extract_json_array(idk_resp)
-            idk_map = {}
-            if idk_array:
-                for entry in idk_array:
-                    if isinstance(entry, dict) and "index" in entry:
-                        idk_map[entry["index"]] = str(entry.get("answer", "")).strip().upper()
+            if skip_gates:
+                idk_map = {}
+            else:
+                statements_str = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+                idk_resp = gen_client.get_response_chat(
+                    [{"role": "user", "content": IDK_BATCH_PROMPT.format(question=question, statements=statements_str)}],
+                    max_new_tokens=512, temperature=0,
+                )
+                stats["llm_idk_calls"] += 1
+                idk_array = extract_json_array(idk_resp)
+                idk_map = {}
+                if idk_array:
+                    for entry in idk_array:
+                        if isinstance(entry, dict) and "index" in entry:
+                            idk_map[entry["index"]] = str(entry.get("answer", "")).strip().upper()
 
             for i, cand in enumerate(rewrite_candidates):
                 if sims[i] <= gate_threshold:
                     continue
-                ok_idk = idk_map.get(i, "PARSE_FAIL") in ("I DON'T KNOW", "I DONT KNOW", "I DON'T KNOW.", "I DO NOT KNOW")
-                if ok_idk:
+                if not skip_gates:
+                    ok_idk = idk_map.get(i, "PARSE_FAIL") in ("I DON'T KNOW", "I DONT KNOW", "I DON'T KNOW.", "I DO NOT KNOW")
+                    if not ok_idk:
                     cand["sim_q"] = round(sims[i], 5)
                     all_items.append(cand)
 
@@ -792,14 +801,21 @@ def process_one(gen_client, emb_client, q_input, raw_map):
     seeds, seed_stats = generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim)
     stats["seed_stats"] = seed_stats
 
+    no_gate = False
     if len(seeds) == 0:
-        stats["status"] = "seed_fail"
-        stats["elapsed"] = round(time.time() - t_start, 1)
-        return None, stats
+        # 无闸门重试：跳过 sim/IDK 过滤，生成什么用什么
+        seeds, seed_stats2 = generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim, skip_gates=True)
+        stats["seed_stats"] = {**seed_stats, "retry_no_gate": seed_stats2}
+        stats["seed_retry_no_gate"] = True
+        no_gate = True
+        if len(seeds) == 0:
+            stats["status"] = "seed_fail"
+            stats["elapsed"] = round(time.time() - t_start, 1)
+            return None, stats
 
     # ---- Step 3: 改写扩充 ----
     distractors, rw_stats, expand_info = rewrite_and_expand(
-        gen_client, emb_client, seeds, question, q_emb, gate_threshold)
+        gen_client, emb_client, seeds, question, q_emb, gate_threshold, skip_gates=no_gate)
     stats["expand_stats"] = expand_info
     n_dist = len(distractors)
 

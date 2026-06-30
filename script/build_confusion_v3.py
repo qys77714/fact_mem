@@ -321,6 +321,16 @@ def normalize(m: np.ndarray) -> np.ndarray:
     return m / n
 
 
+def get_non_evidence_dates(raw_rec):
+    """从非 evidence session 中提取日期列表。"""
+    ev_ids = set(raw_rec.get("answer_session_ids", []))
+    haystack_ids = raw_rec.get("haystack_session_ids", [])
+    haystack_dates = raw_rec.get("haystack_dates", [])
+    non_ev = [d for i, d in enumerate(haystack_dates)
+              if i < len(haystack_ids) and haystack_ids[i] not in ev_ids]
+    return non_ev
+
+
 def parse_json_obj(text):
     """从文本中提取第一个 JSON 对象。"""
     if not text:
@@ -733,6 +743,145 @@ def run_lowering_for_question(gen_client, emb_client, golden_memories, question,
         "lowering_details": lowering_details,
         "lowering_status": lowering_status,
     }
+
+
+def process_one(gen_client, emb_client, q_input, raw_map):
+    """单题全流程编排。返回 (record | None, stats dict)。"""
+    t_start = time.time()
+    qid = q_input["question_id"]
+    question = q_input["question"]
+    answer = q_input["answer"]
+    question_type = q_input["question_type"]
+    question_date = q_input["question_date"]
+    judged_correct = q_input["judged_correct"]
+    golden_memories = q_input["golden_memory"]
+    raw_rec = raw_map.get(qid, {})
+
+    stats = {"qid": qid, "question": question[:120], "answer": str(answer)[:80],
+             "n_golden": len(golden_memories)}
+
+    # 计算 query embedding
+    q_emb = normalize(embed_texts(emb_client, [question], EMB_MODEL))[0]
+
+    golden_texts = [g["content"] for g in golden_memories]
+    golden_dates = [g.get("date", question_date) for g in golden_memories]
+
+    # Step 0: 计算原始 golden sim_q
+    golden_embs = batch_embed(emb_client, golden_texts)
+    golden_sims = [round(float(e @ q_emb), 5) for e in golden_embs]
+
+    # ---- Step 1: Lowering (仅 judged_correct=true) ----
+    if judged_correct:
+        lowering_result = run_lowering_for_question(
+            gen_client, emb_client, golden_memories,
+            question, answer, question_type, question_date, q_emb)
+        lowered_texts = lowering_result["lowered_texts"]
+        anchor_sim = lowering_result["anchor_sim"]
+        lowering_status = lowering_result["lowering_status"]
+        lowering_details = lowering_result["lowering_details"]
+        stats["lowering_details"] = lowering_details
+        stats["lowering_status"] = lowering_status
+    else:
+        # judged_correct=false: 跳过 lowering，直接用 golden
+        lowered_texts = golden_texts
+        golden_sims_only = [float(e @ q_emb) for e in golden_embs]
+        anchor_sim = round(min(golden_sims_only), 5)
+        lowering_status = "full_fallback"
+        lowering_details = [
+            {"golden_idx": i, "success": False, "original_sim": golden_sims[i],
+             "lowered_sim": None, "lowered_text": None,
+             "attempts": 0, "in_interval": 0, "skip_reason": "judged_correct=false"}
+            for i in range(len(golden_texts))
+        ]
+        stats["lowering_details"] = lowering_details
+        stats["lowering_status"] = lowering_status
+
+    gate_threshold = anchor_sim - GATE_OFFSET
+    stats["anchor_sim"] = anchor_sim
+    stats["gate_threshold"] = round(gate_threshold, 5)
+
+    # ---- Step 2: 种子生成 ----
+    seeds, seed_stats = generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim)
+    stats["seed_stats"] = seed_stats
+
+    if len(seeds) < TARGET_SEEDS:
+        stats["status"] = "seed_fail"
+        stats["elapsed"] = round(time.time() - t_start, 1)
+        return None, stats
+
+    # ---- Step 3: 改写扩充 ----
+    distractors, rw_stats, expand_info = rewrite_and_expand(
+        gen_client, emb_client, seeds, question, q_emb, gate_threshold)
+    stats["expand_stats"] = expand_info
+
+    if len(distractors) < TARGET_DISTRACTORS:
+        stats["status"] = "expand_fail"
+        stats["n_distractors"] = len(distractors)
+        stats["elapsed"] = round(time.time() - t_start, 1)
+        return None, stats
+
+    # ---- Step 4: 装配 ----
+    # Golden memory 记录
+    golden_with_sim = [
+        {"text": golden_texts[i], "sim_q": golden_sims[i], "date": golden_dates[i]}
+        for i in range(len(golden_texts))
+    ]
+
+    # Lowered golden（仅 accepted 的 lowered 条目）
+    lowered_golden = []
+    for detail in lowering_details:
+        if detail["success"]:
+            g_idx = detail["golden_idx"]
+            lowered_golden.append({
+                "text": detail["lowered_text"],
+                "sim_q": detail["lowered_sim"],
+                "source_idx": g_idx,
+                "date": golden_dates[g_idx],
+            })
+
+    # Distractor dates: 散布在非 evidence session 的日期中
+    non_ev_dates = get_non_evidence_dates(raw_rec)
+    if non_ev_dates and len(non_ev_dates) >= len(distractors):
+        dist_dates = random.sample(non_ev_dates, len(distractors))
+    elif non_ev_dates:
+        dist_dates = (non_ev_dates * ((len(distractors) // len(non_ev_dates)) + 1))[:len(distractors)]
+    else:
+        dist_dates = [question_date] * len(distractors)
+
+    haystack_dates = raw_rec.get("haystack_dates", [])
+    haystack_sids = raw_rec.get("haystack_session_ids", [])
+    haystack_sessions = raw_rec.get("haystack_sessions", [])
+    answer_sids = raw_rec.get("answer_session_ids", [])
+
+    record = {
+        "question_id": qid,
+        "question_type": question_type,
+        "question": question,
+        "question_date": question_date,
+        "answer": answer,
+        "answer_session_ids": answer_sids,
+        "haystack_dates": haystack_dates,
+        "haystack_session_ids": haystack_sids,
+        "haystack_sessions": haystack_sessions,
+        "golden_memory": golden_with_sim,
+        "lowering_status": lowering_status,
+        "lowering_details": lowering_details,
+        "lowered_golden": lowered_golden,
+        "anchor_sim": round(anchor_sim, 5),
+        "distractors": [
+            {"text": d["text"], "sim_q": d["sim_q"],
+             "source": d.get("source", "seed"), "source_idx": d.get("source_idx", -1),
+             "date": dist_dates[i % len(dist_dates)]}
+            for i, d in enumerate(distractors)
+        ],
+        "embedding_model": EMB_MODEL,
+        "constraint_ok": True,
+    }
+
+    stats["status"] = "ok"
+    stats["n_distractors"] = len(distractors)
+    stats["elapsed"] = round(time.time() - t_start, 1)
+    return record, stats
 
 
 if __name__ == "__main__":

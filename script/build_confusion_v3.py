@@ -53,98 +53,51 @@ LOWER_SIM_UPPER = 0.05     # sim(g_i) - 0.05
 GATE_OFFSET = 0.1          # anchor_sim - 0.1
 
 # ---- Lowering Prompts (per question type) ----
-# 每条 prompt 是一个模板，用 {golden} 填充原始 golden 文本
+# 新思路：保留事实信息，自由换词。不强制保留原词。
+
+_BASE_LOWERING = textwrap.dedent("""\
+Rewrite this memory statement in a NATURAL, CONVERSATIONAL way, as if someone casually mentioned it in passing.
+
+CRITICAL RULE: The rewritten version MUST preserve ALL factual information — every number, name, date, and relationship. If someone reads the rewritten version, they must be able to derive the SAME FACTS as the original.
+
+HOWEVER, you SHOULD change the WORDS and EXPRESSION:
+- Replace specific nouns/verbs with different phrasings (e.g., "playlists" → "curated collections", "attended" → "went to", "graduated with" → "earned a degree in")
+- Use longer, more natural sentence structures
+- Make it sound like a casual recollection, not a database entry
+- The EMBEDDING should be DIFFERENT from the original — aim for different vocabulary patterns
+
+What MUST stay the same: the factual truth. What SHOULD change: how you say it.
+
+Original: {golden}
+
+Return ONLY the rewritten sentence.""")
+
+_TEMPORAL_LOWERING = textwrap.dedent("""\
+Rewrite this TEMPORAL memory statement in a NATURAL, CONVERSATIONAL way, as if someone casually mentioned it in passing.
+
+🔴 DATES ARE SACRED: ALL dates, times, and temporal expressions must be copied VERBATIM. Not a single character of any date or time may change. If you change "2023/05/20" to "May 2023", the answer becomes WRONG.
+
+CRITICAL RULE: The rewritten version MUST preserve ALL factual information besides dates — every number, name, and relationship must be derivable.
+
+HOWEVER, you SHOULD change the WORDS and EXPRESSION around the dates:
+- Replace specific nouns/verbs with different phrasings
+- Use longer, more natural sentence structures
+- Make it sound like a casual recollection, not a database entry
+- The EMBEDDING should be DIFFERENT from the original
+
+Dates: verbatim. Everything else: rephrase freely while keeping facts intact.
+
+Original: {golden}
+
+Return ONLY the rewritten sentence.""")
 
 LOWERING_PROMPTS = {
-    "temporal-reasoning": textwrap.dedent("""\
-Rewrite this statement VERY SLIGHTLY — change only the sentence STRUCTURE.
-🔴 ALL dates, numbers, and time expressions must remain CHARACTER-BY-CHARACTER identical.
-If you change ANY date, time, or number, the answer becomes WRONG and the task FAILS.
-
-Rules:
-1. 🔴 ALL dates, times, and numbers MUST be copied verbatim — not a single character changed
-2. ALL temporal relationship words (before, after, until, since, between) MUST be preserved exactly
-3. Only allowed changes: reorder clauses, change active↔passive, add casual framing words
-4. Keep subject as "The user"
-5. One sentence
-
-Original: {golden}
-
-Return ONLY the rewritten sentence."""),
-
-    "multi-session": textwrap.dedent("""\
-Rewrite this statement to be more casual and indirect, while preserving ALL factual information.
-This fact is part of a MULTI-SESSION set — numbers, dates, and event sequences must stay EXACT.
-
-Rules:
-1. ALL numbers, numerical values, and count-related words MUST remain EXACTLY as written
-2. ALL dates, times, proper nouns (names of people/places/things) MUST remain EXACTLY as written
-3. Preserve the temporal/sequential relationship implied by the original
-4. Rephrase as a casual conversational memory
-5. Keep subject as "The user"
-6. One sentence
-
-Original: {golden}
-
-Return ONLY the rewritten sentence."""),
-
-    "knowledge-update": textwrap.dedent("""\
-Rewrite this statement to be more casual and indirect. This fact is part of a KNOWLEDGE-UPDATE set.
-It tracks a change over time — both the old value and the context around it must be preserved.
-
-Rules:
-1. ALL values (old and new), numbers, dates, and time markers MUST remain EXACTLY as written
-2. Keep the temporal context (e.g., "as of DATE", "by DATE") verbatim
-3. Make the phrasing more casual — less like a database log
-4. Keep subject as "The user"
-5. One sentence
-
-Original: {golden}
-
-Return ONLY the rewritten sentence."""),
-
-    "single-session-user": textwrap.dedent("""\
-Rewrite this statement to be more casual and indirect, while preserving ALL factual information.
-
-Rules:
-1. ALL names of people/places/things, numbers, dates, and proper nouns MUST remain EXACTLY as written
-2. Common verbs and adjectives can be replaced with synonyms (e.g., "attended"→"went to")
-3. Restructure the sentence — reorder clauses, change active↔passive
-4. Add casual framing words ("happened to", "noted that", "ended up")
-5. Keep subject as "The user"
-6. One sentence
-
-Original: {golden}
-
-Return ONLY the rewritten sentence."""),
-
-    "single-session-assistant": textwrap.dedent("""\
-Rewrite this statement to be more casual and indirect. This fact comes from an ASSISTANT interaction.
-
-Rules:
-1. ALL key entities, facts, and values MUST remain EXACTLY as written
-2. Only change: sentence connectors, function words (the/a/of), and common verbs
-3. You may reorder clauses and change active↔passive
-4. Keep subject as "The user" (convert from "you" if needed)
-5. One sentence
-
-Original: {golden}
-
-Return ONLY the rewritten sentence."""),
-
-    "single-session-preference": textwrap.dedent("""\
-Rewrite this statement to be more casual and indirect. This fact expresses a PREFERENCE.
-
-Rules:
-1. The PREFERENCE OBJECT (what the user likes/dislikes) MUST remain EXACTLY as written — do not replace it
-2. Intensity words (love, enjoy, like, prefer, hate) can be softened slightly but not changed to opposite meaning
-3. Make phrasing more conversational and less like a direct statement of preference
-4. Keep subject as "The user"
-5. One sentence
-
-Original: {golden}
-
-Return ONLY the rewritten sentence."""),
+    "temporal-reasoning": _TEMPORAL_LOWERING,
+    "multi-session": _BASE_LOWERING,
+    "knowledge-update": _BASE_LOWERING,
+    "single-session-user": _BASE_LOWERING,
+    "single-session-assistant": _BASE_LOWERING,
+    "single-session-preference": _BASE_LOWERING,
 }
 
 

@@ -64,6 +64,96 @@ def parse_args():
     return ap.parse_args()
 
 
+# ============================================================
+# 帮助函数
+# ============================================================
+
+
+def normalize(m: np.ndarray) -> np.ndarray:
+    """L2 归一化（按行），零向量防止除零。"""
+    n = np.linalg.norm(m, axis=1, keepdims=True)
+    n[n == 0] = 1.0
+    return m / n
+
+
+def parse_json_obj(text):
+    """从文本中提取第一个 JSON 对象。"""
+    if not text:
+        return None
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+def extract_json_array(text):
+    """从文本中提取第一个 JSON 数组。"""
+    if not text:
+        return None
+    m = re.search(r"\[.*\]", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+def batch_embed(emb_client, texts):
+    """批量 embedding → L2 归一化矩阵。"""
+    if not texts:
+        return np.array([])
+    embs = embed_texts(emb_client, texts, EMB_MODEL)
+    return normalize(np.array(embs))
+
+
+# ============================================================
+# 数据加载
+# ============================================================
+
+
+def load_data(golden_path=DEFAULT_GOLDEN, raw_path=DEFAULT_RAW):
+    """加载 golden 和 raw 数据，返回待处理题目列表 + raw map。
+
+    golden_memory 格式：[{"content": "...", "date": "..."}, ...]
+    跳过 abstention 和无 golden_memory 的题。
+    """
+    golden_data = json.load(open(golden_path))
+    raw_data = json.load(open(raw_path))
+    raw_map = {r["question_id"]: r for r in raw_data}
+
+    questions = []
+    skipped_abstention = 0
+    for r in golden_data:
+        qid = r["question_id"]
+        if r.get("abstention") or not r.get("golden_memory"):
+            skipped_abstention += 1
+            continue
+        if qid not in raw_map:
+            continue
+
+        raw_rec = raw_map[qid]
+        questions.append({
+            "question_id": qid,
+            "question": r["question"],
+            "answer": r.get("answer", ""),
+            "question_type": r.get("question_type", ""),
+            "question_date": raw_rec.get("question_date", ""),
+            "judged_correct": r.get("judged_correct", True),
+            "golden_memory": r["golden_memory"],
+            # 已经是 [{"content": "...", "date": "..."}, ...]
+            "raw_rec": raw_rec,
+        })
+
+    n_jc_false = sum(1 for q in questions if not q["judged_correct"])
+    print(f"[load] 可答题={len(questions)}, abstention跳过={skipped_abstention}, "
+          f"judged_correct=false={n_jc_false}")
+    return questions, raw_map
+
+
 if __name__ == "__main__":
     args = parse_args()
     print(f"[confusion_v3] out_dir={args.out_dir}, max_workers={args.max_workers}, resume={args.resume}")

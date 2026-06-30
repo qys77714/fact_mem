@@ -305,6 +305,8 @@ def parse_args():
     ap.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
     ap.add_argument("--max-workers", type=int, default=8)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--regen-lowered", action="store_true",
+                    help="强制重新生成所有 lowered_golden（忽略断点续跑，重新处理所有题目）")
     ap.add_argument("--out-name", default="longmemeval_s_confusion_v3")
     return ap.parse_args()
 
@@ -524,8 +526,10 @@ def load_data(golden_path=DEFAULT_GOLDEN, raw_path=DEFAULT_RAW):
     golden_memory 格式：[{"content": "...", "date": "..."}, ...]
     跳过 abstention 和无 golden_memory 的题。
     """
-    golden_data = json.load(open(golden_path))
-    raw_data = json.load(open(raw_path))
+    with open(golden_path) as f:
+        golden_data = json.load(f)
+    with open(raw_path) as f:
+        raw_data = json.load(f)
     raw_map = {r["question_id"]: r for r in raw_data}
 
     questions = []
@@ -900,7 +904,9 @@ def main():
 
     # 断点续跑
     done_qids = set()
-    if args.resume and os.path.exists(out_main):
+    if args.regen_lowered:
+        print("[regen-lowered] 忽略断点续跑，重新处理所有题目（lowered_golden 将完全重建）")
+    elif args.resume and os.path.exists(out_main):
         with open(out_main) as f:
             done = json.load(f)
         done_qids = {r["question_id"] for r in done}

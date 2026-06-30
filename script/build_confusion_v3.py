@@ -48,7 +48,7 @@ SEED_MAX_ROUNDS = 8
 SEED_BATCH_SIZE = 6        # 每策略每轮 6 条
 LOWER_MAX_ATTEMPTS = 8     # 每条 golden 最多 8 次 lowering
 REWRITE_MAX_ATTEMPTS = 2
-LOWER_SIM_LOWER = 0.4      # sim(g_i) - 0.4
+LOWER_SIM_LOWER = 0.8      # sim(g_i) - 0.8（足够宽，靠替换验证把关）
 LOWER_SIM_UPPER = 0.05     # sim(g_i) - 0.05
 GATE_OFFSET = 0.1          # anchor_sim - 0.1
 

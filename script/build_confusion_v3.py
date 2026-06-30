@@ -901,7 +901,8 @@ def main():
     # 断点续跑
     done_qids = set()
     if args.resume and os.path.exists(out_main):
-        done = json.load(open(out_main))
+        with open(out_main) as f:
+            done = json.load(f)
         done_qids = {r["question_id"] for r in done}
         print(f"[resume] 已有 {len(done_qids)} 条跳过")
 
@@ -926,7 +927,18 @@ def main():
         for i, fut in enumerate(as_completed(futures)):
             q_input = futures[fut]
             qid = q_input["question_id"]
-            record, stats = fut.result()
+            try:
+                record, stats = fut.result()
+            except Exception as exc:
+                print(f"  [{i+1}/{n_total}] EXCEPTION {qid}: {exc}")
+                partials.append({
+                    "qid": qid,
+                    "question": q_input["question"][:120],
+                    "status": "exception",
+                    "error": str(exc),
+                    "elapsed": round(time.time() - t0, 1),
+                })
+                continue
 
             if record:
                 records.append(record)
@@ -950,7 +962,8 @@ def main():
 
     # 合并断点续跑
     if args.resume and os.path.exists(out_main):
-        old = json.load(open(out_main))
+        with open(out_main) as f:
+            old = json.load(f)
         old_qids = {r["question_id"] for r in old}
         records = old + [r for r in records if r["question_id"] not in old_qids]
 

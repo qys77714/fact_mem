@@ -148,6 +148,96 @@ Return ONLY the rewritten sentence."""),
 }
 
 
+# ---- Seed Strategy Prompts ----
+
+SEED_STRATEGY_PROMPTS = {
+    "keyword-borrow": textwrap.dedent("""\
+You are creating "confusion memories" for a retrieval experiment.
+Given a question someone asked about a user, generate {n} DIFFERENT factual statements about the user.
+
+Strategy: KEYWORD BORROW — take the key nouns/verbs from the question and embed them in an UNRELATED factual statement.
+
+Rules:
+1. REUSE the key content words from the question EXACTLY AS WRITTEN — do NOT replace with synonyms
+2. The factual statement must be about a DIFFERENT aspect of the user's life, NOT about what the question asks
+3. CRITICAL: MUST NOT provide any information that answers the question
+4. Start with "The user" and write ONE sentence each
+5. The {n} statements should be DIVERSE — different unrelated topics
+
+Question: {question}
+
+Return a JSON array of {n} strings: {{"statements": [...]}}"""),
+
+    "topic-drift": textwrap.dedent("""\
+You are creating "confusion memories" for a retrieval experiment.
+Given a question someone asked about a user, generate {n} DIFFERENT factual statements.
+
+Strategy: TOPIC DRIFT — start from the question's topic but drift to an ADJACENT but DIFFERENT sub-topic that does NOT contain the answer.
+
+Rules:
+1. REUSE key words from the question where natural, but the main topic should be adjacent, not overlapping
+2. Talk about a related experience, context, or detail that does NOT reveal the answer
+3. CRITICAL: MUST NOT provide any information that answers the question
+4. Start with "The user" and write ONE sentence each
+5. The {n} statements should drift to different adjacent topics
+
+Question: {question}
+
+Return a JSON array of {n} strings: {{"statements": [...]}}"""),
+
+    "generalize": textwrap.dedent("""\
+You are creating "confusion memories" for a retrieval experiment.
+Given a question someone asked about a user, generate {n} DIFFERENT factual statements.
+
+Strategy: GENERALIZE — take the question's core topic and make GENERAL background statements about it that do NOT answer the specific question.
+
+Rules:
+1. Use the general topic words from the question (e.g., "education" from "what degree")
+2. Make broad, non-specific statements about the user's experience/thinking in that general area
+3. CRITICAL: MUST NOT provide any SPECIFIC information that answers the question
+4. Start with "The user" and write ONE sentence each
+5. The {n} statements should cover different angles of the general topic
+
+Question: {question}
+
+Return a JSON array of {n} strings: {{"statements": [...]}}"""),
+
+    "context-surround": textwrap.dedent("""\
+You are creating "confusion memories" for a retrieval experiment.
+Given a question someone asked about a user, generate {n} DIFFERENT factual statements.
+
+Strategy: CONTEXT SURROUND — describe the SURROUNDING context, situation, or process that relates to the question topic but does NOT touch the core fact being asked.
+
+Rules:
+1. Use words from the question but describe the peripheral context — the setting, the process, the lead-up
+2. CRITICAL: MUST NOT provide the SPECIFIC fact the question asks for
+3. Start with "The user" and write ONE sentence each
+4. The {n} statements should describe different contextual aspects
+
+Question: {question}
+
+Return a JSON array of {n} strings: {{"statements": [...]}}"""),
+}
+
+IDK_BATCH_PROMPT = textwrap.dedent("""\
+You are an evaluator. You are given a question and several memory statements.
+
+For EACH statement, answer the question using ONLY the information in that statement.
+
+Rules (apply to EACH statement independently):
+- If the statement contains information that DIRECTLY answers the question, give that answer concisely.
+- If the statement does NOT contain enough information to answer, respond "I DON'T KNOW".
+- Do NOT guess. Do NOT infer. Do NOT use your own knowledge.
+
+Question: {question}
+
+Statements:
+{statements}
+
+Return a JSON array, one entry per statement in the SAME ORDER:
+{{"results": [{{"index": 0, "answer": "I DON'T KNOW"}}, {{"index": 1, "answer": "..."}}, ...]}}""")
+
+
 def get_lowering_prompt(question_type):
     """根据题型返回对应的 lowering prompt 模板。"""
     return LOWERING_PROMPTS.get(question_type, LOWERING_PROMPTS["single-session-user"])
@@ -208,6 +298,86 @@ def batch_embed(emb_client, texts):
         return np.array([])
     embs = embed_texts(emb_client, texts, EMB_MODEL)
     return normalize(np.array(embs))
+
+
+# ============================================================
+# 种子生成 — 4 策略 prompt + 双闸门过滤
+# ============================================================
+
+
+def generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim):
+    """
+    多策略种子生成。每种策略独立 prompt，每轮 batch 生成 SEED_BATCH_SIZE 条。
+    闸1: sim_q > anchor_sim - GATE_OFFSET
+    闸2: IDK 测试
+    目标 TARGET_SEEDS 条种子，最多 SEED_MAX_ROUNDS 轮。
+    返回 (kept_seeds, stats)。
+    """
+    gate_threshold = anchor_sim - GATE_OFFSET
+    kept = []
+    stats = {"rounds": 0, "llm_seed_calls": 0, "llm_idk_calls": 0, "emb_calls": 0}
+
+    for rnd in range(SEED_MAX_ROUNDS):
+        stats["rounds"] = rnd + 1
+        round_candidates = []
+
+        for strategy_name, prompt_tpl in SEED_STRATEGY_PROMPTS.items():
+            resp = gen_client.get_response_chat(
+                [{"role": "user", "content": prompt_tpl.format(n=SEED_BATCH_SIZE, question=question)}],
+                max_new_tokens=1024, temperature=0.6,
+            )
+            stats["llm_seed_calls"] += 1
+            obj = parse_json_obj(resp)
+            candidates_raw = obj.get("statements", []) if obj else []
+            if not candidates_raw:
+                arr = extract_json_array(resp)
+                if arr and isinstance(arr, list) and all(isinstance(x, str) for x in arr):
+                    candidates_raw = arr
+            candidates = [
+                t.strip().strip('"').strip("'") for t in candidates_raw
+                if t.strip() and len(t.strip()) >= 20 and t.strip().startswith("The user")
+            ]
+            for c in candidates:
+                round_candidates.append((c, strategy_name))
+
+        if not round_candidates:
+            continue
+
+        # 闸1: embedding similarity
+        texts = [c[0] for c in round_candidates]
+        embs = batch_embed(emb_client, texts)
+        stats["emb_calls"] += 1
+        sims = [float(e @ q_emb) for e in embs]
+
+        # 闸2: 批量 IDK
+        statements_str = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+        idk_resp = gen_client.get_response_chat(
+            [{"role": "user", "content": IDK_BATCH_PROMPT.format(question=question, statements=statements_str)}],
+            max_new_tokens=512, temperature=0,
+        )
+        stats["llm_idk_calls"] += 1
+        idk_array = extract_json_array(idk_resp)
+        idk_map = {}
+        if idk_array:
+            for entry in idk_array:
+                if isinstance(entry, dict) and "index" in entry:
+                    idk_map[entry["index"]] = str(entry.get("answer", "")).strip().upper()
+
+        for i, (text, source) in enumerate(round_candidates):
+            if sims[i] <= gate_threshold:
+                continue
+            idk_ans = idk_map.get(i, "PARSE_FAIL")
+            if idk_ans not in ("I DON'T KNOW", "I DONT KNOW", "I DON'T KNOW.", "I DO NOT KNOW"):
+                continue
+            if text.lower() in [k["text"].lower() for k in kept]:
+                continue
+            kept.append({"text": text, "sim_q": round(sims[i], 5), "source": source,
+                         "source_idx": len(kept), "from_round": rnd + 1})
+
+        if len(kept) >= TARGET_SEEDS:
+            break
+
+    return kept, stats
 
 
 # ============================================================

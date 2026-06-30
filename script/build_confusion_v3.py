@@ -326,6 +326,122 @@ def verify_replacement(gen_client, golden_memories, candidate_text, candidate_id
     return passed, llm_answer
 
 
+# ============================================================
+# Lowering Engine — 逐条 lowering + 逐条 fallback
+# ============================================================
+
+
+def lower_one_golden(gen_client, emb_client, g_text, g_sim, g_idx,
+                     all_golden_texts, question, gold_answer,
+                     question_type, question_date, q_emb):
+    """
+    对单条 golden 执行 lowering（最多 8 次尝试，跑满）。
+    目标 sim 区间: [g_sim - LOWER_SIM_LOWER, g_sim - LOWER_SIM_UPPER]
+    区间内按 sim 从低到高做替换验证，第一个通过即接受。
+
+    返回:
+      {"golden_idx": g_idx, "success": bool, "original_sim": g_sim,
+       "lowered_sim": float_or_None, "lowered_text": str_or_None,
+       "attempts": int, "in_interval": int}
+    """
+    prompt_tpl = get_lowering_prompt(question_type)
+    target_lower = g_sim - LOWER_SIM_LOWER
+    target_upper = g_sim - LOWER_SIM_UPPER
+
+    candidates = []  # (text, sim)
+    for attempt in range(LOWER_MAX_ATTEMPTS):
+        resp = gen_client.get_response_chat(
+            [{"role": "user", "content": prompt_tpl.format(golden=g_text)}],
+            max_new_tokens=256, temperature=0.65,
+        )
+        text = (resp or "").strip().strip('"').strip("'")
+        if not text or len(text) < 12:
+            continue
+        if not text.startswith("The user"):
+            continue
+        if text.lower() == g_text.lower():
+            continue
+
+        e = normalize(embed_texts(emb_client, [text], EMB_MODEL))[0]
+        sim = float(e @ q_emb)
+        candidates.append((text, sim))
+
+    # 筛出在目标区间内的
+    in_interval = [(t, s) for t, s in candidates if target_lower <= s <= target_upper]
+    # 按 sim 从低到高排序（最不相似优先验证）
+    in_interval.sort(key=lambda x: x[1])
+
+    result = {
+        "golden_idx": g_idx,
+        "success": False,
+        "original_sim": round(g_sim, 5),
+        "lowered_sim": None,
+        "lowered_text": None,
+        "attempts": len(candidates),
+        "in_interval": len(in_interval),
+    }
+
+    for cand_text, cand_sim in in_interval:
+        passed, llm_ans = verify_replacement(
+            gen_client, all_golden_texts, cand_text, g_idx,
+            question, gold_answer, question_date)
+        if passed:
+            result["success"] = True
+            result["lowered_sim"] = round(cand_sim, 5)
+            result["lowered_text"] = cand_text
+            break
+
+    return result
+
+
+def run_lowering_for_question(gen_client, emb_client, golden_memories, question, gold_answer, question_type, question_date, q_emb):
+    """
+    对一题的所有 golden 逐条执行 lowering。
+    返回:
+      lowered_texts: list[str] — 混合集合（lowered成功的用lowered，否则用原始）
+      golden_sims: list[float] — 原始 golden 的 sim_q
+      correct_sims: list[float] — 混合集合每条记忆的 sim_q
+      anchor_sim: float — min(correct_sims)
+      lowering_details: list[dict]
+      lowering_status: "partial" | "full_fallback"
+    """
+    golden_texts = [g["content"] for g in golden_memories]
+
+    # 计算原始 sim_q
+    golden_embs = batch_embed(emb_client, golden_texts)
+    golden_sims = [float(e @ q_emb) for e in golden_embs]
+
+    # 逐条 lowering
+    lowering_details = []
+    lowered_texts = list(golden_texts)  # 从原始开始
+
+    for i, g_text in enumerate(golden_texts):
+        detail = lower_one_golden(
+            gen_client, emb_client, g_text, golden_sims[i], i,
+            golden_texts, question, gold_answer,
+            question_type, question_date, q_emb)
+        lowering_details.append(detail)
+        if detail["success"]:
+            lowered_texts[i] = detail["lowered_text"]
+
+    # 计算混合集合的 sim_q
+    correct_embs = batch_embed(emb_client, lowered_texts)
+    correct_sims = [float(e @ q_emb) for e in correct_embs]
+    anchor_sim = min(correct_sims)
+
+    n_lowered = sum(1 for d in lowering_details if d["success"])
+    lowering_status = "partial" if n_lowered > 0 else "full_fallback"
+
+    return {
+        "lowered_texts": lowered_texts,
+        "golden_sims": [round(s, 5) for s in golden_sims],
+        "correct_sims": [round(s, 5) for s in correct_sims],
+        "anchor_sim": round(anchor_sim, 5),
+        "lowering_details": lowering_details,
+        "lowering_status": lowering_status,
+    }
+
+
 if __name__ == "__main__":
     args = parse_args()
     print(f"[confusion_v3] out_dir={args.out_dir}, max_workers={args.max_workers}, resume={args.resume}")

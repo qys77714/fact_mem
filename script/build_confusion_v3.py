@@ -67,10 +67,11 @@ HOWEVER, you SHOULD change the WORDS and EXPRESSION:
 - The EMBEDDING should be DIFFERENT from the original — aim for different vocabulary patterns
 
 What MUST stay the same: the factual truth. What SHOULD change: how you say it.
+Start your sentence with "The user".
 
 Original: {golden}
 
-Return ONLY the rewritten sentence.""")
+Return ONLY the rewritten sentence, starting with "The user".""")
 
 _TEMPORAL_LOWERING = textwrap.dedent("""\
 Rewrite this TEMPORAL memory statement in a NATURAL, CONVERSATIONAL way, as if someone casually mentioned it in passing.
@@ -86,10 +87,11 @@ HOWEVER, you SHOULD change the WORDS and EXPRESSION around the dates:
 - The EMBEDDING should be DIFFERENT from the original
 
 Dates: verbatim. Everything else: rephrase freely while keeping facts intact.
+Start your sentence with "The user".
 
 Original: {golden}
 
-Return ONLY the rewritten sentence.""")
+Return ONLY the rewritten sentence, starting with "The user".""")
 
 LOWERING_PROMPTS = {
     "temporal-reasoning": _TEMPORAL_LOWERING,

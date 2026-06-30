@@ -52,6 +52,106 @@ LOWER_SIM_LOWER = 0.4      # sim(g_i) - 0.4
 LOWER_SIM_UPPER = 0.05     # sim(g_i) - 0.05
 GATE_OFFSET = 0.1          # anchor_sim - 0.1
 
+# ---- Lowering Prompts (per question type) ----
+# 每条 prompt 是一个模板，用 {golden} 填充原始 golden 文本
+
+LOWERING_PROMPTS = {
+    "temporal-reasoning": textwrap.dedent("""\
+Rewrite this statement VERY SLIGHTLY — change only the sentence STRUCTURE.
+🔴 ALL dates, numbers, and time expressions must remain CHARACTER-BY-CHARACTER identical.
+If you change ANY date, time, or number, the answer becomes WRONG and the task FAILS.
+
+Rules:
+1. 🔴 ALL dates, times, and numbers MUST be copied verbatim — not a single character changed
+2. ALL temporal relationship words (before, after, until, since, between) MUST be preserved exactly
+3. Only allowed changes: reorder clauses, change active↔passive, add casual framing words
+4. Keep subject as "The user"
+5. One sentence
+
+Original: {golden}
+
+Return ONLY the rewritten sentence."""),
+
+    "multi-session": textwrap.dedent("""\
+Rewrite this statement to be more casual and indirect, while preserving ALL factual information.
+This fact is part of a MULTI-SESSION set — numbers, dates, and event sequences must stay EXACT.
+
+Rules:
+1. ALL numbers, numerical values, and count-related words MUST remain EXACTLY as written
+2. ALL dates, times, proper nouns (names of people/places/things) MUST remain EXACTLY as written
+3. Preserve the temporal/sequential relationship implied by the original
+4. Rephrase as a casual conversational memory
+5. Keep subject as "The user"
+6. One sentence
+
+Original: {golden}
+
+Return ONLY the rewritten sentence."""),
+
+    "knowledge-update": textwrap.dedent("""\
+Rewrite this statement to be more casual and indirect. This fact is part of a KNOWLEDGE-UPDATE set.
+It tracks a change over time — both the old value and the context around it must be preserved.
+
+Rules:
+1. ALL values (old and new), numbers, dates, and time markers MUST remain EXACTLY as written
+2. Keep the temporal context (e.g., "as of DATE", "by DATE") verbatim
+3. Make the phrasing more casual — less like a database log
+4. Keep subject as "The user"
+5. One sentence
+
+Original: {golden}
+
+Return ONLY the rewritten sentence."""),
+
+    "single-session-user": textwrap.dedent("""\
+Rewrite this statement to be more casual and indirect, while preserving ALL factual information.
+
+Rules:
+1. ALL names of people/places/things, numbers, dates, and proper nouns MUST remain EXACTLY as written
+2. Common verbs and adjectives can be replaced with synonyms (e.g., "attended"→"went to")
+3. Restructure the sentence — reorder clauses, change active↔passive
+4. Add casual framing words ("happened to", "noted that", "ended up")
+5. Keep subject as "The user"
+6. One sentence
+
+Original: {golden}
+
+Return ONLY the rewritten sentence."""),
+
+    "single-session-assistant": textwrap.dedent("""\
+Rewrite this statement to be more casual and indirect. This fact comes from an ASSISTANT interaction.
+
+Rules:
+1. ALL key entities, facts, and values MUST remain EXACTLY as written
+2. Only change: sentence connectors, function words (the/a/of), and common verbs
+3. You may reorder clauses and change active↔passive
+4. Keep subject as "The user" (convert from "you" if needed)
+5. One sentence
+
+Original: {golden}
+
+Return ONLY the rewritten sentence."""),
+
+    "single-session-preference": textwrap.dedent("""\
+Rewrite this statement to be more casual and indirect. This fact expresses a PREFERENCE.
+
+Rules:
+1. The PREFERENCE OBJECT (what the user likes/dislikes) MUST remain EXACTLY as written — do not replace it
+2. Intensity words (love, enjoy, like, prefer, hate) can be softened slightly but not changed to opposite meaning
+3. Make phrasing more conversational and less like a direct statement of preference
+4. Keep subject as "The user"
+5. One sentence
+
+Original: {golden}
+
+Return ONLY the rewritten sentence."""),
+}
+
+
+def get_lowering_prompt(question_type):
+    """根据题型返回对应的 lowering prompt 模板。"""
+    return LOWERING_PROMPTS.get(question_type, LOWERING_PROMPTS["single-session-user"])
+
 
 def parse_args():
     ap = argparse.ArgumentParser()

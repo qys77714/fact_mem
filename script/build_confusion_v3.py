@@ -238,6 +238,61 @@ Return a JSON array, one entry per statement in the SAME ORDER:
 {{"results": [{{"index": 0, "answer": "I DON'T KNOW"}}, {{"index": 1, "answer": "..."}}, ...]}}""")
 
 
+# ---- Rewrite Prompts (EQV / OSN / NSO) ----
+
+EQV_REWRITE_PROMPT = textwrap.dedent("""\
+Rewrite the following statement to express the SAME meaning in a different way.
+This is for a retrieval experiment where vocabulary overlap with a query matters.
+
+Rules:
+1. Keep ALL key nouns and content words EXACTLY AS IS. Do NOT replace domain-specific terms,
+   proper nouns, or the main subject/object words with synonyms.
+   Only change: function words (the, a, of), common verbs (is→represents, uses→utilizes),
+   and sentence connectors. You may reorder clauses and change active↔passive.
+2. The rewritten version MUST convey exactly the same facts.
+3. One sentence, start with "The user".
+
+Original: {seed}
+
+Return ONLY the rewritten statement, starting with "The user".""")
+
+OSN_REWRITE_PROMPT = textwrap.dedent("""\
+Rewrite the following statement to be MORE SPECIFIC and CONCRETE (the new version strictly entails the original).
+
+Rules:
+1. Keep ALL key nouns and content words from the original EXACTLY AS IS. Do NOT replace them.
+2. Add specific details to make the statement more vivid — elaborate on aspects already present
+   (e.g., add time, frequency, manner, or a minor contextual detail).
+3. The new version must logically entail the original (if new is true, original must be true).
+4. CRITICAL: The added details must NOT introduce any information that could answer a question.
+5. Start with "The user". One sentence only.
+
+Original: {seed}
+
+Return ONLY the rewritten statement, starting with "The user".""")
+
+NSO_REWRITE_PROMPT = textwrap.dedent("""\
+Rewrite the following statement to be slightly MORE GENERAL (the original entails the new version).
+
+Rules:
+1. Keep ALL key nouns and content words from the original EXACTLY AS IS. Do NOT replace them
+   with broader category terms. Only remove or soften the least important modifiers (adjectives,
+   adverbs, time/place qualifiers) while preserving the sentence's core meaning.
+2. The original must entail the new version (if original is true, new must be true).
+3. CRITICAL: Do NOT introduce any information that could answer a question.
+4. Start with "The user". One sentence only.
+
+Original: {seed}
+
+Return ONLY the rewritten statement, starting with "The user".""")
+
+REWRITE_STRATEGIES = [
+    ("eqv", EQV_REWRITE_PROMPT, 0.7),
+    ("osn", OSN_REWRITE_PROMPT, 0.85),
+    ("nso", NSO_REWRITE_PROMPT, 0.7),
+]
+
+
 def get_lowering_prompt(question_type):
     """根据题型返回对应的 lowering prompt 模板。"""
     return LOWERING_PROMPTS.get(question_type, LOWERING_PROMPTS["single-session-user"])
@@ -378,6 +433,74 @@ def generate_seeds(gen_client, emb_client, question, q_emb, anchor_sim):
             break
 
     return kept, stats
+
+
+# ============================================================
+# 改写扩充 — EQV / OSN / NSO
+# ============================================================
+
+
+def rewrite_and_expand(gen_client, emb_client, seeds, question, q_emb, gate_threshold):
+    """改写扩充 + 闸门过滤。返回 top 8 distractors 和 stats。"""
+    stats = {"llm_rewrite_calls": 0, "llm_idk_calls": 0, "emb_calls": 0}
+    all_items = list(seeds)
+
+    for si, seed in enumerate(seeds):
+        rewrite_candidates = []
+        for strat_name, prompt_tpl, temp in REWRITE_STRATEGIES:
+            for attempt in range(REWRITE_MAX_ATTEMPTS):
+                resp = gen_client.get_response_chat(
+                    [{"role": "user", "content": prompt_tpl.format(seed=seed["text"])}],
+                    max_new_tokens=200, temperature=temp,
+                )
+                stats["llm_rewrite_calls"] += 1
+                text = (resp or "").strip().strip('"').strip("'")
+                if not text or len(text) < 20 or not text.startswith("The user"):
+                    continue
+                if text.lower() == seed["text"].lower():
+                    continue
+                rewrite_candidates.append({"text": text, "source": f"seed{si}_{strat_name}",
+                                           "source_idx": si, "strategy": strat_name})
+                break
+
+        if rewrite_candidates:
+            texts = [c["text"] for c in rewrite_candidates]
+            embs = batch_embed(emb_client, texts)
+            stats["emb_calls"] += 1
+            sims = [float(e @ q_emb) for e in embs]
+
+            statements_str = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+            idk_resp = gen_client.get_response_chat(
+                [{"role": "user", "content": IDK_BATCH_PROMPT.format(question=question, statements=statements_str)}],
+                max_new_tokens=512, temperature=0,
+            )
+            stats["llm_idk_calls"] += 1
+            idk_array = extract_json_array(idk_resp)
+            idk_map = {}
+            if idk_array:
+                for entry in idk_array:
+                    if isinstance(entry, dict) and "index" in entry:
+                        idk_map[entry["index"]] = str(entry.get("answer", "")).strip().upper()
+
+            for i, cand in enumerate(rewrite_candidates):
+                if sims[i] <= gate_threshold:
+                    continue
+                ok_idk = idk_map.get(i, "PARSE_FAIL") in ("I DON'T KNOW", "I DONT KNOW", "I DON'T KNOW.", "I DO NOT KNOW")
+                if ok_idk:
+                    cand["sim_q"] = round(sims[i], 5)
+                    all_items.append(cand)
+
+    # 去重
+    seen = set()
+    deduped = []
+    for item in all_items:
+        key = item["text"].lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+    deduped.sort(key=lambda x: x.get("sim_q", 0), reverse=True)
+    selected = deduped[:TARGET_DISTRACTORS]
+    return selected, stats, {"total": len(all_items), "after_dedup": len(deduped), "selected": len(selected)}
 
 
 # ============================================================

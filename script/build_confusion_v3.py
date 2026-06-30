@@ -254,6 +254,78 @@ def load_data(golden_path=DEFAULT_GOLDEN, raw_path=DEFAULT_RAW):
     return questions, raw_map
 
 
+# ============================================================
+# 替换验证引擎
+# ============================================================
+
+
+def build_answer_prompt(memories, question, question_date=""):
+    """用 memories 集合构建答题 prompt，模拟 agent_prompt_en_open.jinja 的逻辑。"""
+    # 构建 context_block：每条 memory 包装为 Retrieved Memory Unit
+    context_parts = []
+    for i, mem_text in enumerate(memories):
+        unit = f"### Retrieved Memory Unit {i+1}\n<MemoryContent>\n{mem_text}\n</MemoryContent>"
+        context_parts.append(unit)
+    context_block = "\n\n".join(context_parts) if context_parts else "No relevant memory found."
+
+    prompt = textwrap.dedent("""\
+    You are a memory-augmented assistant. Use the retrieved memory units to provide accurate and context-aware answers to the user's questions.
+
+    {context_block}
+
+    ### Question Details
+    {date_line}
+    - Question: {question}
+
+    Please give a short answer.""")
+
+    date_line = f"- Current Date: {question_date}" if question_date else ""
+    return prompt.format(context_block=context_block, date_line=date_line, question=question)
+
+
+def build_judge_messages(question, gold_answer, candidate_answer):
+    """构建 judge messages，模拟 pipeline_eval_oqa.jinja + pipeline_eval_system.jinja 的逻辑。"""
+    system_msg = "You are a careful evaluation assistant."
+    user_msg = textwrap.dedent("""\
+    You are given a question, its ground-truth answer, and a model response. Judge if the model response is semantically correct. Be lenient for wording differences if the core meaning is correct.
+
+    **Question**: {question}
+
+    **Ground-truth answer**: {reference}
+
+    **Model response**: {candidate}
+
+    Answer yes or no only.""").format(question=question, reference=gold_answer, candidate=candidate_answer)
+
+    return [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": user_msg},
+    ]
+
+
+def verify_replacement(gen_client, golden_memories, candidate_text, candidate_idx, question, gold_answer, question_date=""):
+    """
+    替换验证：用 candidate_text 替换 golden_memories[candidate_idx]，
+    用替换后的完整集合让 LLM 答题，judge 比对 gold answer。
+    返回 (passed: bool, llm_answer: str)。
+    """
+    test_memories = list(golden_memories)
+    test_memories[candidate_idx] = candidate_text
+
+    answer_prompt = build_answer_prompt(test_memories, question, question_date)
+    resp = gen_client.get_response_chat(
+        [{"role": "user", "content": answer_prompt}],
+        max_new_tokens=128, temperature=0,
+    )
+    llm_answer = (resp or "").strip()
+
+    judge_msgs = build_judge_messages(question, gold_answer, llm_answer)
+    judge_resp = gen_client.get_response_chat(judge_msgs, max_new_tokens=32, temperature=0)
+    passed = "yes" in (judge_resp or "").strip().lower()
+
+    return passed, llm_answer
+
+
 if __name__ == "__main__":
     args = parse_args()
     print(f"[confusion_v3] out_dir={args.out_dir}, max_workers={args.max_workers}, resume={args.resume}")

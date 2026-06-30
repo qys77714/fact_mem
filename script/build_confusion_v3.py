@@ -492,8 +492,9 @@ def rewrite_and_expand(gen_client, emb_client, seeds, question, q_emb, gate_thre
                 if not skip_gates:
                     ok_idk = idk_map.get(i, "PARSE_FAIL") in ("I DON'T KNOW", "I DONT KNOW", "I DON'T KNOW.", "I DO NOT KNOW")
                     if not ok_idk:
-                    cand["sim_q"] = round(sims[i], 5)
-                    all_items.append(cand)
+                        continue
+                cand["sim_q"] = round(sims[i], 5)
+                all_items.append(cand)
 
     # 去重
     seen = set()

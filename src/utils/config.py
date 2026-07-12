@@ -137,6 +137,7 @@ class RelationDecisionMethodConfig(BaseModel):
     deletion_enabled: bool = True
     condition_sim_threshold: float = 0.5
     pairwise_sim_threshold: float = 0.7
+    fusion_enabled: bool = True
 
 
 class Mem0MethodConfig(BaseModel):

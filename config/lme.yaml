@@ -47,6 +47,7 @@ methods:
     deletion_enabled: false
     condition_sim_threshold: 0.5
     pairwise_sim_threshold: 0.5
+    fusion_enabled: true
     # active_relations: ["CON"]               # 消融：仅冲突管理
     # active_relations: ["CON", "EQV"]        # 消融：冲突 + 等价管理
     # 不设置 = 全部五类生效（默认）

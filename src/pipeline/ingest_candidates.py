@@ -146,6 +146,7 @@ def _apply_config_fingerprint_block(args: argparse.Namespace) -> dict[str, Any]:
         block["relation_system_en_template"] = (getattr(args, "relation_system_en_template", "") or "").strip()
         block["relation_system_zh_template"] = (getattr(args, "relation_system_zh_template", "") or "").strip()
         block["relation_user_template"] = (getattr(args, "relation_user_template", "") or "").strip()
+        block["fusion_enabled"] = not bool(getattr(args, "no_fusion", False))
     if args.update_method == "mem0":
         block["mem0_related_top_k"] = args.mem0_related_top_k
         block["mem0_related_aggregate_max"] = args.mem0_related_aggregate_max
@@ -397,6 +398,12 @@ def main() -> int:
         help="relation_decision 成对关系判断后端：classifier=本地 relation_classifier（默认，仅英文）；llm=manager_model",
     )
     parser.add_argument(
+        "--active-relations",
+        dest="active_relations_str",
+        default=None,
+        help="消融实验：逗号分隔的活跃关系类型（如 CON 或 CON,EQV）。未列出的类型降级为 IND。不设置=全部生效。",
+    )
+    parser.add_argument(
         "--related-top-k",
         type=int,
         default=5,
@@ -556,6 +563,12 @@ def main() -> int:
         help="relation_decision：成对比较 user 模板（覆盖默认 lme_relation_classification_user.jinja）",
     )
     parser.add_argument(
+        "--no-fusion",
+        action="store_true",
+        dest="no_fusion",
+        help="消融实验：禁用 LLM 融合，直接选择原始 memory 作为 Primary（RD w/o Fusion）",
+    )
+    parser.add_argument(
         "--manager-max-new-tokens",
         type=int,
         default=2048,
@@ -701,11 +714,16 @@ def main() -> int:
         relation_max_new_tokens=args.relation_max_new_tokens,
     )
     if args.update_method == "relation_decision":
+        active_relations = None
+        if getattr(args, "active_relations_str", None):
+            active_relations = [x.strip() for x in args.active_relations_str.split(",") if x.strip()]
         rel_kw = {
             "relation_system_en_template": (args.relation_system_en_template or "").strip() or None,
             "relation_system_zh_template": (args.relation_system_zh_template or "").strip() or None,
             "relation_user_template": (args.relation_user_template or "").strip() or None,
             "relation_backend": args.relation_backend,
+            "active_relations": active_relations,
+            "fusion_enabled": not bool(getattr(args, "no_fusion", False)),
         }
         memory = LmeCandidateRelationDecisionMemorySystem(
             **lme_candidate_base_kw,

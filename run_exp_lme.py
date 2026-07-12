@@ -153,6 +153,15 @@ def stage_ingest(cfg: ExperimentConfig) -> None:
                 "--relation-episode-concurrency", episode_concurrency,
                 "--related-top-k", method_cfg.related_top_k,
             ]
+            backend = getattr(method_cfg, "backend", "classifier") or "classifier"
+            if backend != "classifier":
+                extra += ["--relation-backend", backend]
+            active_relations = getattr(method_cfg, "active_relations", None)
+            if active_relations:
+                extra += ["--active-relations", ",".join(active_relations)]
+            fusion_enabled = getattr(method_cfg, "fusion_enabled", True)
+            if not fusion_enabled:
+                extra.append("--no-fusion")
             if p.relation_system_en:
                 extra += ["--relation-system-template-en", p.relation_system_en]
             if p.relation_system_zh:

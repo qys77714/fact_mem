@@ -30,16 +30,13 @@ from .deletion_update import (
 from .memory_system_base import LmeCandidateMemorySystemBase
 from .schemas import (
     LME_RELATION_CLASSIFICATION_RESPONSE_FORMAT,
-    LME_RELATION_VERIFY_RESPONSE_FORMAT,
 )
 from .relation_decision import LmeRelationDecision, decide_lme_update_relation_decision
 from .relation_classifier_backend import RelationClassifierBackend, get_shared_backend
 from .prompts import (
     build_lme_answer_fuse_prompt,
     build_lme_relation_classification_user_prompt,
-    build_lme_relation_verify_user_prompt,
     lme_relation_system_prompt_for_language,
-    lme_relation_verify_system_prompt_for_language,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,6 +76,12 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         # 只有真正启用级联/删除时才消费平行栏条件标注；两者都关(消融)时退化为
         # 与 baseline 同输入(条件 merge 回文本)，保证对比公平。
         self.consumes_cas_rules = self._cascade_enabled or self._deletion_enabled
+        # 消融实验：active_relations 控制哪些关系类型生效，未列出的降级为 IND。
+        # None = 全部生效；frozenset({"CON"}) = 仅冲突；frozenset({"CON","EQV"}) = 冲突+等价。
+        raw_active = kwargs.pop("active_relations", None)
+        self._active_relations: Optional[frozenset[str]] = (
+            frozenset(str(r).strip().upper() for r in raw_active) if raw_active else None
+        )
         self._condition_sim_threshold = float(kwargs.pop("condition_sim_threshold", 0.5))
         self._pairwise_sim_threshold = float(kwargs.pop("pairwise_sim_threshold", 0.7))
         self._fusion_enabled = bool(kwargs.pop("fusion_enabled", True))
@@ -303,8 +306,12 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
     ) -> int:
         candidates = self._dense_candidates(database, m_new)
         labeled = self._label_candidates(m_new, candidates, chunk_scope, trace)
-        # classifier/LLM 判出非 IND 后，逐对 LLM 复核；否决的退回 IND（只用确认的关系建边）
-        labeled = self._verify_labels(m_new, labeled, chunk_scope, trace)
+        # 消融实验：仅保留 active_relations 中的关系类型，其余降级为 IND
+        if self._active_relations is not None:
+            labeled = [
+                (mem, lab if lab in self._active_relations else "IND")
+                for mem, lab in labeled
+            ]
         plan = decide_lme_update_relation_decision(m_new, labeled)
         mb = dict(metadata_base)
         mb["lme_update_method"] = "relation_decision"

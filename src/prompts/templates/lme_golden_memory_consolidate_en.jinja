@@ -1,0 +1,49 @@
+You refine a set of per-session golden memories into a clean, minimal, sufficient set of facts about the user. Each memory was extracted independently from ONE evidence session.
+
+Your job: review ALL memories and key turns against the GOLD ANSWER, then produce the final set of atomic facts that is exactly sufficient to answer the question correctly. You may merge, split, rewrite, or drop facts — the output size is NOT tied to the number of input sessions.
+
+## Rules
+
+- **Goal: derive the gold answer**. The final set of facts must be exactly enough — no more, no less — for someone reading them to derive the GOLD ANSWER.
+- **Merge duplicates**: If two sessions contain the same fact, keep ONE most-precise version (with absolute date if time-relevant).
+- **Drop irrelevant**: If a session's fact is unrelated to the question, DROP it entirely.
+- **Split compound facts**: If one session's memory contains multiple DISTINCT, INDEPENDENTLY COUNTABLE facts, split them into separate entries.
+  - ❌ WRONG: "The user attended her college roommate's wedding and Emily and Sarah's wedding." → ambiguous count.
+  - ✅ CORRECT: split into "The user attended her college roommate's wedding in 2023." and "The user attended Emily and Sarah's wedding in 2023."
+- **Resolve relative dates**: If a key turn says "yesterday", "last week", "two weeks ago" — use the session date to compute the absolute date.
+- **Knowledge-update (CRITICAL)**: ALWAYS produce at least TWO separate facts — one for the OLD value and one for the NEW value. Even if the question only asks for the current value, keep the old value as a separate fact with its date. NEVER merge old and new into one sentence.
+  - Fact 1 (old): "The user's volleyball record was 3-2 as of 2023/06/16."
+  - Fact 2 (new): "The user's volleyball record improved to 5-2 as of 2023/06/30."
+  - ❌ WRONG: "The user's volleyball record was 3-2 before improving to 5-2." (merged into one)
+- **Unify subject**: EVERY fact MUST start with the exact word "The user" as the first two words.
+- **Never fabricate**: Every fact must be grounded in the provided key turns. Do NOT add world knowledge.
+- **Minimal set**: The output should be the smallest set of facts from which the gold answer is derivable.
+
+## Input
+
+QUESTION: [[ question ]]
+
+QUESTION TYPE: [[ question_type ]]
+
+CURRENT DATE (date the question was asked): [[ question_date ]]
+
+GOLD ANSWER: [[ answer ]]
+
+PER-SESSION MEMORIES & KEY TURNS:
+[[ sessions_summary ]]
+
+## Output
+
+Return ONLY a JSON array of strings, nothing else:
+
+```json
+["The user graduated with a degree in Business Administration."]
+```
+```json
+["The user spent $25 to replace a bike chain on April 20th.", "The user spent $120 on a Bell Zephyr helmet in May.", "The user spent $40 on bike lights on May 5th."]
+```
+```json
+[]
+```
+
+An empty array `[]` is valid only if NO facts are answerable (abstention case).

@@ -1,10 +1,10 @@
 # 定义可用的 GPU 和端口
-gpus=(1,2,3,4)
-ports=(7111)
-model_name=gemma-4-26B-A4B-it
+gpus=(5)
+ports=(7113)
+model_name=Qwen3-4B
 MAX_MODEL_LEN=8192
 GPU_MEM_UTIL=0.9
-MAX_NUM_BATCHED_TOKENS=$((4096 * 8))
+MAX_NUM_BATCHED_TOKENS=$((4096 * 16))
 
 # 循环遍历 GPU 和端口
 for i in ${!gpus[@]}; do
@@ -16,7 +16,7 @@ for i in ${!gpus[@]}; do
     export PPU_SDK="${PPU_SDK:-$CUDA_HOME}"
     export PYTORCH_ALLOC_CONF=expandable_segments:True
     export CUDA_VISIBLE_DEVICES=${gpus[$i]} \
-        && uv run --no-sync vllm serve /data/zjj/models/${model_name} \
+        && uv run --no-sync vllm serve /data/zjj/models/Qwen/${model_name} \
         --served-model-name ${model_name} \
         --host 0.0.0.0 \
         --port ${ports[$i]} \

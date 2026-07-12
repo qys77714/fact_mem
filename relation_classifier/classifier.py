@@ -3,7 +3,7 @@
 输入一对英文记忆 (old, new)，输出五分类关系：
   IND 独立 / EQV 等价 / OSN 新更具体 / NSO 旧更具体 / CON 矛盾
 
-范式：冻结 Qwen3-0.6B 作固定特征器，只跑训练好的线性探测头。
+范式：冻结 Qwen3-4B 作固定特征器，只跑训练好的线性探测头。
 本文件自包含，不依赖训练目录任何代码。详见 AGENT.md。
 """
 import os
@@ -19,27 +19,20 @@ LABELS = ["IND", "EQV", "OSN", "NSO", "CON"]
 ID2LABEL = {i: l for i, l in enumerate(LABELS)}
 
 # backbone 默认共享路径（已挂载 data_oss 的机器可直接用）
-DEFAULT_BACKBONE = "/mnt/data_oss/models/Qwen3-0.6B"
+DEFAULT_BACKBONE = "/mnt/data_oss/models/Qwen3-4B"
 
 
 # 五类定义前缀:与 train_en/dataset.py 的 RELATION_DEF 必须逐字一致。
-# 2026/06/16 已从67行长定义缩到一句话五类(max_length 1152→192)。
-# 改这里就会线上线下不一致——训练时带此前缀抽特征,推理也必须带。
-RELATION_DEF = (
-    "Decide the logical relation between two atomic memory statements 'old' and 'new', "
-    "both describing the SAME user's CURRENT state. Choose exactly one of five classes:\n"
-    "- IND (Independent): both facts can hold at once (different or accumulable things).\n"
-    "- EQV (Equivalent): same core fact, only wording differs.\n"
-    "- OSN (new contains old): new adds specific verifiable info that old lacks.\n"
-    "- NSO (old contains new): old adds specific verifiable info that new lacks.\n"
-    "- CON (Contradiction): mutually exclusive values of one single-valued attribute "
-    "(changing job/home counts as CON)."
-)
+# 2026/06 已从精简一句话换回 relation_classification_system_en_v3.jinja 长定义(max_length 192→1792)。
+# prefix 内容来自包内同名 jinja(与训练侧同源),改它就会线上线下不一致——训练时带此前缀抽特征,推理也必须带。
+_PREFIX_PATH = os.path.join(HERE, "relation_classification_system_en_v3.jinja")
+with open(_PREFIX_PATH, encoding="utf-8") as _f:
+    RELATION_DEF = _f.read().strip()
 
 
 def format_pair(old: str, new: str) -> str:
     """与训练完全一致的输入拼接（含 RELATION_DEF 前缀）。改这里就会线上线下不一致。"""
-    return f"{RELATION_DEF}\n\nold: {old}\nnew: {new}"
+    return f"{RELATION_DEF}\n\nOLD FACT: {old}\nNEW FACT: {new}"
 
 
 def gather_last_token(hidden, attention_mask):

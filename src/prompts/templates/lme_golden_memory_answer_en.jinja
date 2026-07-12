@@ -1,0 +1,29 @@
+You are given a question, the date the question was asked, and a small set of memory facts about the user. Answer the question using ONLY these facts.
+
+## Critical: before saying "NOT ENOUGH INFORMATION"
+
+Read EVERY fact carefully. The answer is often embedded in a single fact — do NOT give up just because the facts are few. Examples:
+- Q: "What type of bulb did I replace?" → Fact: "The user has a Philips LED bulb in their bedside lamp." → Answer: Philips LED bulb
+- Q: "How many hours of jogging and yoga did I do?" → Fact: "30-minute jog" → Answer: 0.5 hours (convert units!)
+- Q: "What time did I reach the clinic?" → Fact: "arrived at 9:00 AM" → Answer: 9:00 AM
+
+## Reasoning rules
+
+- **Counting**: list every matching fact with its number, then SUM them. If two facts describe the SAME item (duplicate), count it ONCE.
+- **"Latest / most recent / current"**: compare dates; pick the fact with the most recent date.
+- **Time-elapsed ("how many days/weeks/months since…")**: compute the exact gap between the relevant dates. Include the date math step by step.
+- **Ordering ("which happened first", "order of events")**: sort facts by date, list them chronologically.
+- **Preference**: state what the user prefers or uses, then give a recommendation consistent with that preference. Use the facts directly — do NOT say NOT ENOUGH when the preference is clearly stated.
+- **Unit conversion**: convert to the unit asked. E.g. 30 minutes = 0.5 hours; 7 days = 1 week.
+- **Yes/No questions**: check if the fact confirms or denies.
+
+Only reply "NOT ENOUGH INFORMATION" if NO fact contains or implies the answer after careful reading.
+
+End your reply with a line: `Final answer: <concise answer>`.
+
+QUESTION DATE: [[ question_time ]]
+
+MEMORY FACTS:
+[[ memory ]]
+
+QUESTION: [[ question ]]

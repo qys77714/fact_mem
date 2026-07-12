@@ -7,9 +7,6 @@
 
 默认输出目录：``MemDB/candidates/{benchmark}/{extract_model_tag}/{suffix}/``（可用 ``--output`` 覆盖）。
 
-MEME benchmark 的 evidence session：``gold_facts`` 不经 LLM，默认拆分为 ``candidate_memories``（primary）
-+ 并行 ``cas_update_rules``（无规则时为 null）。
-
 续跑：在输出根目录维护单一 ``extract_progress.state``（JSON），记录已完成 ``history_name``；
 判定是否跳过**仅**看 ``completed`` 是否包含该 episode，不比对 ``config`` 指纹（``config`` 仅作留痕写入）。
 未在 ``completed`` 中的 episode 一律重新抽取（不因磁盘上已有同名 JSON 而跳过）。
@@ -30,7 +27,6 @@ from tqdm import tqdm
 from benchmark import get_benchmark
 from benchmark.base import MemoryEpisode
 from benchmark.datasets import DEFAULT_BENCHMARK_DATASETS, resolve_benchmark_data_path
-from memory.candidate_ingest.cas_update import build_evidence_gold_chunk_fields
 from pipeline.paths import default_candidates_dir, safe_model_tag
 from prompts import render_prompt
 from utils.env import load_env
@@ -401,165 +397,6 @@ def _process_single_chunk(
     return row
 
 
-def _count_meme_llm_chunks(
-    episode: MemoryEpisode,
-    memory_granularity: Union[str, int],
-    overlap_turns: int,
-    dialogue_format: str,
-) -> int:
-    """Count LLM chunks for a MEME episode: only filler sessions need LLM extraction."""
-    count = 0
-    for session in episode.sessions:
-        if session.metadata.get("type") == "evidence":
-            continue
-        count += len(_iter_turn_chunks(session.turns, memory_granularity, overlap_turns))
-    return count
-
-
-def _run_meme_episode_extract(
-    client: Any,
-    episode: MemoryEpisode,
-    model: str,
-    max_new_tokens: int,
-    memory_granularity: Union[str, int],
-    dialogue_format: str,
-    prompt_template: str,
-    templates_order: List[str],
-    use_json_schema: bool = True,
-    pbar: Optional[Any] = None,
-    executor: Optional[ThreadPoolExecutor] = None,
-    overlap_turns: int = 0,
-) -> Dict[str, Any]:
-    """
-    MEME-specific extraction:
-    - evidence sessions → gold_facts split to primary_text + cas_update_condition (no LLM)
-    - filler sessions   → LLM extraction via _process_single_chunk (same as lme_s)
-
-    Maintains a unified sequential chunk_index across all session types.
-    """
-    gran_s = "all" if memory_granularity == "all" else str(int(memory_granularity))
-    hn = str(episode.history_name)
-
-    header: Dict[str, Any] = {
-        "history_name": hn,
-        "model": model,
-        "memory_granularity": gran_s,
-        "turn_overlap": int(overlap_turns),
-        "dialogue_format": dialogue_format,
-    }
-
-    chunk_index = 0
-    chunk_rows: List[Dict[str, Any]] = []
-    # Collect filler work for (possibly parallel) LLM calls: (obs, meta)
-    filler_items: List[Tuple[str, Dict[str, Any]]] = []
-
-    for sess_idx, session in enumerate(episode.sessions, start=1):
-        st = (session.session_date or "").strip()
-        sess_type = session.metadata.get("type", "filler")
-
-        if sess_type == "evidence":
-            # Direct: gold_facts → primary + cas_update_rules (no LLM)
-            gold_facts: List[Dict[str, Any]] = session.metadata.get("gold_facts") or []
-            fact_texts = [
-                str(f.get("fact_text") or "").strip()
-                for f in gold_facts
-                if isinstance(f, dict) and f.get("fact_text")
-            ]
-            gold_fields = build_evidence_gold_chunk_fields(fact_texts)
-            chunk_rows.append({
-                "chunk_index": chunk_index,
-                "session_index": sess_idx,
-                "turn_start": None,
-                "turn_end": None,
-                "turn_overlap": 0,
-                "session_date": st,
-                "parse_error": None,
-                "source": "evidence_gold_facts",
-                **gold_fields,
-            })
-            chunk_index += 1
-        else:
-            # Filler: normal turn-level chunking → deferred LLM extraction
-            for turn_start, turn_end, chunk_turns in _iter_turn_chunks(
-                session.turns, memory_granularity, overlap_turns
-            ):
-                parts = [f"=== Session {sess_idx}"]
-                if st:
-                    parts[0] += f" ({st})"
-                if turn_start is not None:
-                    parts.append(f"turns {turn_start}-{turn_end}")
-                header_str = " ".join(parts) + " ==="
-                transcript = _turns_to_chunk_transcript(chunk_turns, dialogue_format)
-                observation = f"{header_str}\n{transcript}"
-                meta: Dict[str, Any] = {
-                    "chunk_index": chunk_index,
-                    "session_index": sess_idx,
-                    "turn_start": turn_start,
-                    "turn_end": turn_end,
-                    "turn_overlap": int(overlap_turns),
-                    "session_date": st,
-                }
-                filler_items.append((observation, meta))
-                chunk_index += 1
-
-    # --- LLM extraction for filler chunks ---
-    filler_rows: Dict[int, Dict[str, Any]] = {}
-
-    def _chunk_passes_seq(observation: str, meta: Dict[str, Any]) -> Dict[str, Any]:
-        pass_rows: List[Dict[str, Any]] = []
-        for ti, tpl in enumerate(templates_order):
-            pass_rows.append(
-                _process_single_chunk(
-                    client, observation, meta, tpl,
-                    max_new_tokens, use_json_schema,
-                    pbar,
-                )
-            )
-        return _merge_chunk_pass_rows(meta, pass_rows)
-
-    if filler_items:
-        if executor is not None:
-            indexed: List[Tuple[int, int, Any]] = []
-            for observation, meta in filler_items:
-                ci = int(meta["chunk_index"])
-                for ti, tpl in enumerate(templates_order):
-                    indexed.append((
-                        ci, ti,
-                        executor.submit(
-                            _process_single_chunk,
-                            client, observation, meta, tpl,
-                            max_new_tokens, use_json_schema,
-                            pbar,
-                        ),
-                    ))
-            by_ci: Dict[int, Dict[int, Dict[str, Any]]] = defaultdict(dict)
-            for ci, ti, fut in indexed:
-                by_ci[ci][ti] = fut.result()
-            for observation, meta in filler_items:
-                ci = int(meta["chunk_index"])
-                pairs = sorted(by_ci[ci].items(), key=lambda x: x[0])
-                pass_rows_m = [pr for _, pr in pairs]
-                filler_rows[ci] = _merge_chunk_pass_rows(meta, pass_rows_m)
-        else:
-            for observation, meta in filler_items:
-                ci = int(meta["chunk_index"])
-                filler_rows[ci] = _chunk_passes_seq(observation, meta)
-
-    # Merge evidence + filler rows in chunk_index order
-    for row in chunk_rows:
-        ci = row["chunk_index"]
-        if ci in filler_rows:
-            # Shouldn't happen, but prefer filler_rows (LLM result) if collision
-            chunk_rows[chunk_rows.index(row)] = filler_rows.pop(ci)
-    # Append any filler rows not already in chunk_rows (all filler chunks)
-    for ci in sorted(filler_rows):
-        chunk_rows.append(filler_rows[ci])
-    chunk_rows.sort(key=lambda r: r["chunk_index"])
-
-    header["chunks"] = chunk_rows
-    return header
-
-
 def _run_episode_extract(
     client: Any,
     episode: MemoryEpisode,
@@ -574,7 +411,7 @@ def _run_episode_extract(
     pbar: Optional[Any] = None,
     executor: Optional[ThreadPoolExecutor] = None,
     overlap_turns: int = 0,
-    benchmark: str = "",
+    filler_only: bool = False,
 ) -> Dict[str, Any]:
     gran_s = "all" if memory_granularity == "all" else str(int(memory_granularity))
     hn = str(episode.history_name)
@@ -584,23 +421,6 @@ def _run_episode_extract(
     else:
         templates_order = [prompt_template]
 
-    # MEME benchmark: dispatch to hybrid extractor (evidence→gold_facts, filler→LLM)
-    if benchmark.lower().startswith("meme"):
-        return _run_meme_episode_extract(
-            client=client,
-            episode=episode,
-            model=model,
-            max_new_tokens=max_new_tokens,
-            memory_granularity=memory_granularity,
-            dialogue_format=dialogue_format,
-            prompt_template=prompt_template,
-            templates_order=templates_order,
-            use_json_schema=use_json_schema,
-            pbar=pbar,
-            executor=executor,
-            overlap_turns=overlap_turns,
-        )
-
     header: Dict[str, Any] = {
         "history_name": hn,
         "model": model,
@@ -608,6 +428,16 @@ def _run_episode_extract(
         "turn_overlap": int(overlap_turns),
         "dialogue_format": dialogue_format,
     }
+
+    # filler-only（实验B）：仅抽取「不含任何 has_answer=True turn」的 session，
+    # 即排除 evidence session，得到纯干扰记忆。has_answer 已存于 ChatTurn.metadata。
+    if filler_only:
+        import copy as _copy
+        episode = _copy.copy(episode)
+        episode.sessions = [
+            s for s in episode.sessions
+            if not any(bool(getattr(t, "metadata", {}) and t.metadata.get("has_answer")) for t in s.turns)
+        ]
 
     obs_chunks = episode_to_observation_chunks(
         episode, memory_granularity, dialogue_format, overlap_turns=overlap_turns
@@ -767,6 +597,11 @@ def main() -> None:
         action="store_true",
         help="仅运行方面模板（须至少一次 --mem-extract-extra-template）；不传则仅运行主模板（忽略方面模板）",
     )
+    parser.add_argument(
+        "--filler-only",
+        action="store_true",
+        help="仅抽取不含 has_answer turn 的 session（排除 evidence session）；用于对抗污染实验B的干扰记忆",
+    )
     args = parser.parse_args()
     memory_granularity = _normalize_memory_granularity(args.memory_granularity)
     turn_overlap = _normalize_turn_overlap(args.turn_overlap, memory_granularity)
@@ -856,20 +691,13 @@ def main() -> None:
     n_extract_passes = (
         len(mem_extract_extra_templates) if args.mem_extract_aspects_only else 1
     )
-    _is_meme = args.benchmark.lower().startswith("meme")
     total_llm_chunks = 0
     for ep in pending:
-        if _is_meme:
-            # evidence sessions produce no LLM calls; only filler sessions count
-            total_llm_chunks += n_extract_passes * _count_meme_llm_chunks(
-                ep, memory_granularity, turn_overlap, args.dialogue_format
+        total_llm_chunks += n_extract_passes * len(
+            episode_to_observation_chunks(
+                ep, memory_granularity, args.dialogue_format, overlap_turns=turn_overlap
             )
-        else:
-            total_llm_chunks += n_extract_passes * len(
-                episode_to_observation_chunks(
-                    ep, memory_granularity, args.dialogue_format, overlap_turns=turn_overlap
-                )
-            )
+        )
 
     client = load_api_chat_completion(args.model, async_=False)
     n_pending = len(pending)
@@ -885,8 +713,6 @@ def main() -> None:
             f"{sample_obs}\n",
             flush=True,
         )
-
-    _benchmark_name = args.benchmark  # string name, passed into work closure
 
     def work(
         ep: MemoryEpisode, chunk_pbar: Optional[Any], executor: Optional[ThreadPoolExecutor]
@@ -905,7 +731,7 @@ def main() -> None:
             pbar=chunk_pbar,
             executor=executor,
             overlap_turns=turn_overlap,
-            benchmark=_benchmark_name,
+            filler_only=args.filler_only,
         )
         return _episode_out_path(out_root, ep), payload
 

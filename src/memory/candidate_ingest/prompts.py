@@ -36,35 +36,6 @@ def build_lme_relation_classification_user_prompt(
     return render_prompt(t, m_old=m_old, m_new=m_new)
 
 
-def lme_relation_verify_system_prompt_for_language(
-    language: str, relation: str | None = None
-) -> str:
-    """复核 system prompt：判断 classifier 预测的关系标签是否成立。
-
-    按预测的 ``relation`` 选用各标签专属模板（EQV/NSO/OSN/CON 各一套，语义判断标准不同）；
-    未知/缺省 relation 时回退到通用 verify 模板。
-    """
-    lang = (language or "en").strip().lower()
-    suffix = "zh" if lang.startswith("zh") else "en"
-    rel = (relation or "").strip().upper()
-    per_label = {
-        "EQV": f"lme_relation_verify_system_eqv_{suffix}.jinja",
-        "NSO": f"lme_relation_verify_system_nso_{suffix}.jinja",
-        "OSN": f"lme_relation_verify_system_osn_{suffix}.jinja",
-        "CON": f"lme_relation_verify_system_con_{suffix}.jinja",
-    }
-    t = per_label.get(rel, f"lme_relation_verify_system_{suffix}.jinja")
-    return render_prompt(t)
-
-
-def build_lme_relation_verify_user_prompt(m_old: str, m_new: str, relation: str) -> str:
-    return render_prompt(
-        "lme_relation_verify_user.jinja",
-        m_old=m_old,
-        m_new=m_new,
-        relation=relation,
-    )
-
 
 def build_lme_answer_fuse_prompt(
     current_memory: str,

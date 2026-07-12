@@ -10,10 +10,6 @@ DEFAULT_BENCHMARK_DATASETS: Dict[str, Tuple[str, str]] = {
     "lme_o": ("data/preprocessed/longmemeval_oracle_converted.json", "en"),
     "lme_s": ("data/preprocessed/longmemeval_s_cleaned_converted.json", "en"),
     "lme_m": ("data/preprocessed/longmemeval_m_cleaned_converted.json", "en"),
-    # MEME: Multi-Entity and Evolving Memory Evaluation (three variants)
-    "meme_nofiller":  ("data/raw_data/MEME/meme_nofiller.json",  "en"),
-    "meme_filler32k": ("data/raw_data/MEME/meme_filler32k.json", "en"),
-    "meme_filler128k":("data/raw_data/MEME/meme_filler128k.json","en"),
 }
 
 

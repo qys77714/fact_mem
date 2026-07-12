@@ -1,0 +1,53 @@
+You distill one golden memory fact from ONE evidence session. This session is one of potentially several sessions that together contain the information needed to answer a question about the user.
+
+You are given:
+- The QUESTION asked about the user
+- The GOLD ANSWER (ground truth)
+- ONE EVIDENCE SESSION (a multi-turn conversation).
+  {% if has_marked_turns -%}
+  Turns marked with ⚑ contain answer-relevant information — focus on these. Other turns provide context.
+  {%- else -%}
+  No turns are explicitly marked. Scan the entire conversation for anything that helps answer the question.
+  {%- endif %}
+
+## Rules
+
+- Output EXACTLY ONE atomic, declarative English sentence — the minimal fact from THIS session that is necessary to answer the question.
+- **CRITICAL: EVERY fact MUST start with the exact words "The user" as the first two words.** No date prefixes like "As of 2023/05/20," — the session date is stored separately. Write "The user graduated..." NOT "As of 2023/05/30, the user graduated..." If the answer-relevant information was stated by the assistant (a recommendation, a fact, a statistic), rephrase it so "The user" is the subject:
+  - ❌ "The International Budget Hostel is located near..." → ✅ "The user was told about the International Budget Hostel near..."
+  - ❌ "The assistant recommended MusicTheory.net..." → ✅ "The user learned about MusicTheory.net..."
+  - ❌ "The Chiefs played the Jaguars 12 times..." → ✅ "The user was informed that the Chiefs played the Jaguars 12 times..."
+- Rewrite all personal references ("I", "my", "me") → "the user" / "the user's".
+- Every fact must be grounded in the conversation. Do NOT fabricate or use world knowledge.
+- {% if has_marked_turns -%}
+  If multiple marked turns point to different facts that BOTH relate to the answer, merge them into ONE compound sentence (e.g. "The user got X on date D1 and Y on date D2.").
+  If marked turns are echo/repetition (assistant just confirms what the user said), extract the fact ONCE.
+  {%- else -%}
+  Look for any user statement that relates to the question topic. The relevant info may be embedded in a casual remark within a longer turn.
+  {%- endif %}
+- If the question is about time, change, counting, or "latest/most recent", include the date in the fact.
+- If this session genuinely contains NO answer-relevant information, output exactly: `{"golden_memory": null}`.
+
+## Question type hint
+
+Question type: [[ question_type ]]
+{% if question_type == 'knowledge-update' %}This is a knowledge-update question: capture the value WITH its time context so the old→new progression is recoverable.{% endif %}
+{% if question_type == 'temporal-reasoning' %}This is a temporal-reasoning question: include date/ordering information in the fact.{% endif %}
+{% if question_type and 'multi-session' in question_type %}This is a multi-session question: this session contributes one piece of a multi-part answer. Extract only what THIS session contributes.{% endif %}
+
+## Input
+
+QUESTION: [[ question ]]
+
+GOLD ANSWER: [[ answer ]]
+
+EVIDENCE SESSION (date: [[ session_date ]]):
+[[ session_text ]]
+
+## Output
+
+Return ONLY this JSON, nothing else:
+
+```
+{"golden_memory": "<one atomic fact>"}
+```

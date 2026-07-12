@@ -26,8 +26,6 @@ import numpy as np
 from memory.base import RetrievedMemory
 from memory.storage.local_faiss import LocalFaissDatabase
 
-from memory.candidate_ingest.cas_update import is_cascade_root
-
 from .bundle_prompt_render import _is_primary_meta, render_fusion_user_prompt
 
 logger = logging.getLogger(__name__)
@@ -178,8 +176,6 @@ def list_whole_tree_fusion_packages(db: LocalFaissDatabase) -> List[List[Retriev
         if rid not in by_id:
             continue
         root = by_id[rid]
-        if is_cascade_root(root.metadata):
-            continue
         desc = db.collect_evidence_descendants(rid)
         pack = [root] + desc
         if len(pack) >= 2:
@@ -509,8 +505,6 @@ def fuse_local_faiss_database(
     # 仅对该根做单条 ``fused_bundle`` 标记（无 LLM），并先重连子结点 ``parent_primary`` 再删旧行。
     for mem in list(db.list_all_memories(sort_by_time=False)):
         if not _is_primary_meta(mem.metadata):
-            continue
-        if is_cascade_root(mem.metadata):
             continue
         if (mem.metadata or {}).get("fused_bundle"):
             continue

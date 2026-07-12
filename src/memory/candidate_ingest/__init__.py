@@ -15,19 +15,7 @@ from .apply_zep import (
     apply_candidate_file_zep,
 )
 from .cas_update import (
-    candidate_memory_display_text,
-    golden_fact_to_candidate_entry,
-    is_cascade_root,
     metadata_for_new_primary,
-    parse_candidate_memory,
-    split_golden_memory,
-)
-from .deletion_update import (
-    TOMBSTONE_TEXT,
-    apply_user_deletion,
-    find_deletion_target,
-    is_user_deletion_request,
-    strip_deletion_clause,
 )
 from .relation_decision import (
     LmeRelationDecision,
@@ -63,21 +51,11 @@ __all__ = [
     "apply_candidate_file",
     "apply_candidate_file_mem0",
     "apply_candidate_file_zep",
-    "TOMBSTONE_TEXT",
-    "apply_user_deletion",
     "build_lme_relation_classification_user_prompt",
     "decide_lme_update_relation_decision",
-    "find_deletion_target",
-    "is_user_deletion_request",
-    "strip_deletion_clause",
     "lme_relation_system_prompt_for_language",
     "load_candidate_json",
     "partition_label_list_into_buckets",
-    "candidate_memory_display_text",
-    "golden_fact_to_candidate_entry",
-    "is_cascade_root",
     "metadata_for_new_primary",
-    "parse_candidate_memory",
-    "split_golden_memory",
     "sorted_candidate_chunks",
 ]

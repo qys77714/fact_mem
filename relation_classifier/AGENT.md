@@ -51,7 +51,7 @@ CUDA_VISIBLE_DEVICES=1 python cli.py --input mem.jsonl --output preds.jsonl
 
 ## 已知局限
 
-`IND`↔`CON` 边界历来最弱（IND recall 最低）。经两轮改进——高词重叠 IND/CON 对抗样本注入训练 + 输入前拼五类富定义前缀——已大幅缓解：标准 test IND recall 升到 0.98、IND→CON 误判从 11 降到 2。但在刻意构造的高难样本上 `CON` precision 仍偏低（少量 OSN/EQV 难例会被吸入 CON），双重否定（`EQV`）等低频刁钻句式仍是短板。对极端边界样本建议留心或加规则兜底。
+`IND` 是当前最弱类（IND recall 最低）。2026/06 训练集合并了 PersonaMem-V2 数据（train 11719）并把前缀换回 v3 富定义长前缀后，标准 test：Macro F1=0.8825、IND recall=0.746（IND 主要漏判为 OSN/CON/EQV）。合并 PersonaMem 前的纯翻译集曾达 Macro F1≈0.936、IND recall 0.98——当前 IND 偏低源于 PersonaMem 的 IND 标注口径与 test（旧翻译集）不完全同源。`CON` precision 在刻意构造的高难样本上仍偏低（少量 OSN/EQV 难例被吸入 CON），双重否定（`EQV`）等低频刁钻句式仍是短板。对极端边界样本建议留心或加规则兜底。
 
 ## 运行环境
 
@@ -62,10 +62,11 @@ CUDA_VISIBLE_DEVICES=1 python cli.py --input mem.jsonl --output preds.jsonl
 ## 文件清单
 
 ```
-classifier.py    核心库（自包含，RelationClassifier；含 RELATION_DEF 富定义前缀）
+classifier.py    核心库（自包含，RelationClassifier；从包内 relation_classification_system_en_v3.jinja 载入 RELATION_DEF 富定义前缀）
 cli.py           命令行批量打标
-config.yaml       推理配置（标签顺序、max_length=1152、分类头结构）
-head_best.pt      分类头权重（2MB，val Macro F1=0.9481）
+config.yaml       推理配置（标签顺序、max_length=1792、分类头结构）
+head_best.pt      分类头权重（2MB，val Macro F1=0.8731，test Macro F1=0.8825）
+relation_classification_system_en_v3.jinja  五类定义前缀（与训练侧同源，逐字一致）
 examples/         sample.jsonl + quickstart.py
 requirements.txt  依赖
 ```

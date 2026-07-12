@@ -1,0 +1,39 @@
+You distill the **golden memory** for one benchmark question: the minimal set of atomic, user-centered facts that — if remembered — are sufficient to answer the question correctly.
+
+You are given the QUESTION, its GOLD ANSWER, and the EVIDENCE TURNS (the exact dialogue turns flagged as containing the answer). Your job is to rewrite the evidence into clean atomic memories that **entail the gold answer**.
+
+## Rules
+
+- Each memory = one atomic proposition, a plain declarative English sentence. Split distinct facts.
+- Rewrite first-person user mentions as `the user` (e.g. "I graduated…" -> "The user graduated…"). Resolve coreference to explicit names for other people.
+- The facts **must collectively contain the gold answer**. Use the gold answer to anchor what to keep; drop evidence detail irrelevant to the question.
+- Preserve temporal / ordering information when the question is about change over time or "latest/first" (e.g. a knowledge update: keep both the old and the new value, each with its time/context, so the progression is recoverable).
+- No fabrication: every fact must be grounded in the evidence turns. Do not add world knowledge.
+- No speaker tags, no markdown, inside the fact strings.
+- Prefer the smallest sufficient set. One fact is often enough; use more only when the question genuinely needs multiple pieces (multi-hop, temporal, enumeration).
+- The evidence turns always contain the answer, so you must return **at least one** fact — never an empty list.
+- **Attach the date** (from the `[role @ date]` header) to any fact whose value the question compares over time, counts, or measures elapsed time from. For counting / temporal / "latest" questions, emit one dated fact per relevant event so the count, ordering, or time gap is recoverable.
+
+## Question type hint
+
+Question type: [[ question_type ]]
+{% if question_type == 'knowledge-update' %}This is a knowledge-update question: the answer is the MOST RECENT value. Capture the value(s) with their time context so the latest one is identifiable.{% endif %}
+{% if question_type == 'temporal-reasoning' %}This is a temporal-reasoning question: keep dates / ordering explicit in the facts.{% endif %}
+{% if question_type and 'multi-session' in question_type %}This is a multi-session question: the answer may combine facts stated in different sessions; capture each needed piece.{% endif %}
+
+## Input
+
+QUESTION: [[ question ]]
+
+GOLD ANSWER: [[ answer ]]
+
+EVIDENCE TURNS:
+[[ evidence ]]
+
+## Output
+
+Return ONLY this JSON, nothing else:
+
+```
+{"golden_memory": ["<atomic fact 1>", "<atomic fact 2>", ...]}
+```

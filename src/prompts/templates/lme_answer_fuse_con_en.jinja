@@ -1,14 +1,15 @@
 Merge the following into **one continuous paragraph** of memory used only for answering questions (no bullets, headings, or preamble).
 
-- `CURRENT MEMORY`: the accumulated answer memory so far. For this attribute it may already record an **ordered history** of values that changed over time.
-- `NEW FACT`: a newly confirmed fact that **conflicts** with the current value of the same single-valued attribute (`CON`, e.g. residence, employer, status, a preferred value). The `NEW FACT` is the **latest** state.
+- `CURRENT MEMORY`: the accumulated answer memory so far. For this attribute it may already record an **ordered history** of values that changed over time. Last updated: [[ current_memory_time if current_memory_time else "unknown" ]].
+- `NEW FACT`: a newly confirmed fact that **conflicts** with the current value of the same single-valued attribute (`CON`, e.g. residence, employer, status, a preferred value). The `NEW FACT` is the **latest** state. Time of the new fact: [[ new_fact_time if new_fact_time else "unknown" ]].
 
 This memory must support both "what is the current value?" and "list the full history in order" questions. So it must preserve the **complete chronological chain**, not just the last transition.
 
 Rules:
 - **Preserve every historical value already present in `CURRENT MEMORY`, in their original chronological order.** Never drop the earliest values when adding a new one.
 - **Append the `NEW FACT` value as the latest** entry in the chain.
-- Make the order explicit and recoverable earliest-to-latest, e.g. "the value was first A, then changed to B, and is now C". Attach each value's time if known; otherwise keep relative order.
+- Make the order explicit and recoverable earliest-to-latest, e.g. "the value was first A, then changed to B, and is now C".
+- **Always attach a date to the latest (current) value** using the `NEW FACT` time provided below, e.g. "and is now currently living in Shanghai (as of 2024-06-15)". For earlier historical values, preserve any dates already recorded in `CURRENT MEMORY`; if a historical value lacks a date, keep the relative order but do not invent dates.
 - Mark the most recent value clearly as the **current** one; earlier values are superseded prior states, not deleted.
 - If `CURRENT MEMORY` held only a single value (no chain yet), start the chain: "previously X, now Y".
 - Keep any other unrelated factual content from the current memory intact.

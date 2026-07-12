@@ -11,21 +11,7 @@ from memory.storage.local_faiss import LocalFaissDatabase
 from memory.tracing import MemoryTraceLogger
 
 from .cas_update import (
-    apply_if_then_enrich,
-    build_cascade_metadata,
-    decide_cas_cascade_sync,
-    find_primary_for_if_then,
-    get_pending_rules,
-    is_if_then_text,
-    match_prior_conditions,
     metadata_for_new_primary,
-    normalize_primary_from_context,
-    skip_condition_match,
-)
-from .deletion_update import (
-    apply_user_deletion,
-    find_deletion_target,
-    is_user_deletion_request,
 )
 from .memory_system_base import LmeCandidateMemorySystemBase
 from .schemas import (
@@ -54,25 +40,13 @@ def _check_relation_language(relation_backend: str, language: str) -> None:
 
 
 class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
-    """
-    relation_decision with optional cascade-first layer (cas_update_condition).
-
-    When cascade_enabled:
-      - all memories: match all prior cas_update_conditions above threshold → two-step cas cascade LLM per match
-      - any non-NO_ACTION action skips pairwise relation_decision
-      - all NO_ACTION or no match → standard pairwise relation_decision
-    """
+    """relation_decision：召回 top-k 旧记忆 → 五类关系分类 → 按关系类型写入/替换。"""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._relation_system_en_template = (kwargs.pop("relation_system_en_template", None) or "").strip() or None
         self._relation_system_zh_template = (kwargs.pop("relation_system_zh_template", None) or "").strip() or None
         self._relation_user_template = (kwargs.pop("relation_user_template", None) or "").strip() or None
         self._relation_backend = (kwargs.pop("relation_backend", "classifier") or "classifier")
-        self._cascade_enabled = bool(kwargs.pop("cascade_enabled", True))
-        self._deletion_enabled = bool(kwargs.pop("deletion_enabled", True))
-        # 只有真正启用级联/删除时才消费平行栏条件标注；两者都关(消融)时退化为
-        # 与 baseline 同输入(条件 merge 回文本)，保证对比公平。
-        self.consumes_cas_rules = self._cascade_enabled or self._deletion_enabled
         # 消融实验：active_relations 控制哪些关系类型生效，未列出的降级为 IND。
         # None = 全部生效；frozenset({"CON"}) = 仅冲突；frozenset({"CON","EQV"}) = 冲突+等价。
         raw_active = kwargs.pop("active_relations", None)
@@ -82,7 +56,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         self._condition_sim_threshold = float(kwargs.pop("condition_sim_threshold", 0.5))
         self._pairwise_sim_threshold = float(kwargs.pop("pairwise_sim_threshold", 0.7))
         self._fusion_enabled = bool(kwargs.pop("fusion_enabled", True))
-        self._cascade_max_new_tokens = int(kwargs.pop("cascade_max_new_tokens", 512))
         self._answer_fuse_max_new_tokens = int(kwargs.pop("answer_fuse_max_new_tokens", 512))
         trace_log_dir: Optional[str] = kwargs.get("trace_log_dir")
         super().__init__(*args, **kwargs)
@@ -198,88 +171,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
                 status="ok" if ok else "failed",
             )
 
-    def _apply_cascade_decision_on_match(
-        self,
-        database: LocalFaissDatabase,
-        m_new: str,
-        match: Any,
-        metadata_base: dict[str, Any],
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> Optional[int]:
-        """Execute cascade LLM action on one match. Returns op count or None."""
-        mem = match.memory
-        meta = mem.metadata or {}
-        decision = decide_cas_cascade_sync(
-            self.llm_client,
-            new_memory=m_new,
-            matched_condition=str(meta.get("cas_update_condition") or ""),
-            linked_primary=mem.text,
-            max_new_tokens=self._cascade_max_new_tokens,
-            trace=trace,
-            trace_scope_id=chunk_scope,
-        )
-        action = str(decision.get("action", "NO_ACTION")).upper()
-        if action == "NO_ACTION":
-            return None
-
-        new_text = str(decision.get("new_primary_text") or "").strip()
-        if not new_text:
-            return 1
-        self._cas_apply_update_primary(
-            database,
-            mem.memory_id,
-            mem.text,
-            meta,
-            new_text,
-            metadata_base,
-            session_idx,
-            chunk_scope,
-            trace,
-        )
-        return 1
-
-    def _try_cascade_update(
-        self,
-        database: LocalFaissDatabase,
-        m_new: str,
-        metadata_base: dict[str, Any],
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> Optional[int]:
-        """All threshold matches cascade layer (single pass). None → fallback to pairwise."""
-        matches = match_prior_conditions(
-            database,
-            m_new,
-            self._embed_texts,
-            self._condition_sim_threshold,
-        )
-        if not matches:
-            return None
-
-        total_ops = 0
-        for match in matches:
-            if skip_condition_match(m_new, match.memory):
-                continue
-            ops = self._apply_cascade_decision_on_match(
-                database,
-                m_new,
-                match,
-                metadata_base,
-                session_idx,
-                chunk_scope,
-                trace,
-            )
-            if ops is None:
-                continue
-            total_ops += ops
-
-        if total_ops == 0:
-            return None
-        return total_ops
-
     def _dense_candidates(self, database: LocalFaissDatabase, m_new: str) -> List[RetrievedMemory]:
         """Retrieve primaries with score >= pairwise threshold, then cap at related_top_k."""
         fact_emb = self._embed_texts([m_new])[0]
@@ -335,198 +226,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
             )
         return ops
 
-    def _cas_add_primary(
-        self,
-        database: LocalFaissDatabase,
-        primary_text: str,
-        cas_update_condition: Optional[str],
-        metadata_base: dict[str, Any],
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-        *,
-        pending_rules: Optional[List[str]] = None,
-    ) -> str:
-        date_s = str(metadata_base.get("date", ""))
-        meta = build_cascade_metadata(
-            metadata_base,
-            primary_text=primary_text,
-            cas_update_condition=cas_update_condition,
-            pending_rules=pending_rules,
-        )
-        emb = self._embed_texts([self.build_text_for_embedding(primary_text, metadata=meta)])[0]
-        memory_id = database.add(
-            text=primary_text,
-            source_index=f"session_{session_idx}",
-            time=date_s,
-            metadata=meta,
-            embedding=emb,
-        )
-        trace.log_memory_operation(
-            operation="ADD_CASCADE",
-            memory_id=memory_id,
-            scope_id=chunk_scope,
-            metadata={"primary_text": primary_text, "has_condition": bool(cas_update_condition)},
-            after={
-                "text": primary_text,
-                "source_index": f"session_{session_idx}",
-                "time": date_s,
-                "metadata": dict(meta),
-            },
-            status="ok",
-        )
-        return memory_id
-
-    def _cas_apply_update_primary(
-        self,
-        database: LocalFaissDatabase,
-        old_id: str,
-        old_text: str,
-        old_meta: Dict[str, Any],
-        new_primary_text: str,
-        metadata_base: dict[str, Any],
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> str:
-        normalized = normalize_primary_from_context(old_text, new_primary_text)
-        pending = get_pending_rules(old_meta)
-        new_id = self._cas_add_primary(
-            database,
-            normalized,
-            old_meta.get("cas_update_condition"),
-            metadata_base,
-            session_idx,
-            chunk_scope,
-            trace,
-            pending_rules=pending,
-        )
-        database.update_memory(
-            old_id,
-            metadata_updates={
-                "memory_role": "evidence",
-                "parent_primary": new_id,
-                "edge": "UPDATE",
-                "stale": True,
-            },
-        )
-        trace.log_memory_operation(
-            operation="CASCADE_UPDATE_PRIMARY",
-            memory_id=old_id,
-            scope_id=chunk_scope,
-            metadata={"new_primary_id": new_id, "new_primary_text": normalized},
-            status="ok",
-        )
-        return new_id
-
-    def _cas_apply_invalidate(
-        self,
-        database: LocalFaissDatabase,
-        old_id: str,
-        old_text: str,
-        old_meta: Dict[str, Any],
-        metadata_base: dict[str, Any],
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> str:
-        cond = str(old_meta.get("cas_update_condition") or "")
-        if cond:
-            cond += " [INVALIDATED: upstream change, value uncertain]"
-        database.update_memory(
-            old_id,
-            metadata_updates={"stale": True, "cas_update_condition": cond},
-        )
-        uncertain = (
-            f"This fact is uncertain — previously '{old_text}', "
-            f"but an upstream dependency changed and I do not know the current value."
-        )
-        new_id = self._cas_add_primary(
-            database,
-            uncertain,
-            None,
-            metadata_base,
-            session_idx,
-            chunk_scope,
-            trace,
-        )
-        trace.log_memory_operation(
-            operation="CASCADE_INVALIDATE",
-            memory_id=old_id,
-            scope_id=chunk_scope,
-            metadata={"uncertainty_primary_id": new_id},
-            status="ok",
-        )
-        return new_id
-
-    def _handle_if_then_enrich(
-        self,
-        database: LocalFaissDatabase,
-        m_new: str,
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> int:
-        match = find_primary_for_if_then(database, m_new, self._embed_texts)
-        if match is None:
-            trace.log_memory_operation(
-                operation="CASCADE_IF_THEN_ORPHAN",
-                memory_id="",
-                scope_id=chunk_scope,
-                metadata={"rule": m_new},
-                status="ok",
-            )
-            return 0
-
-        mem = match.memory
-        meta = mem.metadata or {}
-        condition_after = apply_if_then_enrich(
-            database,
-            mem.memory_id,
-            meta,
-            m_new,
-        )
-        trace.log_memory_operation(
-            operation="CASCADE_IF_THEN_ENRICH",
-            memory_id=mem.memory_id,
-            scope_id=chunk_scope,
-            metadata={
-                "rule": m_new,
-                "linked_primary": mem.text,
-                "condition_after": condition_after,
-            },
-            status="ok",
-        )
-        return 1
-
-    def _try_user_deletion(
-        self,
-        database: LocalFaissDatabase,
-        m_new: str,
-        metadata_base: dict[str, Any],
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> int:
-        target, match_debug = find_deletion_target(
-            database,
-            m_new,
-            self._embed_texts,
-            self._pairwise_sim_threshold,
-            language=self.language,
-        )
-        return apply_user_deletion(
-            database,
-            m_new,
-            target,
-            metadata_base,
-            session_idx,
-            chunk_scope,
-            trace,
-            self._embed_texts,
-            match_debug=match_debug,
-        )
-
     def _process_one_new_fact(
         self,
         database: LocalFaissDatabase,
@@ -539,23 +238,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         m_new = (m_new or "").strip()
         if not m_new:
             return 0
-
-        if self._deletion_enabled and is_user_deletion_request(m_new, language=self.language):
-            return self._try_user_deletion(
-                database, m_new, metadata_base, session_idx, chunk_scope, trace
-            )
-
-        if self._cascade_enabled and is_if_then_text(m_new):
-            return self._handle_if_then_enrich(
-                database, m_new, session_idx, chunk_scope, trace
-            )
-
-        if self._cascade_enabled:
-            cascade_ops = self._try_cascade_update(
-                database, m_new, metadata_base, session_idx, chunk_scope, trace
-            )
-            if cascade_ops is not None:
-                return cascade_ops
 
         return self._run_pairwise_relation_decision(
             database, m_new, metadata_base, session_idx, chunk_scope, trace

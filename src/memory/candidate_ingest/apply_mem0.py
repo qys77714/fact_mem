@@ -8,13 +8,13 @@ from typing import Any, Dict, List, Optional
 from memory.mem0 import Mem0MemorySystem
 
 from .apply import _sorted_chunks, load_candidate_json
-from .cas_update import merged_candidate_texts
 
 
 def _facts_from_chunk(chunk: Dict[str, Any]) -> List[str]:
-    # Fold cas_update_rules back into the text so mem0 sees the same information
-    # ours consumes via the parallel column (input parity across methods).
-    return merged_candidate_texts(chunk)
+    mems = chunk.get("candidate_memories") or []
+    if not isinstance(mems, list):
+        return []
+    return [str(m).strip() for m in mems if str(m or "").strip()]
 
 
 def apply_candidate_episode_mem0(

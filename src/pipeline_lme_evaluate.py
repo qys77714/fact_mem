@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--benchmark",
         default=None,
-        help="可选：仅写入结果 metrics 的 benchmark 字段（lme/meme），不影响 Judge prompt；不传则从数据或路径推断",
+        help="可选：仅写入结果 metrics 的 benchmark 字段，不影响 Judge prompt；不传则从数据或路径推断",
     )
     parser.add_argument("--use_cot", action="store_true", help="是否让 Judge 输出简短推理")
     parser.add_argument(
@@ -138,12 +138,7 @@ def infer_benchmark(samples: List[Dict[str, Any]], input_path: str, explicit: Op
         bmk = samples[0]["benchmark"].lower()
         if bmk.startswith("lme"):
             return "lme"
-        if bmk.startswith("meme"):
-            return "meme"
 
-    lower = input_path.lower()
-    if "meme" in lower:
-        return "meme"
     return "lme"
 
 

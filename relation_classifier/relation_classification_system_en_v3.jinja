@@ -1,0 +1,96 @@
+# Task
+
+Compare two facts about the SAME user.
+
+- `OLD FACT`: an existing memory.
+- `NEW FACT`: a newly extracted candidate fact.
+
+## Label Set (Return Exactly One)
+
+- `IND`: the facts can both be true, are only loosely related, or have no entailment relation.
+- `EQV`: the two facts are semantically equivalent (same truth conditions, mutual entailment).
+- `OSN`: `NEW FACT` strictly entails `OLD FACT`, so NEW is stronger, narrower, or more specific.
+- `NSO`: `OLD FACT` strictly entails `NEW FACT`, so NEW is weaker, broader, or less specific.
+- `CON`: the two facts cannot both be true — incompatible values for the same single-valued attribute of the same aligned entity.
+
+## Decision Process
+
+1. Identify the aligned entity and attribute in each fact. If they are about clearly different entities or different attributes, choose `IND`.
+2. If they share the same aligned entity and attribute with **incompatible values**, choose `CON`.
+3. If they entail each other (same truth conditions, reworded), choose `EQV`.
+4. If only `NEW FACT` entails `OLD FACT` (strict entailment — NEW being true forces OLD to be true), choose `OSN`.
+5. If only `OLD FACT` entails `NEW FACT` (strict entailment — OLD being true forces NEW to be true), choose `NSO`.
+6. Otherwise, choose `IND`.
+
+## What Counts as Each Label
+
+### EQV
+Same truth conditions — each entails the other. They say the same thing, possibly reworded.
+- Example: OLD "the user works at Google." / NEW "the user is employed by Google." -> `EQV`.
+
+What does NOT count as `EQV`:
+- One fact is strictly more specific than the other (that is `OSN`/`NSO`, not `EQV`).
+- The facts conflict (`CON`) -> reject EQV.
+- The facts are merely related or about the same topic but not truth-conditionally identical -> reject EQV.
+- Different aligned entity or attribute -> not EQV.
+
+### OSN (new entails old)
+`NEW FACT` strictly entails `OLD FACT`: if NEW is true, OLD must also be true. NEW adds specificity to OLD (same aligned entity and attribute).
+- Example: OLD "the user has a pet." / NEW "the user has a golden retriever named Max." -> `OSN`.
+- Example: OLD "the user has a daughter." / NEW "the user has a daughter named Emma." -> `OSN`.
+- Geographic containment: OLD "the user lives in New York City." / NEW "the user lives in Manhattan." -> `OSN` (Manhattan ⊂ NYC).
+
+What does NOT count as `OSN`:
+- The entailment runs the other way (OLD entails NEW) — that is `NSO`.
+- The two are equivalent (`EQV`) — not `OSN`.
+- Only loose association or plausible implication, not strict entailment -> `IND`.
+- Different aligned entity or attribute -> `IND`.
+- An added detail that does not actually entail the old fact (e.g., adding an unrelated property) -> `IND`.
+
+### NSO (old entails new)
+`OLD FACT` strictly entails `NEW FACT`: if OLD is true, NEW must also be true. NEW is weaker/broader (same aligned entity and attribute).
+- Example: OLD "the user lives in Manhattan." / NEW "the user lives in New York City." -> `NSO` (Manhattan ⊂ NYC).
+- Example: OLD "the user has a golden retriever." / NEW "the user has a dog." -> `NSO`.
+- Geographic containment and clear taxonomic "is-a" relations are acceptable as entailment.
+
+What does NOT count as `NSO`:
+- The entailment runs the other way (NEW entails OLD) — that is `OSN`.
+- The two are equivalent (`EQV`) — not `NSO`.
+- Only loose association, not strict entailment: OLD "the user studies computer science." / NEW "the user is a software engineer." -> `IND`.
+- Working-in vs living-in, liking vs doing, and similar non-entailing pairs -> `IND`.
+- Different aligned entity or attribute -> `IND`.
+
+### CON (contradiction)
+Incompatible values for the same **single-valued attribute** of the same aligned entity. Single-valued attributes are those a person normally has only one of: residence, employer, job title, marital status, favorite X, current phone/email, age, etc.
+
+**Time-explainable conflicts still count as `CON`.** Even if the two facts could be reconciled by a change over time (moving, switching jobs, changing preferences), treat them as `CON` — the newer fact supersedes the older one.
+- Example: OLD "the user lives in Beijing." / NEW "the user lives in Shanghai." -> `CON`.
+- Example: OLD "the user works at Google." / NEW "the user works at Meta." -> `CON`.
+- Example: OLD "the user's favorite color is blue." / NEW "the user's favorite color is red." -> `CON`.
+
+What does NOT count as `CON`:
+- Different entities: OLD "the user's brother lives in Beijing." / NEW "the user lives in Shanghai." -> `IND`.
+- Multi-valued facts where both can hold: OLD "the user has a son named Max." / NEW "the user has a son named Leo." -> `IND` (could have two sons, no stated uniqueness).
+- Facts that are simply independent with no shared single-valued attribute -> `IND`.
+- One fact refines or generalizes the other without conflicting (that is `OSN`/`NSO`/`EQV`) -> not `CON`.
+
+### IND (independent)
+All other cases: both facts can hold at once, no strict entailment relation, or no shared aligned entity/attribute.
+- Different entities: OLD "the user's brother lives in Boston." / NEW "the user lives in Boston." -> `IND`.
+- Same entity, no entailment: OLD "the user likes jazz." / NEW "the user has a sister named Sue." -> `IND`.
+- Related but non-entailing: OLD "the user studies computer science." / NEW "the user is a software engineer." -> `IND`.
+- Preference vs behavior: OLD "the user likes Italian food." / NEW "the user often eats pizza." -> `IND`.
+- Different time/context avoiding contradiction: OLD "the user lived in Paris in 2020." / NEW "the user lives in Berlin now." -> `IND`.
+
+## Important Constraints
+
+- Use `OSN` and `NSO` **only for strict entailment**, not weak association or plausible implication. When in doubt, choose `IND`.
+- The two facts must share the same aligned entity and attribute for `CON`, `OSN`, `NSO`, or `EQV` to apply. If not, choose `IND`.
+- For `CON`: the attribute must be single-valued. Multi-valued/accumulable facts (having multiple children, knowing multiple languages) cannot contradict.
+- Time-explainable changes (moves, job changes, preference shifts) are `CON`, not `IND`.
+
+## Output Format
+
+- Return a JSON object with exactly one key: `"relation"`.
+- The value must be one of: `IND`, `EQV`, `NSO`, `OSN`, `CON`.
+- Do not output extra keys, explanation, or prose.

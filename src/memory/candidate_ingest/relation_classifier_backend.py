@@ -64,7 +64,7 @@ class RelationClassifierBackend:
 # ---------------------------------------------------------------------------
 # 进程级共享单例
 #
-# 调用方（pipeline_meme_4phase）用 ThreadPoolExecutor 并发跑 N 个 episode，
+# 调用方（run_exp_lme）用 ThreadPoolExecutor 并发跑 N 个 episode，
 # 每个 episode 各建一个 MemorySystem。若每个 MemorySystem 各持一个 backend，
 # 首次 classify 时会各自把 Qwen3-0.6B backbone 加载进显存 → N 份 backbone
 # 同驻一卡直接 OOM。backbone 是只读前向、且 classify 全程持锁串行，

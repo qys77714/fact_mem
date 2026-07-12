@@ -133,6 +133,24 @@ try:
 except Exception as _e:
     logger.warning("Failed to patch kuzu.Database max_db_size: %s", _e)
 
+# graphiti-core 0.29.0 的 KuzuDriver.__init__ 忘了设置 _database 属性。
+# 基类 GraphDriver 声明了 _database: str 但未赋默认值；graphiti.add_episode()
+# 在 group_id 非 None 时会访问 self.driver._database 进行比较，导致 AttributeError。
+# 对 Kuzu 来说默认 group_id 是空字符串（get_default_group_id(KUZU) → ""）。
+try:
+    from graphiti_core.driver.kuzu_driver import KuzuDriver as _KuzuDriver
+
+    _kuzu_driver_orig_init = _KuzuDriver.__init__
+
+    def _kuzu_driver_init_with_db(self, *args, **kwargs):
+        _kuzu_driver_orig_init(self, *args, **kwargs)
+        self._database = ""
+
+    _KuzuDriver.__init__ = _kuzu_driver_init_with_db
+    del _KuzuDriver, _kuzu_driver_init_with_db
+except Exception as _e:
+    logger.warning("Failed to patch KuzuDriver._database: %s", _e)
+
 
 def _parse_session_date(date_str: str) -> Optional[datetime]:
     """Return a timezone-aware datetime from common date string formats, or None."""
@@ -143,6 +161,7 @@ def _parse_session_date(date_str: str) -> Optional[datetime]:
         "%Y/%m/%d",
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d (%a) %H:%M",       # LME 候选数据格式: "2023/05/20 (Sat) 05:03"
     ):
         try:
             return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)

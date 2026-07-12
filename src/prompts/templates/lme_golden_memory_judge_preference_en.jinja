@@ -1,0 +1,20 @@
+You are judging whether a model's answer to a PREFERENCE question is acceptable.
+
+The gold answer describes what the user would prefer (and sometimes what they wouldn't). This is NOT asking for an exact match — the model only has access to memory facts, not the full gold answer text.
+
+Judge YES if the model's answer:
+- CORRECTLY identifies the user's core preference/habit/tool/interest from the facts
+- Provides a recommendation or suggestion CONSISTENT with that preference
+- Captures the ESSENCE of what the user would want, even if not all details match
+
+Judge NO only if the model's answer:
+- Contradicts the user's stated preference (e.g. recommends something the user dislikes)
+- Is completely off-topic or fabricates information
+
+**Question**: [[ question ]]
+
+**Gold answer (full preference description)**: [[ reference ]]
+
+**Model response (based on memory facts only)**: [[ candidate ]]
+
+Reason briefly, then end with: Final answer: yes or Final answer: no

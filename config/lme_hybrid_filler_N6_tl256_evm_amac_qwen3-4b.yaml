@@ -1,16 +1,16 @@
 experiment:
   benchmark: lme_s
-  suffix: hybrid_filler_N4_tl256
+  suffix: hybrid_filler_N6_qwen3-4b_tl256
 
 models:
   extract: gemma4-26B
-  manager: gemma4-26B
+  manager: Qwen3-4B
   answer: gemma4-26B
   judge: qwen3-max
   embedding: qwen3-embedding-0.6b
 
 extract:
-  candidate_suffix: hybrid_filler_N4
+  candidate_suffix: hybrid_filler_N6
   granularity: 4
   turn_overlap: 0
   language: en
@@ -19,20 +19,13 @@ extract:
 
 methods:
   add_all:
-    enabled: true
+    enabled: false
   relation_decision:
-    enabled: true
-    backend: llm
-    related_top_k: 3
-    fusion_model: ""
-    condition_sim_threshold: 0.5
-    pairwise_sim_threshold: 0.5
+    enabled: false
   mem0:
     enabled: false
-    related_top_k: 3
-    related_aggregate_max: 10
   evermemos:
-    enabled: false
+    enabled: true
     similarity_threshold: 0.65
     max_time_gap_days: 7.0
   amac:
@@ -66,7 +59,7 @@ parallel:
     add_all: 100
     zep: 50
     amac: 100
-    evermemos: 5
+    evermemos: 20
     fusion_episodes: 100
     fusion_packages: 10
   generate_parallel_episodes: 50

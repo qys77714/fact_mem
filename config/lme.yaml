@@ -43,8 +43,6 @@ methods:
     enabled: true
     related_top_k: 3
     fusion_model: ""
-    cascade_enabled: false
-    deletion_enabled: false
     condition_sim_threshold: 0.5
     pairwise_sim_threshold: 0.5
     fusion_enabled: true

@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-_UNIFIED_PATH = _REPO / "data" / "preprocessed" / "longmemeval_s_unified_confusion.json"
+_HYBRID_GOLDEN_PATH = _REPO / "data" / "preprocessed" / "longmemeval_s_hybrid_golden.json"
 _FILLER_PATH = _REPO / "data" / "preprocessed" / "lme_s_non_evidence_filler.json"
 _CAND_BASE = _REPO / "MemDB" / "candidates"
 
@@ -55,19 +55,10 @@ def _parse_date(date_str: str) -> datetime:
 
 
 def _select_golden(item: dict) -> list[dict]:
-    """选择 golden memory: 优先 lowered_golden，回退到 golden_memory。"""
-    status = item.get("lowering_status", "full_fallback")
-    if status != "full_fallback":
-        lowered = item.get("lowered_golden", [])
-        if lowered:
-            return [
-                {"text": lg["text"], "date": lg.get("date", ""), "source": "lowered_golden",
-                 "source_idx": lg.get("source_idx", 0)}
-                for lg in lowered
-            ]
+    """Hybrid golden 数据集已包含最终 golden_memory，直接返回。"""
     golden = item.get("golden_memory", [])
     return [
-        {"text": gm["text"], "date": gm.get("date", ""), "source": "golden_memory"}
+        {"text": gm["text"], "date": gm.get("date", ""), "source": item.get("golden_source", "hybrid")}
         for gm in golden
     ]
 
@@ -92,69 +83,119 @@ def _select_distractors(item: dict, n: int) -> list[dict]:
     return result
 
 
-def _build_chunks(goldens, distractors, filler_chunks, max_filler: int = 0):
-    """合并 golden + distractor + filler，按日期排序，重建 chunk_index 和 session_index。"""
-    timed_items: list[tuple[datetime, str, dict]] = []
+def _build_chunks(goldens, distractors, filler_chunks, selected_filler_indices=None, max_filler: int = 0):
+    """保留 filler 原始多 fact chunk 结构，golden/distractor 按日期合并进 filler chunk。
 
-    for g in goldens:
-        dt = _parse_date(g["date"])
-        timed_items.append((dt, f"golden_{g.get('source_idx', hash(g['text']))}", {
-            "type": "golden", "text": g["text"], "date": g["date"]
-        }))
+    - Distractor: 精确匹配 session_date → 合并到该 chunk
+    - Golden: 精确匹配 session_date → 合并到该 chunk
+    - 只保留 selected_filler_indices 指定的 filler chunks（其余丢弃）
+    - 最终按 session_date 排序，重建 chunk_index
+    """
+    import copy
 
-    for d in distractors:
-        dt = _parse_date(d["date"])
-        entry: dict[str, object] = {
-            "type": "distractor", "text": d["text"], "date": d["date"]
-        }
-        ewa = d.get("expected_wrong_answer")
-        if ewa is not None:
-            entry["expected_wrong_answer"] = ewa
-        timed_items.append((dt, f"dist_{d.get('source', '')}_{d.get('source_idx', 0)}", entry))
+    # 过滤：按索引保留选中的 filler chunks
+    selected_indices = set(selected_filler_indices or [])
+    if selected_indices:
+        filler_chunks = [fc for i, fc in enumerate(filler_chunks) if i in selected_indices]
 
-    # Filler: 扁平化后按时序均匀采样
-    filler_flat: list[tuple[datetime, str, str]] = []
+    # 深拷贝 filler chunks，避免修改原数据
+    working_chunks = []
     for fc in filler_chunks:
-        dt = _parse_date(fc["session_date"])
-        date_str = fc.get("session_date", "")
-        for mem_text in fc.get("candidate_memories", []):
-            filler_flat.append((dt, mem_text, date_str))
-    filler_flat.sort(key=lambda x: x[0])
+        c = {
+            "session_date": fc.get("session_date", ""),
+            "candidate_memories": list(fc.get("candidate_memories", [])),
+            "turn_start": fc.get("turn_start", 0),
+            "turn_end": fc.get("turn_end", 0),
+            "turn_overlap": fc.get("turn_overlap", 0),
+        }
+        # 保留 expected_wrong_answer
+        if "expected_wrong_answer" in fc:
+            c["expected_wrong_answer"] = fc["expected_wrong_answer"]
+        working_chunks.append(c)
 
-    if max_filler == 0:
-        filler_flat = []
-    elif max_filler > 0 and len(filler_flat) > max_filler:
-        step = (len(filler_flat) - 1) / (max_filler - 1) if max_filler > 1 else 0
-        indices = [round(i * step) for i in range(max_filler)]
-        filler_flat = [filler_flat[idx] for idx in indices]
+    # 建立索引：精确日期 → chunk 索引
+    by_exact_date: dict[str, list[int]] = {}
+    for idx, c in enumerate(working_chunks):
+        date = c["session_date"]
+        by_exact_date.setdefault(date, []).append(idx)
 
-    for dt, mem_text, date_str in filler_flat:
-        timed_items.append((dt, f"filler_{hash(mem_text)}", {
-            "type": "filler", "text": mem_text, "date": date_str
-        }))
+    matched_chunk_indices: set[int] = set()
 
-    # 按日期排序；同日期 golden 在最后
-    type_order = {"filler": 0, "distractor": 1, "golden": 2}
-    timed_items.sort(key=lambda x: (x[0], type_order.get(x[2]["type"], 1)))
+    # 1. Distractor: 精确匹配 session_date → 合并到匹配 chunk
+    for d in distractors:
+        d_date = d.get("date", "")
+        matches = by_exact_date.get(d_date, [])
+        if matches:
+            idx = matches[0]  # 取第一个匹配的 chunk
+            working_chunks[idx]["candidate_memories"].append(d["text"])
+            matched_chunk_indices.add(idx)
+        else:
+            # 无匹配 filler chunk → 创建新 chunk
+            new_idx = len(working_chunks)
+            working_chunks.append({
+                "session_date": d_date,
+                "candidate_memories": [d["text"]],
+                "turn_start": 0, "turn_end": 0, "turn_overlap": 0,
+            })
+            by_exact_date.setdefault(d_date, []).append(new_idx)
+            day = d_date[:10]
+            by_day.setdefault(day, []).append(new_idx)
+            matched_chunk_indices.add(new_idx)
+
+    # 2. Golden: 精确匹配 session_date → 合并到匹配 chunk
+    for g in goldens:
+        g_date = g.get("date", "")
+        matches = by_exact_date.get(g_date, [])
+        if matches:
+            idx = matches[0]
+            working_chunks[idx]["candidate_memories"].append(g["text"])
+            matched_chunk_indices.add(idx)
+        else:
+            new_idx = len(working_chunks)
+            working_chunks.append({
+                "session_date": g_date,
+                "candidate_memories": [g["text"]],
+                "turn_start": 0, "turn_end": 0, "turn_overlap": 0,
+            })
+            by_exact_date.setdefault(g_date, []).append(new_idx)
+            matched_chunk_indices.add(new_idx)
+
+    # 3. 保留选中的 30 个 filler chunks（通过 golden/distractor 日期匹配）+ 其余丢弃
+
+    # 3. 所有选中的 filler chunk 都保留（已在过滤阶段筛选），按日期排序
+    # 分离已匹配和未匹配（均已被 golden/distractor 日期选中，未匹配的只是没合并到 fact）
+    matched = []
+    unmatched = []
+    for idx, c in enumerate(working_chunks):
+        if idx in matched_chunk_indices:
+            matched.append(c)
+        else:
+            unmatched.append(c)
+
+    matched.sort(key=lambda c: _parse_date(c["session_date"]))
+    unmatched.sort(key=lambda c: _parse_date(c["session_date"]))
+
+    # 4. 合并、排序、重建 chunk_index
+    all_chunks = matched + unmatched
+    all_chunks.sort(key=lambda c: _parse_date(c["session_date"]))
 
     chunks = []
-    for chunk_idx, (dt, uid, entry) in enumerate(timed_items):
+    for i, c in enumerate(all_chunks):
         chunk: dict[str, object] = {
-            "chunk_index": chunk_idx,
-            "session_index": chunk_idx + 1,
-            "turn_start": 0,
-            "turn_end": 0,
-            "turn_overlap": 0,
-            "session_date": entry["date"],
-            "candidate_memories": [entry["text"]],
+            "chunk_index": i,
+            "session_index": i + 1,
+            "turn_start": c.get("turn_start", 0),
+            "turn_end": c.get("turn_end", 0),
+            "turn_overlap": c.get("turn_overlap", 0),
+            "session_date": c["session_date"],
+            "candidate_memories": c["candidate_memories"],
             "parse_error": None,
         }
-        ewa = entry.get("expected_wrong_answer")
-        if ewa is not None:
-            chunk["expected_wrong_answer"] = ewa
+        if "expected_wrong_answer" in c:
+            chunk["expected_wrong_answer"] = c["expected_wrong_answer"]
         chunks.append(chunk)
 
-    return chunks, len(goldens), len(distractors), len(filler_flat)
+    return chunks, len(goldens), len(distractors), 0
 
 
 def _candidate_filename(qid: str) -> str:
@@ -184,8 +225,11 @@ def build_one_config(
         filler_info = filler_data.get(qid, {})
         filler_chunks = filler_info.get("filler_chunks", [])
 
+        selected_indices = item.get("_selected_filler_indices", None)
         chunks, n_g, n_d, n_f = _build_chunks(
-            goldens, distractors, filler_chunks, max_filler=max_filler
+            goldens, distractors, filler_chunks,
+            selected_filler_indices=selected_indices,
+            max_filler=max_filler,
         )
         total_golden += n_g
         total_dist += n_d
@@ -246,12 +290,12 @@ def main() -> None:
 
     ns = [int(x.strip()) for x in args.distractors.split(",")]
 
-    with open(_UNIFIED_PATH) as f:
+    with open(_HYBRID_GOLDEN_PATH) as f:
         conf_data = json.load(f)
     with open(_FILLER_PATH) as f:
         filler_data = json.load(f)
 
-    print(f"Unified 数据: {len(conf_data)} 题 ({_UNIFIED_PATH})")
+    print(f"Hybrid Golden 数据: {len(conf_data)} 题 ({_HYBRID_GOLDEN_PATH})")
     print(f"Filler: {len(filler_data)} 题")
     print(f"Max filler/episode: {args.max_filler}")
     print(f"N 档: {ns}")

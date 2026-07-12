@@ -24,8 +24,6 @@ methods:
     enabled: true
     backend: classifier
     fusion_model: Qwen3-4B
-    cascade_enabled: false
-    deletion_enabled: false
     condition_sim_threshold: 0.5
     pairwise_sim_threshold: 0.5
   mem0:

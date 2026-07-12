@@ -133,8 +133,6 @@ class RelationDecisionMethodConfig(BaseModel):
     related_top_k: int = 3
     backend: str = "classifier"       # "classifier" | "llm"
     fusion_model: str = ""
-    cascade_enabled: bool = True
-    deletion_enabled: bool = True
     condition_sim_threshold: float = 0.5
     pairwise_sim_threshold: float = 0.7
     fusion_enabled: bool = True
@@ -173,116 +171,6 @@ class MethodsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 _METHOD_ORDER = ("amac", "zep", "relation_decision", "mem0", "add_all", "evermemos")
-
-
-# ---------------------------------------------------------------------------
-# MEME-specific config models
-# ---------------------------------------------------------------------------
-
-
-class MemeRunConfig(BaseModel):
-    """4-phase ingest + answer 参数（对应 pipeline_meme_4phase.py 的公共参数）。"""
-    retrieve_topk: int = 50
-    memory_token_limit: int = 512
-    answer_concurrency: int = 10
-    show_memory_time: bool = False
-    hybrid: HybridConfig = Field(default_factory=HybridConfig)
-
-
-class MemeEvaluateConfig(BaseModel):
-    judge_max_concurrency: int = 8
-    judge_max_new_tokens: int = 512
-
-
-class MemeParallelEpisodesConfig(BaseModel):
-    """4-phase 各方法 per-episode 并发数。"""
-    relation_decision: int = 20
-    mem0: int = 4
-    add_all: int = 20
-    zep: int = 10
-    amac: int = 10
-    evermemos: int = 4
-
-
-class MemeParallelConfig(BaseModel):
-    extract_chunk_concurrency: int = 100
-    ingest_relation_concurrency: int = 50    # relation_decision 单 episode 内关系对并发
-    evermemos_cluster_concurrency: int = 8
-    fuse_package_concurrency: int = 4
-    parallel_episodes: MemeParallelEpisodesConfig = Field(
-        default_factory=MemeParallelEpisodesConfig
-    )
-
-
-class MemeExperimentConfig(BaseModel):
-    experiment: ExperimentMeta = Field(default_factory=ExperimentMeta)
-    models: ModelsConfig = Field(default_factory=ModelsConfig)
-    extract: ExtractConfig = Field(default_factory=ExtractConfig)
-    methods: MethodsConfig = Field(default_factory=MethodsConfig)
-    run: MemeRunConfig = Field(default_factory=MemeRunConfig)
-    evaluate: MemeEvaluateConfig = Field(default_factory=MemeEvaluateConfig)
-    parallel: MemeParallelConfig = Field(default_factory=MemeParallelConfig)
-    token_limits: TokenLimitsConfig = Field(default_factory=TokenLimitsConfig)
-    prompts: PromptsConfig = Field(default_factory=PromptsConfig)
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> "MemeExperimentConfig":
-        data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        return cls.model_validate(data)
-
-    # ------------------------------------------------------------------
-    # Path helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _safe_tag(name: str) -> str:
-        tag = re.sub(r"[/:\\\s]+", "_", str(name).strip())
-        tag = re.sub(r"[^a-zA-Z0-9_.-]+", "", tag)
-        return tag or "model"
-
-    @property
-    def candidates_dir(self) -> Path:
-        b = self.experiment.benchmark
-        m = self._safe_tag(self.models.extract)
-        s = self.extract.candidate_suffix
-        return Path("MemDB") / "candidates" / f"{b}_{m}_{s}"
-
-    @property
-    def ingest_run_root(self) -> Path:
-        b = self.experiment.benchmark
-        s = self.extract.candidate_suffix
-        m = self._safe_tag(self.models.manager)
-        e = self.experiment.suffix
-        return Path("MemDB") / "ingest" / f"{b}_cand{s}_{m}_{e}"
-
-    def ingest_4phase_dir(self, method: str) -> Path:
-        """Unfused 4-phase DB root for ``method`` ({method}_4p)."""
-        return self.ingest_run_root / f"{method}_4p"
-
-    def ingest_4phase_fused_dir(self, method: str) -> Path:
-        """Fused DB root (only for relation_decision)."""
-        return self.ingest_run_root / f"{method}_4p_fused"
-
-    @property
-    def experiment_run_root(self) -> Path:
-        b = self.experiment.benchmark
-        s = self.extract.candidate_suffix
-        mgr = self._safe_tag(self.models.manager)
-        ans = self._safe_tag(self.models.answer)
-        tl = self.run.memory_token_limit
-        e = self.experiment.suffix
-        return Path("experiment") / f"{b}_cand{s}_{mgr}_{ans}_tl{tl}_{e}_meme4p"
-
-    def pred_file(self, method: str) -> Path:
-        return self.experiment_run_root / f"pred_{method}.jsonl"
-
-    @property
-    def enabled_methods(self) -> list[str]:
-        return [
-            name
-            for name in _METHOD_ORDER
-            if getattr(getattr(self.methods, name), "enabled", False)
-        ]
 
 
 class ExperimentConfig(BaseModel):

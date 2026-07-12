@@ -6,11 +6,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .cas_update import (
-    candidate_memory_display_text,
-    merge_cas_rule_into_text,
-    parse_candidate_memory,
-)
 from .memory_system_amac import LmeCandidateAmacMemorySystem
 from .memory_system_base import LmeCandidateMemorySystemBase
 
@@ -110,36 +105,15 @@ def apply_candidate_episode_json(
             mems = chunk.get("candidate_memories") or []
             if not isinstance(mems, list):
                 mems = []
-            cas_rules = chunk.get("cas_update_rules")
-            # ours(relation_decision)消费平行栏条件做级联；baseline 不消费，
-            # 此时把条件 merge 回文本，保证各方法输入信息对等(见 memory_system_base.consumes_cas_rules)。
-            consumes_cas = bool(getattr(memory, "consumes_cas_rules", False))
-
             op_sub = 0
             try:
                 for fi, m_new in enumerate(mems):
-                    rule_fi = (
-                        cas_rules[fi]
-                        if isinstance(cas_rules, list) and fi < len(cas_rules)
-                        else None
-                    )
-                    if consumes_cas:
-                        parsed = parse_candidate_memory(m_new, cas_update_rule=rule_fi)
-                        s = parsed.text.strip()
-                        cas_rule_used = parsed.cas_update_rule
-                    else:
-                        # baseline：条件折回文本，平行栏不单独传(否则信息泄露)
-                        s = merge_cas_rule_into_text(
-                            candidate_memory_display_text(m_new), rule_fi
-                        )
-                        cas_rule_used = None
+                    s = str(m_new or "").strip()
                     if not s:
                         continue
                     stats["facts_submitted"] += 1
                     mb = dict(metadata_base)
                     mb["lme_fact_index_in_chunk"] = fi
-                    if cas_rule_used:
-                        mb["gold_cas_update_condition"] = cas_rule_used
                     r = memory._process_one_new_fact(
                         database,
                         s,

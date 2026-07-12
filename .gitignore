@@ -21,6 +21,12 @@ src/generate/openai_chat_batch_azure.py
 .env
 viewer/
 
+# Large binary / model files
+models/
+relation_classifier/head_best.pt
+uv.lock
+data/preprocessed/lme_s_non_evidence_filler.json
+
 # Tests
 test/
 

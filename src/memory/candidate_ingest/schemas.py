@@ -18,17 +18,3 @@ LME_RELATION_CLASSIFICATION_RESPONSE_FORMAT: Dict[str, Any] = _build_response_fo
     LmeRelationClassificationResponse,
     "lme_relation_classification",
 )
-
-
-class LmeRelationVerifyResponse(BaseModel):
-    """LLM 复核 classifier 预测标签是否成立。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    correct: bool
-
-
-LME_RELATION_VERIFY_RESPONSE_FORMAT: Dict[str, Any] = _build_response_format(
-    LmeRelationVerifyResponse,
-    "lme_relation_verify",
-)

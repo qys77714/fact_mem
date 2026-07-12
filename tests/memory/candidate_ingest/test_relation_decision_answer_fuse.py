@@ -29,8 +29,7 @@ def _make_system(*, classify_label="CON", fuse_text="FUSED C"):
     sysobj._relation_max_new_tokens = 64
     sysobj._answer_fuse_max_new_tokens = 64
     sysobj._rc_backend = None
-    sysobj._cascade_enabled = False
-    sysobj._deletion_enabled = False
+    sysobj._fusion_enabled = True
     sysobj.related_memory_top_k = 5
     sysobj._pairwise_sim_threshold = 0.0
     sysobj._condition_sim_threshold = 0.0

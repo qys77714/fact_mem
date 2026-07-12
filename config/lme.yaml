@@ -45,9 +45,11 @@ methods:
     fusion_model: ""
     cascade_enabled: false
     deletion_enabled: false
-    topic_aggregation_enabled: false
     condition_sim_threshold: 0.5
     pairwise_sim_threshold: 0.5
+    # active_relations: ["CON"]               # 消融：仅冲突管理
+    # active_relations: ["CON", "EQV"]        # 消融：冲突 + 等价管理
+    # 不设置 = 全部五类生效（默认）
 
   mem0:
     enabled: false

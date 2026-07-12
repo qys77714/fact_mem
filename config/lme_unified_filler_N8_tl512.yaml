@@ -1,10 +1,10 @@
-# fact_memory LME Unified Confusion Memory 对比实验配置 (N=6)
+# fact_memory LME Unified Confusion Memory 对比实验配置 (N=8)
 # 自动生成: script/gen_unified_configs.py
-# 用法: PYTHONPATH=src uv run --no-sync python run_exp_lme.py --config config/lme_unified_filler_N6.yaml --stages ingest,generate,evaluate
+# 用法: PYTHONPATH=src uv run --no-sync python run_exp_lme.py --config config/lme_unified_filler_N8.yaml --stages ingest,generate,evaluate
 
 experiment:
   benchmark: lme_s
-  suffix: unified_filler_N6
+  suffix: unified_filler_N8
 
 models:
   extract: gemma4-26B
@@ -14,7 +14,7 @@ models:
   embedding: qwen3-embedding-0.6b
 
 extract:
-  candidate_suffix: unified_filler_N6   # 指向预制候选目录 MemDB/candidates/lme_s_gemma4-26B_unified_filler_N6/
+  candidate_suffix: unified_filler_N8   # 指向预制候选目录 MemDB/candidates/lme_s_gemma4-26B_unified_filler_N8/
   granularity: 4
   turn_overlap: 0
   language: en
@@ -58,7 +58,7 @@ methods:
 
 generate:
   retrieve_topk: 50
-  memory_token_limit: 256
+  memory_token_limit: 512
   answer_stratified_sample: 0          # 0 = 全量 470 题
   answer_sample_seed: 43
   show_memory_time: true

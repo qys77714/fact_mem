@@ -58,7 +58,7 @@ methods:
 
 generate:
   retrieve_topk: 50
-  memory_token_limit: 256
+  memory_token_limit: 512
   answer_stratified_sample: 0          # 0 = 全量 470 题
   answer_sample_seed: 43
   show_memory_time: true

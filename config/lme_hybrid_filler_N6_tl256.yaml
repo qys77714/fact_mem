@@ -1,10 +1,6 @@
-# fact_memory LME Unified Confusion Memory 对比实验配置 (N=6)
-# 自动生成: script/gen_unified_configs.py
-# 用法: PYTHONPATH=src uv run --no-sync python run_exp_lme.py --config config/lme_unified_filler_N6.yaml --stages ingest,generate,evaluate
-
 experiment:
   benchmark: lme_s
-  suffix: unified_filler_N6
+  suffix: hybrid_filler_N6_tl256
 
 models:
   extract: gemma4-26B
@@ -14,7 +10,7 @@ models:
   embedding: qwen3-embedding-0.6b
 
 extract:
-  candidate_suffix: unified_filler_N6   # 指向预制候选目录 MemDB/candidates/lme_s_gemma4-26B_unified_filler_N6/
+  candidate_suffix: hybrid_filler_N6
   granularity: 4
   turn_overlap: 0
   language: en
@@ -24,45 +20,34 @@ extract:
 methods:
   add_all:
     enabled: true
-
   relation_decision:
     enabled: true
-    backend: llm                       # LLM-only，不经过 classifier 加速
+    backend: llm
     related_top_k: 3
     fusion_model: ""
     cascade_enabled: false
     deletion_enabled: false
     condition_sim_threshold: 0.5
     pairwise_sim_threshold: 0.5
-
   mem0:
-    enabled: true
+    enabled: false
     related_top_k: 3
     related_aggregate_max: 10
-
   evermemos:
-    enabled: true
+    enabled: false
     similarity_threshold: 0.65
     max_time_gap_days: 7.0
-
   amac:
     enabled: false
-    threshold: 0.55
-    weights: "0.1,0.1,0.1,0.1,0.6"
-    skip_utility: false
-    recency_decay_per_step: 0.12
-    novelty_max_existing: 64
-
   zep:
     enabled: false
 
 generate:
   retrieve_topk: 50
   memory_token_limit: 256
-  answer_stratified_sample: 0          # 0 = 全量 470 题
+  answer_stratified_sample: 0
   answer_sample_seed: 43
   show_memory_time: true
-
   hybrid:
     enabled: true
     dense_weight: 0.8

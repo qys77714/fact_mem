@@ -131,10 +131,10 @@ class ZepMethodConfig(BaseModel):
 class RelationDecisionMethodConfig(BaseModel):
     enabled: bool = False
     related_top_k: int = 3
+    backend: str = "classifier"       # "classifier" | "llm"
     fusion_model: str = ""
     cascade_enabled: bool = True
     deletion_enabled: bool = True
-    topic_aggregation_enabled: bool = True
     condition_sim_threshold: float = 0.5
     pairwise_sim_threshold: float = 0.7
 

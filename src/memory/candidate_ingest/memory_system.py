@@ -28,19 +28,15 @@ from .deletion_update import (
     is_user_deletion_request,
 )
 from .memory_system_base import LmeCandidateMemorySystemBase
-from .topics import MISC_TOPIC, VALID_TOPICS, normalize_topic
 from .schemas import (
     LME_RELATION_CLASSIFICATION_RESPONSE_FORMAT,
-    LME_RELATION_VERIFY_RESPONSE_FORMAT,
 )
 from .relation_decision import LmeRelationDecision, decide_lme_update_relation_decision
 from .relation_classifier_backend import RelationClassifierBackend, get_shared_backend
 from .prompts import (
     build_lme_answer_fuse_prompt,
     build_lme_relation_classification_user_prompt,
-    build_lme_relation_verify_user_prompt,
     lme_relation_system_prompt_for_language,
-    lme_relation_verify_system_prompt_for_language,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,10 +76,12 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         # 只有真正启用级联/删除时才消费平行栏条件标注；两者都关(消融)时退化为
         # 与 baseline 同输入(条件 merge 回文本)，保证对比公平。
         self.consumes_cas_rules = self._cascade_enabled or self._deletion_enabled
-        # 同主题 profile 聚合：消费 apply.py 透传的 metadata["topic"]，把同 episode 同主题、
-        # 互不冲突的事实融进一条答题记忆 C，使 Agg「列出关于 X 的一切」一次检索带全 slot。
-        self._topic_aggregation_enabled = bool(kwargs.pop("topic_aggregation_enabled", True))
-        self.consumes_topics = self._topic_aggregation_enabled
+        # 消融实验：active_relations 控制哪些关系类型生效，未列出的降级为 IND。
+        # None = 全部生效；frozenset({"CON"}) = 仅冲突；frozenset({"CON","EQV"}) = 冲突+等价。
+        raw_active = kwargs.pop("active_relations", None)
+        self._active_relations: Optional[frozenset[str]] = (
+            frozenset(str(r).strip().upper() for r in raw_active) if raw_active else None
+        )
         self._condition_sim_threshold = float(kwargs.pop("condition_sim_threshold", 0.5))
         self._pairwise_sim_threshold = float(kwargs.pop("pairwise_sim_threshold", 0.7))
         self._cascade_max_new_tokens = int(kwargs.pop("cascade_max_new_tokens", 512))
@@ -175,89 +173,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
 
         rel = self._parse_relation_label(raw_response)
         return rel if rel in _VALID_RELATIONS else "IND"
-
-    def _verify_relation(
-        self,
-        m_old_text: str,
-        m_new: str,
-        relation: str,
-        trace_scope_id: Optional[str],
-        trace: MemoryTraceLogger,
-    ) -> bool:
-        """LLM 复核 classifier 预测的非 IND 标签是否成立；失败/拿不准一律否决(False→退回 IND)。"""
-        system = lme_relation_verify_system_prompt_for_language(self.language, relation)
-        user = build_lme_relation_verify_user_prompt(m_old_text, m_new, relation)
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
-        _t0 = time.perf_counter()
-        try:
-            raw_response = self.llm_client.get_response_chat(
-                messages,
-                max_new_tokens=self._relation_max_new_tokens,
-                temperature=0,
-                response_format=LME_RELATION_VERIFY_RESPONSE_FORMAT,
-                verbose=False,
-            )
-            trace.log_llm_interaction(
-                purpose="lme_candidate_relation_decision_verify_relation",
-                messages=messages,
-                response=raw_response,
-                scope_id=trace_scope_id,
-                metadata={"relation": relation, "temperature": 0, "latency_ms": round((time.perf_counter() - _t0) * 1000.0, 2)},
-            )
-        except Exception as exc:
-            trace.log_llm_interaction(
-                purpose="lme_candidate_relation_decision_verify_relation",
-                messages=messages,
-                response=None,
-                scope_id=trace_scope_id,
-                metadata={"relation": relation, "temperature": 0, "latency_ms": round((time.perf_counter() - _t0) * 1000.0, 2)},
-                error=str(exc),
-            )
-            logger.warning("LME relation verify failed: %s", exc)
-            return False
-        return self._parse_verify_correct(raw_response)
-
-    @staticmethod
-    def _parse_verify_correct(raw_response: Any) -> bool:
-        payload = raw_response
-        if isinstance(payload, (list, tuple)):
-            payload = payload[0] if payload else None
-        if isinstance(payload, dict):
-            return bool(payload.get("correct"))
-        if isinstance(payload, str):
-            import json as _json
-            import re as _re
-
-            m = _re.search(r"\{.*\}", payload, _re.DOTALL)
-            if m:
-                try:
-                    obj = _json.loads(m.group(0))
-                    return bool(obj.get("correct"))
-                except (ValueError, TypeError):
-                    return False
-        return False
-
-    def _verify_labels(
-        self,
-        m_new: str,
-        labeled: List[tuple[RetrievedMemory, str]],
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> List[tuple[RetrievedMemory, str]]:
-        """对每个非 IND 标签 LLM 复核；否决的退回 IND。IND 直接放行。"""
-        out: List[tuple[RetrievedMemory, str]] = []
-        for mem, lab in labeled:
-            if lab == "IND" or lab not in _VALID_RELATIONS:
-                out.append((mem, "IND"))
-                continue
-            if self._verify_relation(mem.text, m_new, lab, chunk_scope, trace):
-                out.append((mem, lab))
-            else:
-                out.append((mem, "IND"))
-        return out
 
     def _apply_con_weak_updates(
         self,
@@ -390,8 +305,12 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
     ) -> int:
         candidates = self._dense_candidates(database, m_new)
         labeled = self._label_candidates(m_new, candidates, chunk_scope, trace)
-        # classifier/LLM 判出非 IND 后，逐对 LLM 复核；否决的退回 IND（只用确认的关系建边）
-        labeled = self._verify_labels(m_new, labeled, chunk_scope, trace)
+        # 消融实验：仅保留 active_relations 中的关系类型，其余降级为 IND
+        if self._active_relations is not None:
+            labeled = [
+                (mem, lab if lab in self._active_relations else "IND")
+                for mem, lab in labeled
+            ]
         plan = decide_lme_update_relation_decision(m_new, labeled)
         mb = dict(metadata_base)
         mb["lme_update_method"] = "relation_decision"
@@ -415,13 +334,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
                 session_idx,
                 chunk_scope,
                 trace,
-            )
-        # 同主题 profile 聚合：与关系决策正交，独立把本条事实并入「同 episode 同主题」的
-        # profile C，使 Agg「列出关于 X 的一切」一次命中带全 slot。fresh_primary 也聚合
-        # （正交 slot 正是被判 IND 才散落的，必须纳入）。
-        if new_row_id is not None and self._topic_aggregation_enabled:
-            self._aggregate_topic_profile(
-                database, m_new, new_row_id, mb, session_idx, chunk_scope, trace
             )
         return ops
 
@@ -871,6 +783,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
                 existing_c_id,
                 new_text=fused_text,
                 new_embedding=emb,
+                new_time=str(metadata_base.get("date", "")),
                 metadata_updates={
                     "cluster_root": hide_primary_id,
                     "fused_member_ids": members,
@@ -974,94 +887,3 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         text = str(text or "").strip()
         return text or f"{current_memory}\n{new_fact}".strip()
 
-    # ------------------------------------------------------------------
-    # 同主题 profile 聚合（与关系决策正交）
-    # ------------------------------------------------------------------
-    def _find_topic_profile(
-        self, database: LocalFaissDatabase, topic: str
-    ) -> Optional[RetrievedMemory]:
-        """同 episode 内找已存在的该主题 profile C（memory_role=answer 且 topic_profile=True）。"""
-        for mem in database.list_all_memories(sort_by_time=False):
-            meta = mem.metadata or {}
-            if (
-                meta.get("memory_role") == "answer"
-                and bool(meta.get("topic_profile"))
-                and str(meta.get("topic") or "") == topic
-            ):
-                return mem
-        return None
-
-    def _aggregate_topic_profile(
-        self,
-        database: LocalFaissDatabase,
-        m_new: str,
-        new_row_id: str,
-        metadata_base: dict[str, Any],
-        session_idx: int,
-        chunk_scope: str,
-        trace: MemoryTraceLogger,
-    ) -> None:
-        """把本条事实并入「同 episode 同主题」的 profile C（答题可见），一次检索带全 slot。
-
-        profile C 与关系 cluster 的 C 是两条独立的答题可见行；成员原子保留可见（Agg 靠
-        profile、ER/Tr 靠原子兜底）。``misc`` / 非法主题不聚合。
-        """
-        topic = normalize_topic(metadata_base.get("topic"))
-        if topic == MISC_TOPIC or topic not in VALID_TOPICS:
-            return
-
-        existing = self._find_topic_profile(database, topic)
-        current_memory = existing.text if existing is not None else ""
-        fused_text = (
-            self._fuse_answer_memory(current_memory, m_new, "AGG", chunk_scope, trace)
-            if current_memory
-            else m_new
-        )
-        if not fused_text:
-            return
-
-        emb = self._embed_texts([fused_text])[0]
-        members = list((existing.metadata or {}).get("fused_member_ids", [])) if existing else []
-        if new_row_id not in members:
-            members.append(new_row_id)
-
-        if existing is not None:
-            database.update_memory(
-                existing.memory_id,
-                new_text=fused_text,
-                new_embedding=emb,
-                metadata_updates={
-                    "fused_member_ids": members,
-                    "fused_member_count": len(members),
-                },
-            )
-            c_id = existing.memory_id
-            op = "TOPIC_PROFILE_UPDATE"
-        else:
-            c_meta = {
-                **{k: v for k, v in metadata_base.items()
-                   if k not in ("memory_role", "parent_primary", "edge", "answer_hidden", "answer_id")},
-                "memory_role": "answer",
-                "answer_fused": True,
-                "topic_profile": True,
-                "topic": topic,
-                "fused_member_ids": members,
-                "fused_member_count": len(members),
-                "lme_update_method": "relation_decision_topic_profile",
-            }
-            c_id = database.add(
-                text=fused_text,
-                source_index=f"session_{session_idx}",
-                time=str(metadata_base.get("date", "")),
-                metadata=c_meta,
-                embedding=emb,
-            )
-            op = "TOPIC_PROFILE_ADD"
-
-        trace.log_memory_operation(
-            operation=op,
-            memory_id=c_id,
-            scope_id=chunk_scope,
-            metadata={"topic": topic, "new_row_id": new_row_id, "members": members},
-            status="ok",
-        )

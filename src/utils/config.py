@@ -138,6 +138,7 @@ class RelationDecisionMethodConfig(BaseModel):
     condition_sim_threshold: float = 0.5
     pairwise_sim_threshold: float = 0.7
     fusion_enabled: bool = True
+    active_relations: Optional[list[str]] = None  # 消融：限定的关系类型，None=全部生效
 
 
 class Mem0MethodConfig(BaseModel):

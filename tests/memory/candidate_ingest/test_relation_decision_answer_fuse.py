@@ -14,8 +14,8 @@ class _Trace:
         pass
 
 
-def _make_system(*, verify_correct=True, classify_label="CON", fuse_text="FUSED C"):
-    """构造系统：classifier 永远给 classify_label，verify 给 verify_correct，融合返回 fuse_text。"""
+def _make_system(*, classify_label="CON", fuse_text="FUSED C"):
+    """构造系统：classifier 永远给 classify_label，融合返回 fuse_text。"""
     from memory.candidate_ingest import memory_system as ms
 
     sysobj = ms.LmeCandidateRelationDecisionMemorySystem.__new__(
@@ -35,6 +35,7 @@ def _make_system(*, verify_correct=True, classify_label="CON", fuse_text="FUSED 
     sysobj._pairwise_sim_threshold = 0.0
     sysobj._condition_sim_threshold = 0.0
     sysobj._relation_concurrency = 1
+    sysobj._active_relations = None
 
     # 8 维稳定 embedding：按文本 hash 落在单位向量上（保证可被检索到）
     def _embed(texts):
@@ -55,10 +56,10 @@ def _make_system(*, verify_correct=True, classify_label="CON", fuse_text="FUSED 
 
         def get_response_chat(self, messages, **k):
             rf = k.get("response_format")
-            # verify 调用带 response_format（schema）
+            # classification 调用带 response_format（schema）
             if rf is not None:
-                self.purposes.append("verify")
-                return {"correct": verify_correct}
+                self.purposes.append("classify")
+                return {"relation": classify_label}
             # 否则是融合调用（无 schema）
             self.purposes.append("fuse")
             return fuse_text
@@ -79,7 +80,7 @@ def _meta_base():
 
 def test_con_creates_answer_memory_and_hides_new_primary(tmp_path, monkeypatch):
     """CON 成立：m_new 成 primary、old 降 evidence，产出 C(role=answer)，隐藏 m_new。"""
-    s, ms = _make_system(verify_correct=True, classify_label="CON", fuse_text="C-TEXT")
+    s, ms = _make_system(classify_label="CON", fuse_text="C-TEXT")
     db = _new_db(tmp_path)
     # 预置一条 old primary
     old_id = db.add("Alice likes blue", "session_0", "2023-12-01", {}, s._embed_texts(["Alice likes blue"])[0])
@@ -89,7 +90,7 @@ def test_con_creates_answer_memory_and_hides_new_primary(tmp_path, monkeypatch):
 
     ops = s._run_pairwise_relation_decision(db, "Alice likes red", _meta_base(), 1, "scope", _Trace())
     assert ops == 1
-    assert "verify" in s.llm_client.purposes and "fuse" in s.llm_client.purposes
+    assert "fuse" in s.llm_client.purposes
 
     rows = {r.memory_id: r for r in db.list_all_memories()}
     roles = sorted((r.metadata.get("memory_role", "primary")) for r in rows.values())
@@ -109,29 +110,10 @@ def test_con_creates_answer_memory_and_hides_new_primary(tmp_path, monkeypatch):
     assert new_primary[0].metadata.get("answer_id") == c_rows[0].memory_id
 
 
-def test_verify_reject_falls_back_to_ind(tmp_path, monkeypatch):
-    """LLM 否决 classifier 判断 -> 退回 IND -> m_new 落地为独立 primary，无 C、无降级。"""
-    s, ms = _make_system(verify_correct=False, classify_label="CON")
-    db = _new_db(tmp_path)
-    old_id = db.add("Alice likes blue", "session_0", "2023-12-01", {}, s._embed_texts(["Alice likes blue"])[0])
-
-    monkeypatch.setattr(s, "_classify_relation", lambda old, new, scope, trace: "CON")
-
-    ops = s._run_pairwise_relation_decision(db, "Bob plays guitar", _meta_base(), 1, "scope", _Trace())
-    assert ops == 1
-    assert "verify" in s.llm_client.purposes
-    assert "fuse" not in s.llm_client.purposes  # 退回 IND 不融合
-
-    rows = db.list_all_memories()
-    roles = sorted(r.metadata.get("memory_role", "primary") for r in rows)
-    # 全是 primary：old 未降级、m_new 独立、无 C
-    assert roles == ["primary", "primary"], roles
-    assert all(not r.metadata.get("answer_hidden") for r in rows)
-
 
 def test_eqv_hides_old_primary_keeps_m_new_as_evidence(tmp_path, monkeypatch):
     """EQV 成立：m_new 挂 evidence，old 仍是 primary 但被 C 覆盖 -> old 被 hidden。"""
-    s, ms = _make_system(verify_correct=True, classify_label="EQV", fuse_text="C-EQV")
+    s, ms = _make_system(classify_label="EQV", fuse_text="C-EQV")
     db = _new_db(tmp_path)
     old_id = db.add("Alice works at Google", "session_0", "2023-12-01", {}, s._embed_texts(["Alice works at Google"])[0])
 
@@ -149,15 +131,3 @@ def test_eqv_hides_old_primary_keeps_m_new_as_evidence(tmp_path, monkeypatch):
     c_rows = [r for r in rows.values() if r.metadata.get("memory_role") == "answer"]
     assert len(c_rows) == 1 and c_rows[0].text == "C-EQV"
     assert old_row.metadata.get("answer_id") == c_rows[0].memory_id
-
-
-def test_parse_verify_correct_variants():
-    from memory.candidate_ingest.memory_system import LmeCandidateRelationDecisionMemorySystem as C
-
-    assert C._parse_verify_correct({"correct": True}) is True
-    assert C._parse_verify_correct({"correct": False}) is False
-    assert C._parse_verify_correct([{"correct": True}]) is True
-    assert C._parse_verify_correct('{"correct": true}') is True
-    assert C._parse_verify_correct('noise {"correct": false} tail') is False
-    assert C._parse_verify_correct("garbage") is False
-    assert C._parse_verify_correct(None) is False

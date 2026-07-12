@@ -1,45 +1,45 @@
 #!/usr/bin/env python3
 """
-为 unified confusion memory 实验批量生成 config YAML (N=0,2,4,6,8)。
+为 confusion memory 实验批量生成 config YAML。
 
 用法:
-  uv run --no-sync python script/gen_unified_configs.py [--distractors 0,2,4,6,8]
+  uv run --no-sync python script/gen_confusion_configs.py [--distractors 0,2,4,8]
 
 输出:
-  - config/lme_unified_filler_N0.yaml
-  - config/lme_unified_filler_N2.yaml
-  - config/lme_unified_filler_N4.yaml
-  - config/lme_unified_filler_N6.yaml
-  - config/lme_unified_filler_N8.yaml
+  - config/lme_conf_v3_filler_N0.yaml
+  - config/lme_conf_v3_filler_N2.yaml
+  - config/lme_conf_v3_filler_N4.yaml
+  - config/lme_conf_v3_filler_N8.yaml
 
-每个 config 启用 add_all + relation_decision + mem0 + evermemos + amac (zep 关闭)。
+每个 config 同时启用 add_all 和 relation_decision (backend=llm, v3 模板)。
 """
 
 from __future__ import annotations
 
 import argparse
+import textwrap
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 
 YAML_TEMPLATE = """\
-# fact_memory LME Unified Confusion Memory 对比实验配置 (N={n})
-# 自动生成: script/gen_unified_configs.py
-# 用法: PYTHONPATH=src uv run --no-sync python run_exp_lme.py --config config/lme_unified_filler_N{n}.yaml --stages ingest,generate,evaluate
+# fact_memory LME Confusion Memory 对比实验配置 (N={n})
+# 自动生成: script/gen_confusion_configs.py
+# 用法: PYTHONPATH=src uv run --no-sync python run_exp_lme.py --config config/lme_conf_v3_filler_N{n}.yaml --stages ingest,generate,evaluate
 
 experiment:
   benchmark: lme_s
-  suffix: unified_filler_N{n}
+  suffix: confv3_filler_N{n}
 
 models:
   extract: gemma4-26B
   manager: gemma4-26B
   answer: gemma4-26B
-  judge: qwen3-max
+  judge: gpt-4o-mini
   embedding: qwen3-embedding-0.6b
 
 extract:
-  candidate_suffix: unified_filler_N{n}   # 指向预制候选目录 MemDB/candidates/lme_s_gemma4-26B_unified_filler_N{n}/
+  candidate_suffix: conf_v3_filler_N{n}   # 指向预制候选目录 MemDB/candidates/lme_conf_v3_filler_N{n}/
   granularity: 4
   turn_overlap: 0
   language: en
@@ -52,7 +52,7 @@ methods:
 
   relation_decision:
     enabled: true
-    backend: llm                       # LLM-only，不经过 classifier 加速
+    backend: llm                       # 使用 gemma4-26B 直接分类
     related_top_k: 3
     fusion_model: ""
     cascade_enabled: false
@@ -60,30 +60,21 @@ methods:
     condition_sim_threshold: 0.5
     pairwise_sim_threshold: 0.5
 
-  mem0:
-    enabled: true
-    related_top_k: 3
-    related_aggregate_max: 10
-
-  evermemos:
-    enabled: true
-    similarity_threshold: 0.65
-    max_time_gap_days: 7.0
-
   amac:
-    enabled: true
-    threshold: 0.55
-    weights: "0.1,0.1,0.1,0.1,0.6"
-    skip_utility: false
-    recency_decay_per_step: 0.12
-    novelty_max_existing: 64
+    enabled: false
 
   zep:
     enabled: false
 
+  mem0:
+    enabled: false
+
+  evermemos:
+    enabled: false
+
 generate:
   retrieve_topk: 50
-  memory_token_limit: 256
+  memory_token_limit: 512
   answer_stratified_sample: 0          # 0 = 全量 470 题
   answer_sample_seed: 43
   show_memory_time: true
@@ -140,9 +131,9 @@ prompts:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="生成 unified confusion 实验 config")
-    parser.add_argument("--distractors", default="0,2,4,6,8",
-                        help="逗号分隔的 distractor 数量 (default: 0,2,4,6,8)")
+    parser = argparse.ArgumentParser(description="生成 confusion 实验 config")
+    parser.add_argument("--distractors", default="0,2,4,8",
+                        help="逗号分隔的 distractor 数量 (default: 0,2,4,8)")
     args = parser.parse_args()
 
     ns = [int(x.strip()) for x in args.distractors.split(",")]
@@ -150,8 +141,9 @@ def main() -> None:
 
     for n in ns:
         yaml_content = YAML_TEMPLATE.format(n=n)
+        # 清理多余空行
         yaml_content = yaml_content.strip() + "\n"
-        out_path = config_dir / f"lme_unified_filler_N{n}.yaml"
+        out_path = config_dir / f"lme_conf_v3_filler_N{n}.yaml"
         with open(out_path, "w") as f:
             f.write(yaml_content)
         print(f"生成: {out_path}")

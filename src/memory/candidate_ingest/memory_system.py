@@ -43,9 +43,6 @@ logger = logging.getLogger(__name__)
 
 _VALID_RELATIONS = frozenset({"IND", "EQV", "NSO", "OSN", "CON"})
 
-# plan.reason → 融合提示语用的关系标签
-_REASON_TO_RELATION = {"con": "CON", "osn": "OSN", "nso": "NSO", "eqv": "EQV"}
-
 
 def _check_relation_language(relation_backend: str, language: str) -> None:
     """Raise ValueError if the backend/language combination is unsupported."""

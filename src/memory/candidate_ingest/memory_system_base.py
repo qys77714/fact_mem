@@ -22,10 +22,6 @@ class LmeCandidateMemorySystemBase(Mem0MemorySystem):
     # 灌库时由 apply.py 把条件 merge 回文本，保证各方法输入信息对等。
     consumes_cas_rules: bool = False
 
-    # 是否消费 chunk 的平行栏 ``candidate_topics``（预定义主题标签）做同主题 profile 聚合。
-    # 仅 relation_decision(ours) 为 True；baseline 忽略，行为与无主题时一致。
-    consumes_topics: bool = False
-
     def __init__(
         self,
         embed_model_name: str,

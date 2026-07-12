@@ -111,10 +111,6 @@ def apply_candidate_episode_json(
             if not isinstance(mems, list):
                 mems = []
             cas_rules = chunk.get("cas_update_rules")
-            # topic 平行数组（tag_candidate_topics.py 产出，与 candidate_memories 等长）；
-            # 仅 relation_decision 消费它做同主题聚合，baseline 忽略。
-            topics = chunk.get("candidate_topics")
-            consumes_topic = bool(getattr(memory, "consumes_topics", False))
             # ours(relation_decision)消费平行栏条件做级联；baseline 不消费，
             # 此时把条件 merge 回文本，保证各方法输入信息对等(见 memory_system_base.consumes_cas_rules)。
             consumes_cas = bool(getattr(memory, "consumes_cas_rules", False))
@@ -144,10 +140,6 @@ def apply_candidate_episode_json(
                     mb["lme_fact_index_in_chunk"] = fi
                     if cas_rule_used:
                         mb["gold_cas_update_condition"] = cas_rule_used
-                    if consumes_topic and isinstance(topics, list) and fi < len(topics):
-                        topic_fi = str(topics[fi] or "").strip()
-                        if topic_fi:
-                            mb["topic"] = topic_fi
                     r = memory._process_one_new_fact(
                         database,
                         s,

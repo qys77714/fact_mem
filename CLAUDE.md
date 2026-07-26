@@ -2,6 +2,8 @@
 
 本文件给在此仓库工作的 Claude 提供项目级约定。**回答一律用中文。**
 
+> 📖 **协作者上手文档**：[`docs/collab-guide.md`](docs/collab-guide.md) — 从零搭建环境到跑通全实验的完整指南。
+
 ## 项目是什么
 
 `easy-mem` / `fact_mem`：长对话记忆评测框架。在 **LongMemEval (LME)** 基准上，对比

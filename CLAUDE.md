@@ -193,7 +193,7 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 
 > **数据获取**：以下文件未包含在 Git 仓库中，协作者需从以下渠道获取：
 > - 数据集（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip` → 解压到项目根目录 → `data/`
-> - 候选记忆：维护者提供 `easy-mem-candidates.zip` → 解压到项目根目录 → `artifacts/stages/candidates/`
+> - 候选记忆（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates.zip` → 解压到项目根目录 → `artifacts/stages/candidates/`
 
 ### 必须获取（否则无法跑实验）
 

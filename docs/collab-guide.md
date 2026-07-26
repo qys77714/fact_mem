@@ -25,7 +25,7 @@
 | 文件 | 获取方式 | 放置路径 |
 |------|---------|---------|
 | 数据集 | `wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip` | 解压到项目根目录 → `data/` |
-| 候选记忆 | 维护者通过网盘等方式提供 `easy-mem-candidates.zip` | 解压到项目根目录 → `artifacts/stages/candidates/` |
+| 候选记忆 | `wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates.zip` | 解压到项目根目录 → `artifacts/stages/candidates/` |
 
 ## 快速开始
 
@@ -44,8 +44,8 @@ uv sync
 wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip
 unzip easy-mem-data.zip -d .
 
-# 候选记忆（维护者提供）
-# 将 easy-mem-candidates.zip 放到项目根目录后：
+# 候选记忆
+wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates.zip
 unzip easy-mem-candidates.zip -d .
 ```
 

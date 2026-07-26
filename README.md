@@ -216,7 +216,12 @@ wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-d
 unzip easy-mem-data.zip -d .
 ```
 
-候选记忆（`easy-mem-candidates.zip`）由维护者通过网盘等方式提供。
+候选记忆同样托管在 HuggingFace：
+
+```bash
+wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates.zip
+unzip easy-mem-candidates.zip -d .
+```
 
 ---
 

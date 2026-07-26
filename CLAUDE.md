@@ -10,13 +10,63 @@
 当前论文主实验：**hybrid 数据集**（golden memory + BM25-dense 混合检索），
 同时包含 **fusion 消融实验**（`fusion_enabled: false`，用分类器保留新旧中的一条，不用 LLM 融合）。
 
-## 环境与运行（关键约束）
+## 环境与运行
+
+### 依赖安装
 
 - 包管理用 **uv**。跑任何脚本用 `uv run --no-sync python ...`（裸 `python` 缺 `openai`/`dotenv` 等依赖；不带 `--no-sync` 的 `uv run` 会重新 sync，可能改坏已验证好的环境）。
 - 本机 glibc 2.31 → **vllm ≤ 0.19.1**；gemma4 需 transformers 5.x。
-- 模型服务：gemma4-26B 在 **7111**(TP=4, GPU4-7)、qwen3-embedding-0.6b 在 **7110**。`.env` 里 `VLLM_API_KEY=zjj`，端口走 `PORT_GEMMA4_26B` 等变量。
-- 模型别名定义于 `src/utils/llm_api.py`：本地 vllm(`gemma4-26B`、`Qwen3-4B`)、云端 `qwen3-max`/`gpt-4o-mini`(judge) 等。
-- 密钥从根目录 `.env` 经 dotenv 自动加载（`env | grep` 看不到，需在 python 里 `load_dotenv()`）。
+
+### 模型需求
+
+实验需要 5 类模型，按用途分工：
+
+| 用途 | 配置字段 | 推荐模型 | 部署方式 | 最低 GPU |
+|------|---------|---------|---------|---------|
+| 记忆抽取 | `models.extract` | gemma4-26B | 本地 vllm | 4×GPU (TP=4) |
+| 灌库管理 | `models.manager` | gemma4-26B / gemma4-e4b | 本地 vllm | 4×GPU / 2×GPU |
+| 答题 | `models.answer` | gemma4-26B | 本地 vllm | 4×GPU (TP=4) |
+| Judge | `models.judge` | gpt-4o-mini / qwen3-max | 云端 API | 无需 |
+| Embedding | `models.embedding` | qwen3-embedding-0.6b | 本地 vllm `--task embed` | 1×GPU |
+
+**协作者模型选择建议**：
+- **只用云端 API**：在 config 中把 `extract`/`manager`/`answer` 都改为 `qwen3-max` 或 `gpt-4o-mini`，无需 GPU。注意云端 API 有费用，extract 阶段 token 消耗较大。
+- **混合部署**：embedding 必须本地（`qwen3-embedding-0.6b`，仅需 1 GPU），其他模型可云端。
+- **全本地**：按上表部署多个 vllm 实例。`extract`/`manager`/`answer` 可共用同一模型实例（设为相同模型名）。
+- 模型别名定义于 `src/utils/llm_api.py`，可通过改 YAML 的 `models.*` 字段换模型。
+
+### .env 配置
+
+从模板复制并填写：`cp .env.example .env`
+
+```bash
+# ---- 本地 VLLM ----
+VLLM_API_KEY=zjj                            # 与启动脚本 --api-key 一致
+PORT_GEMMA4_26B=7111                        # 每模型一个端口，命名 PORT_{别名大写}
+PORT_GEMMA4_E4B=7115
+
+# ---- Embedding ----
+EMBEDDING_BASE_URL=http://localhost:7110/v1/
+EMBEDDING_API_KEY=zjj
+
+# ---- 云端 API（至少配一个做 Judge）----
+DASHSCOPE_API_KEY=your_key                  # qwen3-max judge
+# 或
+OPENAI_API_KEY=your_key                     # gpt-4o-mini judge
+```
+
+端口映射：`.env` 中 `PORT_{MODEL}` 变量 → `src/utils/llm_api.py` 自动读取，无需改代码。密钥从根目录 `.env` 经 dotenv 自动加载（`env | grep` 看不到，需在 python 里 `load_dotenv()`）。
+
+### 启动模型服务
+
+```bash
+# Embedding（必须先启动）
+bash script/0_run_embedding.sh
+
+# 对话模型（按需启动）
+bash script/0_run_model.sh                  # gemma4-26B 示例
+bash script/0_run_qwen3_8b.sh               # Qwen3-8B 示例
+```
 
 ## 代码约定
 
@@ -126,7 +176,9 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 
 数据路径映射定义于 `src/benchmark/datasets.py` 的 `DEFAULT_BENCHMARK_DATASETS`。主实验使用 `benchmark: lme_s`；hybrid 特性由 filler/candidate 系统提供（golden memory + distractor 混合），不由 benchmark key 控制。
 
-> **数据获取**：预处理数据集较大（200MB+），未包含在 Git 仓库中。协作者需从项目维护者处获取数据文件（网盘/其他渠道），放置于 `data/preprocessed/` 和 `data/raw_data/` 目录下。
+> **数据获取**：预处理数据集较大（200MB+），未包含在 Git 仓库中。协作者需从项目维护者处获取以下文件：
+> - 数据集 JSON → `data/preprocessed/` 和 `data/raw_data/`
+> - Candidate 预抽取目录 → `artifacts/stages/candidates/`（或自行跑 `--stages extract` 生成，但需 LLM）
 
 ## relation_decision 灌库策略
 

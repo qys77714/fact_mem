@@ -49,7 +49,7 @@ for N in 0 2 4 6 8; do
     echo "--- RD N=$N 完成 ---"
 done
 
-# ---- Step 3: Mem0 ingest（并行：不调 LLM，可同时跑）----
+# ---- Step 3: Mem0 ingest（并行 N=0,2,4,6,8，共用 gemma4-12b）----
 echo ""
 echo "=== [3/5] Mem0 ingest（并行 N=0,2,4,6,8）==="
 PIDS_MEM0=()
@@ -66,7 +66,7 @@ for pid in "${PIDS_MEM0[@]}"; do
     wait "$pid" && echo "  PID $pid 完成" || echo "  PID $pid 失败！"
 done
 
-# ---- Step 4: EverMemOS ingest（并行：不调 LLM，可同时跑）----
+# ---- Step 4: EverMemOS ingest（并行 N=0,2,4,6,8，共用 gemma4-12b）----
 echo ""
 echo "=== [4/5] EverMemOS ingest（并行 N=0,2,4,6,8）==="
 PIDS_EVM=()

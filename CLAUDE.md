@@ -388,12 +388,12 @@ pkill -f "run_exp_lme|ingest_candidates|pipeline_lme"
 
 API key 统一 `VLLM_API_KEY=zjj`（从 `.env` 加载）。
 
-### add_all / mem0 / evermemos 与 manager 模型无关
+### 各方法对 LLM 的依赖
 
-`add_all`、`mem0`、`evermemos` 三种灌库方法**只使用 embedding**（`models.embedding`），不调用 LLM。
-因此它们与 `models.manager` 无关——同一 filler 级别只需跑一次，不同 manager 模型可共享同一份 ingest。
-
-只有 `relation_decision` 才依赖 `models.manager` 做 LLM 关系分类，换 manager 模型需要重跑 RD ingest。
+- **`add_all`**：只使用 embedding（`models.embedding`），不调用 LLM。与 `models.manager` 无关。
+- **`relation_decision`**：依赖 `models.manager` 做 LLM 关系分类。换 manager 模型需重跑 RD ingest。
+- **`mem0`**：使用 `models.manager` 做 LLM 增量判断（增/改/删）。换 manager 模型需重跑。
+- **`evermemos`**：使用 `models.manager` 做 LLM 语义合并。换 manager 模型需重跑。
 
 ### 监控 ingest 进度
 

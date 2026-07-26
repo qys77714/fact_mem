@@ -1,0 +1,108 @@
+# easy-mem LME 实验配置（默认模板）
+# 用法：uv run --no-sync python run_exp_lme.py --config config/lme_default.yaml [--stages extract,ingest,generate,evaluate]
+#
+# 配置命名约定：exp_N{filler数}_{答题模型}_{灌库方法}.yaml
+# 例：exp_N0_gemma4-26b_rd_addall.yaml（filler=0, gemma4-26B, relation_decision + add_all）
+#
+# 各节说明见下方注释。协作实验时，复制此文件并根据需要修改即可。
+
+experiment:
+  benchmark: lme_s        # 基准数据集：lme_s（hybrid）/ lme_o（oracle）
+  suffix: exp001          # 可读标签（写入 run_id slug；阶段复用由指纹决定，勿靠手工 bump suffix）
+
+# ---- 模型选择 ----
+# 别名定义于 src/utils/llm_api.py。本地 vllm 模型端口通过 .env 中 PORT_{MODEL} 变量配置。
+models:
+  extract: gemma4-26B               # 候选记忆抽取
+  manager: gemma4-26B               # 灌库管理（relation_decision 关系分类；add_all/mem0/evermemos 不使用）
+  answer: gemma4-26B                # 答题
+  judge: qwen3-max                  # LLM Judge（云端 API）
+  embedding: qwen3-embedding-0.6b   # Embedding（本地 vllm，默认端口 7110）
+
+# ---- 候选记忆抽取 ----
+extract:
+  candidate_suffix: default         # 候选版本标签（改抽取策略时同步更改，否则复用旧 state 跳过 episode）
+  granularity: 4                    # 每 N turn 一个 chunk（"all" = 整个 session 一个 chunk）
+  turn_overlap: 0                   # 相邻 chunk 共享 turn 数
+  language: en                      # 提示语言：en
+  aspect_templates:                 # 单 pass 统一抽取模板
+    - "0_mem_extract_aspect_unified_en.jinja"
+
+# ---- 灌库方法 ----
+# 同时开多个 enabled: true = 比较实验，共享 candidates，各方法独立 ingest/answer/judge。
+methods:
+  add_all:
+    enabled: true
+
+  relation_decision:
+    enabled: true
+    backend: llm                     # 关系分类后端（仅 llm）
+    related_top_k: 3                 # 召回相关旧记忆数
+    fusion_model: ""                 # 融合模型（空 = 使用 models.manager）
+    fusion_enabled: true             # true=LLM融合关系包 / false=简单保留（消融实验用 --no-fusion）
+    condition_sim_threshold: 0.5     # 条件嵌入相似度阈值
+    pairwise_sim_threshold: 0.5      # 成对嵌入相似度阈值
+    # active_relations: ["CON"]      # 消融：限定生效关系类型（不设=全部五类 IND/EQV/OSN/NSO/CON）
+
+  mem0:
+    enabled: false
+
+  evermemos:
+    enabled: false
+
+# ---- 答题生成 ----
+generate:
+  retrieve_topk: 50                  # 召回记忆条数
+  memory_token_limit: 256            # 传入 Agent 的记忆 token 上限
+  answer_stratified_sample: 0        # 分层抽样题数（0 = 全量）
+  answer_sample_seed: 43
+  show_memory_time: true             # 召回记忆是否展示时间戳
+
+  hybrid:                            # BM25 + dense 混合检索
+    enabled: false
+
+# ---- 评估 ----
+evaluate:
+  use_cot: true
+
+# ---- 可选：一次配置扫多个 token limit ----
+sweep:
+  memory_token_limits:
+    - 256
+    # - 512                           # 取消注释以同时测试多个 token limit
+
+# ---- 可选：统计重复（用于计算 mean/std）----
+replication:
+  count: 1                           # 重复次数（1 = 不重复）
+  scope: answer_judge                # answer_judge = 复用 ingest；full_pipeline = 每 repeat 独立上游
+  # seeds: [43, 44, 45]             # 手动指定种子（省略则从 answer_sample_seed 递增）
+
+# ---- 并发控制 ----
+parallel:
+  extract_chunk_concurrency: 100
+  ingest_relation_concurrency: 20    # relation_decision：单 episode 内并发 pairwise 比较数
+  ingest_episode_concurrency:        # 各方法 episode 间并发
+    relation_decision: 20
+    mem0: 20
+    add_all: 100
+    evermemos: 20
+    fusion_episodes: 100
+    fusion_packages: 10
+  generate_parallel_episodes: 50
+  generate_answer_concurrency: 2
+  evaluate_max_concurrency: 8
+
+# ---- Token 限制 ----
+token_limits:
+  extract_max_new_tokens: 2048
+  ingest_relation_max_new_tokens: 256
+  ingest_manager_max_new_tokens: 2048
+  fusion_max_new_tokens: 512
+  evaluate_max_new_tokens: 512
+
+# ---- 提示模板覆盖 ----
+# 所有模板位于 src/prompts/templates/；空字符串 = 使用代码内置默认。
+prompts:
+  relation_user_en: RD_0_relation_classify.jinja
+  relation_user_zh: RD_0_relation_classify.jinja
+  judge_template: pipeline_judge.jinja

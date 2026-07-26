@@ -65,7 +65,25 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 关键 config：
 - `config/exp_N{0,2,4,6,8}_{model}_{method}.yaml` — hybrid 主实验配置（N=filler 数量，model=答题模型，method=灌库方法：`rd_addall` / `evm` / `mem0`）
 - `config/exp_oracle_gemma4-26b_all.yaml` — oracle 全方法比较
+- `config/lme_default.yaml` — **默认模板（带完整注释）**，协作者复制此文件修改即可
 - 可选 `sweep.memory_token_limits` + `replication.{count,scope,seeds}` — 一次 YAML 展开多 variant（见 artifact 文档）
+
+### 如何编写配置文件
+
+1. **复制默认模板**：`cp config/lme_default.yaml config/my_exp.yaml`
+2. **必须修改的字段**：
+   - `experiment.suffix` — 每次新实验换一个唯一标签
+   - `extract.candidate_suffix` — 换了抽取策略（模板/granularity）时必须换，否则复用旧 state
+   - `models.*` — 按实际部署的模型选别名（见上方 VLLM 端口映射表）
+3. **灌库方法**：在 `methods` 下将需要的方法设为 `enabled: true`，不需要的设 `false`
+4. **命名约定**：建议 `exp_N{filler数}_{模型}_{方法}.yaml`，如 `exp_N0_gemma4-26b_rd_addall.yaml`
+5. **改配置后必须全量清理**（见「改配置后必须全量清理」节），否则新旧指纹不匹配导致检索为空
+6. **常见实验变体**：
+   - 换 filler 数量：改 `extract.candidate_suffix` 指向不同 filler 的候选目录
+   - 换答题模型：改 `models.answer`
+   - 换 token limit：改 `generate.memory_token_limit` 或使用 `sweep.memory_token_limits`
+   - 消融实验：在 `methods.relation_decision` 下设 `active_relations: ["CON"]` 或 `fusion_enabled: false`
+   - 多方法比较：同时开多个 `methods.*.enabled: true`
 
 数据路径映射定义于 `src/benchmark/datasets.py` 的 `DEFAULT_BENCHMARK_DATASETS`。`benchmark: lme_s` 默认读 `data/preprocessed/longmemeval_s_cleaned_converted.json`。
 

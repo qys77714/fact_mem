@@ -190,8 +190,8 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 | 目录 Hash | candidate_suffix | 说明 | Episodes |
 |-----------|-----------------|------|----------|
 | `5b3b093d` | `hybrid_filler_N0` | 无 filler（仅 golden memory） | 470 |
-| `40d0a4e8` | `hybrid_filler_N2` | 2 条 distractor / 题 | 471 |
-| `dac380a4` | `hybrid_filler_N4` | 4 条 distractor / 题 | 471 |
+| `40d0a4e8` | `hybrid_filler_N2` | 2 条 distractor / 题 | 470 |
+| `dac380a4` | `hybrid_filler_N4` | 4 条 distractor / 题 | 470 |
 | `111c614b` | `hybrid_filler_N6` | 6 条 distractor / 题 | 470 |
 | `cda53dff` | `hybrid_filler_N8` | 8 条 distractor / 题 | 470 |
 | `200a19dc` | `oracle_dense` | Oracle 全量 session 上下文 | 501 |

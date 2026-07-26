@@ -30,3 +30,9 @@ data/preprocessed/lme_s_non_evidence_filler.json
 # Tests
 test/
 
+# Experiment outputs (runtime generated)
+artifacts/
+Qwen3-14B/
+.superpowers/
+experiment_results_all_methods_backup_20260726.xlsx
+

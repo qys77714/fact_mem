@@ -25,38 +25,51 @@
   `FileSystemLoader` 指向 `templates/`，子目录需带前缀访问。
 - LLM 客户端：`load_api_chat_completion(model_name, async_=False)`。同步 `get_response_chat(messages, max_new_tokens, temperature, ...)`，
   重试耗尽或内容安全失败返回 `None`（上游需判空）。批量并发可用 `ThreadPoolExecutor` 包同步客户端。
-- 实验参数集中在 YAML（`config/lme.yaml`），**改抽取策略必须同步换 `candidate_suffix`**，否则复用旧 state 跳过 episode。
+- 实验参数集中在 YAML（`config/exp_N*_*.yaml`），**改抽取策略必须同步换 `candidate_suffix`**，否则复用旧 state 跳过 episode。
 - 记忆抽取已统一为单 pass、user 中心模板 `0_mem_extract_aspect_unified_en.jinja`。
 
 ## 实验入口
 
 ```bash
-# 主入口
-uv run --no-sync python run_exp_lme.py [--config config/lme_hybrid_filler_N0_tl256.yaml] [--stages extract,ingest,generate,evaluate]
+# 主入口（默认新 artifact 布局，产物在 artifacts/）
+uv run --no-sync python run_exp_lme.py [--config config/exp_N0_gemma4-26b_rd_addall.yaml] [--stages extract,ingest,generate,evaluate]
 
-# 只跑部分阶段
-uv run --no-sync python run_exp_lme.py --stages ingest,generate,evaluate
+# 只跑部分阶段（例如只换 token limit 时复用已有 ingest）
+uv run --no-sync python run_exp_lme.py --config config/tl512.yaml --stages generate,evaluate
+
+# 旧路径续跑（MemDB/ + experiment/）
+uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 ```
 
 四个阶段：
-- **extract** — 候选记忆抽取（单 pass 统一模板）
-- **ingest** — 每个 enabled 方法写入向量库；`relation_decision` 在灌库时就地融合（不再有独立 fuse 阶段）
-- **generate** — 预建库检索 → Agent 答题 → 输出 JSONL
-- **evaluate** — LLM Judge 写回评分
+- **extract** — 候选记忆抽取（单 pass 统一模板）→ `artifacts/stages/candidates/<candidate_id>/`
+- **ingest** — 每个 enabled 方法写入向量库；`relation_decision` 在灌库时就地融合（不再有独立 fuse 阶段）→ `artifacts/stages/ingest/<method>/<ingest_id>/`
+- **generate** — 预建库检索 → Agent 答题 → `artifacts/runs/<run_id>/answer/<method>/<answer_id>/pred.jsonl`
+- **evaluate** — LLM Judge → 独立 `judged.jsonl` + `metrics.json`（**不改写** pred）
 
-配置中 `methods` 下同时开多个 `enabled: true` = 比较实验，ingest 和 generate 依次执行。
+配置中 `methods` 下同时开多个 `enabled: true` = 比较实验；共享 candidates，各 method 独立 ingest / answer / judge。
+
+### Artifact 布局（新实验默认）
+
+- **内容寻址**：目录名由阶段指纹决定（配置字段 + 模板内容 hash），不靠手工 bump suffix。
+- **阶段复用**：只改 `generate.memory_token_limit` 等新 answer 参数时，复用同一 `candidate_id` / `ingest_id`，只重跑 generate/evaluate。
+- **run 快照**：`artifacts/runs/<run_id>/` 含 `manifest.json`、`run.yaml`、`stages.json`、`attempts/*/attempt.json`。
+- **sweep × replication**：YAML 中 `sweep.memory_token_limits` × `replication.count` 展开为多个 variant；`replication.scope: answer_judge`（默认）共享 extract/ingest，`full_pipeline` 每个 repeat 独立上游。
+- **聚合**：多 repeat 的 `metrics.json` 用 `script/aggregate_experiment_metrics.py` 算 mean/sample_std。
+- **完整用法**：[`docs/experiment-artifacts.md`](docs/experiment-artifacts.md)。
 
 ## 当前数据集与配置
 
 主实验数据集：`data/preprocessed/longmemeval_s_hybrid_golden.json`（由 `script/build_hybrid_golden_dataset.py` 构建）。
 
 关键 config：
-- `config/lme.yaml` — 基础模板（带注释说明各节含义）
-- `config/lme_hybrid_filler_N{0,2,4,6,8}_tl256*.yaml` — hybrid 主实验配置
-- `config/lme_golden_only.yaml` — golden only 基线
-- `config/lme_lowered_golden_only.yaml` — lowered golden 基线
+- `config/exp_N{0,2,4,6,8}_{model}_{method}.yaml` — hybrid 主实验配置（N=filler 数量，model=答题模型，method=灌库方法：`rd_addall` / `evm` / `mem0`）
+- `config/exp_oracle_gemma4-26b_all.yaml` — oracle 全方法比较
+- 可选 `sweep.memory_token_limits` + `replication.{count,scope,seeds}` — 一次 YAML 展开多 variant（见 artifact 文档）
 
 数据路径映射定义于 `src/benchmark/datasets.py` 的 `DEFAULT_BENCHMARK_DATASETS`。`benchmark: lme_s` 默认读 `data/preprocessed/longmemeval_s_cleaned_converted.json`。
+
+> **数据获取**：预处理数据集较大（200MB+），未包含在 Git 仓库中。协作者需从项目维护者处获取数据文件（网盘/其他渠道），放置于 `data/preprocessed/` 和 `data/raw_data/` 目录下。
 
 ## relation_decision 灌库策略
 
@@ -67,9 +80,7 @@ uv run --no-sync python run_exp_lme.py --stages ingest,generate,evaluate
 
 ### 分类后端
 
-`relation_decision.backend` 可选：
-- `classifier`（默认）：用 `relation_classifier/` 中的冻结 Qwen3-0.6B + 线性探测头，test Macro F1 ≈ 0.88。**必须英文输入**，顺序 `(old, new)` 不可颠倒。
-- `llm`：用 gemma4-26B 做关系分类，通过 `lme_relation_classification_system_en_v3.jinja` 模板。
+实验 YAML 中 `relation_decision.backend` 仅支持 **`llm`**（使用 `models.manager` 指定的模型 + `RD_0_relation_classify.jinja`）。注意 manager 模型不一定是 answer 模型——例如 `exp_N0_gemma4-e4b_rd_addall.yaml` 中 manager=gemma4-e4b，answer=gemma4-26B。
 
 ### Fusion 消融
 
@@ -99,17 +110,26 @@ uv run --no-sync python run_exp_lme.py --stages ingest,generate,evaluate
 
 ## 关键踩坑与 footgun
 
+- **禁止随意删除实验数据**：不要删除 `artifacts/` 下的任何目录或文件，除非用户明确要求删除特定 ingest/run。即使要重跑某个 ingest，也必须先和用户确认后再删。误删实验数据不可恢复。
+- **新 benchmark 数据集必须放 `raw_data/`**：`LMEBenchmark` 只对 `raw_data/` 下的原始格式（format A）自动转换为 preprocessed 格式（format B）。直接放 `preprocessed/` 下的原始数据不会被转换，导致 `QAs` 为空、0 题被处理。注册时用 `_converted` 后缀路径（如 `lme_s_golden → longmemeval_s_hybrid_golden_converted.json`）。
+- **后台任务不要用 `tail -20`**：会截掉错误信息，导致任务静默失败而看不到原因。建议直接 `2>&1` 全量输出，完成后再 `tail` 查看末尾。
+
 - **直接调 pipeline 脚本**（不用 `run_exp_lme`）需设 `PYTHONPATH=src`，否则 `ModuleNotFoundError: No module named 'benchmark'`。
 - **改抽取策略必须同步换 `candidate_suffix`**，否则 extract 阶段复用旧 state 跳过 episode。
-- **trace 目录不带实验 suffix**，多次运行混写。如需分档统计，需改 trace 路径加 suffix 后重跑。
-- **relation_classifier 输入必须英文**，且 `(old, new)` 顺序不可颠倒（颠倒会让 OSN/NSO 互换）。backbone 默认路径 `/mnt/data_oss/models/Qwen3-0.6B`，可通过 `RC_BACKBONE_PATH` 环境变量覆盖。
+- **新布局下 trace 已按 stage 隔离**（ingest trace 在 `artifacts/stages/ingest/<method>/<ingest_id>/trace/`，answer trace 在 `answer/.../agent_trace/`）。**legacy 布局**仍可能混写旧 `experiment/` trace。
+- **不要把 token limit 写进 `experiment.suffix` 来区分实验**；token limit 已进入 answer 阶段指纹，改 limit 会自动新 answer/judge 并复用 ingest。
+- **ingest 与 memory token limit 无关**：ingest 阶段只负责向量库灌入，不受 `generate.memory_token_limit` 影响。同一 filler + manager 的 ingest 被所有 token limit 的 variant 共享（tl256 和 tl512 共用一个 ingest 目录）。
+- **新旧 metrics 不要混聚合**：legacy 的 `eval_judge.json` 与新布局的 `metrics.json` 不是同一 schema。
 - **relation_decision 灌库时就地融合**答题记忆 C（同库），不再有独立的事后 fuse 阶段。`run_exp_lme.py` 中 `stage_ingest` 对 `relation_decision` 不额外调用 fuse 脚本。
+- **非 zep 的 ingest 不再默认 `--trust-apply-marker`**；配置指纹不一致时会拒绝静默复用错误库。zep 仅在崩溃重试时保留 marker 信任。
 
 ## 项目结构
 
 ```
-run_exp_lme.py              # 主入口
+run_exp_lme.py              # 主入口（默认新 artifact 布局）
 config/                     # 实验 YAML 配置
+artifacts/                  # 新实验产物根（stages/ 全局复用 + runs/ 快照）
+docs/experiment-artifacts.md  # artifact 架构完整使用指南
 src/
   agent/                    # StandardAgent（检索 → 拼上下文 → 答题）
   benchmark/                # 基准数据加载（LME、MEME）
@@ -122,17 +142,21 @@ src/
     storage/                # LocalFaiss 向量库封装
   pipeline/                 # extract_candidates、ingest_candidates 子步骤
   pipeline_lme_generate.py  # 检索 + Agent 答题
-  pipeline_lme_evaluate.py  # LLM Judge
+  pipeline_lme_evaluate.py  # LLM Judge（独立 judged/metrics 输出）
   prompts/                  # Jinja 模板
-  utils/                    # llm_api、embed_utils、eval_report、config 等
-relation_classifier/        # 五分类器推理包（Qwen3-0.6B + 线性探测头）
+  utils/
+    experiment_artifacts.py # run_id、阶段指纹、ArtifactLayout
+    experiment_metrics.py   # 多 repeat metrics 聚合
+    llm_api.py、config.py 等
 script/
   0_run_model.sh            # 模型服务启动
   0_run_embedding.sh        # embedding 服务启动
+  aggregate_experiment_metrics.py  # CLI：repeat metrics → mean/std
   build_hybrid_golden_dataset.py   # hybrid 数据集构建
   build_lme_golden_memory_v2.py    # golden memory 生成
   build_unified_candidates.py      # 候选记忆抽取
   build_unified_filler.py          # filler 候选构建
+MemDB/、experiment/         # legacy 布局历史产物（--legacy-layout）
 ```
 
 ## 测试
@@ -140,3 +164,136 @@ script/
 ```bash
 uv run --no-sync pytest
 ```
+
+## 实验运行经验
+
+### 停止实验
+
+**必须同时杀父进程和所有子进程**，否则 `ingest_candidates.py` 等子进程变孤儿继续跑（用 API 的会持续烧钱）。
+
+```bash
+# 正确停止
+pkill -f "run_exp_lme|ingest_candidates|pipeline_lme_generate|pipeline_lme_evaluate"
+
+# 验证干净
+ps aux | grep -E "run_exp_lme|ingest_candidates|pipeline_lme" | grep -v grep
+```
+
+**坑**：`pkill -f "run_exp_lme.py"` 只杀调度器，`subprocess.run` 启动的子进程不受影响，变孤儿由 init 接管。
+
+### 改配置后必须全量清理
+
+改任何 YAML 配置（尤其是 `prompts` 相关），旧的 ingest/answer/judge 指纹可能与新配置不匹配。**必须全量清理再重跑**：
+
+```bash
+rm -rf artifacts/stages/ingest/* artifacts/stages/locks/* artifacts/runs/*
+```
+
+不清理会导致：
+- ingest 写到目录 A，answer 去目录 B 检索 → 检索返回 0 → accuracy 异常低
+- 两个 stage 的 `ingest_id` 指纹不一致（排查方法：最终输出看 `ingest=` 路径是否与实际有数据的目录一致）
+
+### 启动实验前检查残留进程
+
+```bash
+# 确保没有实验进程在跑
+ps aux | grep -E "run_exp_lme|ingest_candidates" | grep -v grep
+# 有残留先全杀
+pkill -f "run_exp_lme|ingest_candidates|pipeline_lme"
+```
+
+### 多模型并行注意事项
+
+- 不同 vllm 实例（不同端口）可以并行，互不干扰
+- 共享同一 API key（如 DashScope）的模型不能并行跑，会触发 429 限流
+- vllm 模型并发建议：episode=20, relation=20（约 400 并发），过高会 OOM
+
+### 模板管理
+
+- RD 分类模板：当前使用 `RD_0_relation_classify.jinja`（内容来自 legacy `RD_0_relation_classify_old.jinja`）
+- RD 融合模板：`RD_1_fuse_{CON,EQV,NSO,OSN}.jinja`
+- 模板引用作为 `relation_user_en` 进入 ingest 指纹，改名需全量清理
+- 旧版模板在 `src/prompts/templates/legacy/`
+
+### 候选数据
+
+- 候选数据在 `artifacts/stages/candidates/<id>/`，由 migration 从 `MemDB/candidates/` 迁移
+- 每个 episode 一个 JSON，加上 `extract_progress.state`
+- `gp_*` 前缀的文件也是合法候选（filler 数据），不能排除
+
+### VLLM 端口映射
+
+模型服务端口通过 `.env` 中 `PORT_{MODEL_NAME}` 变量动态配置（如 `PORT_GEMMA4_26B=7111`），由 `src/utils/llm_api.py` 自动读取。
+
+当前 vllm 模型别名与对应实际模型：
+
+| 模型别名 | 实际模型 ID |
+|---------|---------|
+| `gemma4-26B` | `gemma-4-26B-A4B-it` |
+| `gemma4-e4b` | `gemma-4-E4B-it` |
+| `gemma4-e2b` | `gemma-4-E2B-it` |
+| `gemma4-31B` | `gemma-4-31B-it` |
+| `Qwen3-8B` | `Qwen3-8B` |
+| `Qwen3-4B` | `Qwen3-4B` |
+| `Qwen3-30B` | `Qwen3-30B-A3B-Thinking-2507` |
+| `Qwen3.5-27B` | `Qwen3.5-27B` |
+| `Qwen3.5-9B` | `Qwen3.5-9B` |
+| `qwen3-embedding-0.6b` | embedding 服务（默认端口 7110） |
+
+本地启动脚本（`script/0_run_model.sh`、`script/0_run_embedding.sh`）为单 GPU/单端口示例；多模型部署需手动指定不同端口和 GPU。
+
+API key 统一 `VLLM_API_KEY=zjj`（从 `.env` 加载）。
+
+### add_all / mem0 / evermemos 与 manager 模型无关
+
+`add_all`、`mem0`、`evermemos` 三种灌库方法**只使用 embedding**（`models.embedding`），不调用 LLM。
+因此它们与 `models.manager` 无关——同一 filler 级别只需跑一次，不同 manager 模型可共享同一份 ingest。
+
+只有 `relation_decision` 才依赖 `models.manager` 做 LLM 关系分类，换 manager 模型需要重跑 RD ingest。
+
+### 监控 ingest 进度
+
+**关键**：不同灌库方法的 ingest 目录结构不同，看进度的方法也不同。
+
+#### 找到 ingest 目录
+
+先通过 run 的 `stages.json` 找到 `ingest_id`：
+
+```bash
+# 查看某个 run 各 method 的 stage ID
+python3 -c "
+import json
+with open('artifacts/runs/<run_id>/stages.json') as f:
+    s = json.load(f)
+for m, info in s['methods'].items():
+    print(f\"{m}: ingest={info['ingest']['stage_id']}\")
+"
+```
+
+ingest 产物在 `artifacts/stages/ingest/<method>/<ingest_id>/`。
+
+#### 各方法目录结构
+
+| 方法 | 目录命名 | 一个目录代表 | 总数 (LME) | 进度查看命令 |
+|------|---------|-------------|-----------|-------------|
+| **relation_decision** | 混合（数字 `0-9` + hash） | 一个 episode | 470 | `ls <dir> \| grep -vcE "trace\|stage_manifest\|progress"` |
+| **add_all** | hash（`001be529` 等） | 一个 episode | 470 | 同上 |
+| **mem0** | hash（`001be529` 等） | 一个 episode | 470 | 同上 |
+| **evermemos** | hash（`001be529` 等） | 一个 episode | 470 | 同上 |
+
+**所有方法的统一进度查看**：`ls <ingest_dir> | grep -vcE "trace|stage_manifest|progress"`（排除 meta 文件，计数 = 已完成 episode 数）。
+hash 命名来自 `artifacts/stages/candidates/<id>/` 下的 candidate JSON 文件名（每个 JSON 对应一个 episode）。
+
+#### Trace 日志
+
+每个 ingest 目录下都有 `trace/` 子目录，存放每个操作的结构化日志（`.jsonl`）。
+可通过 trace 文件数量和最后修改时间判断活跃度：
+
+```bash
+ls -lt artifacts/stages/ingest/<method>/<ingest_id>/trace/ | head -5
+```
+
+#### 后台运行时看进度
+
+如果通过 `run_in_background` 跑了 ingest，输出被管道截断（如 `| tail -20`），
+**无法从 output 文件看到进度条**。应直接检查 ingest 目录的条目数或 trace 文件时间戳。见上方各方法的计数命令。

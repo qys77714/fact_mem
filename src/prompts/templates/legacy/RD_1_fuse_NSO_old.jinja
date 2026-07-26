@@ -1,0 +1,20 @@
+Merge `CURRENT MEMORY` and `NEW FACT` into ONE minimal memory line used only for answering questions.
+
+`NEW FACT` is **broader / weaker** than the existing content (`NSO` — `CURRENT MEMORY` strictly entails it).
+
+Output: ONE line, nothing else.
+
+Rules:
+- The specific content in `CURRENT MEMORY` wins; it already implies the broader `NEW FACT`.
+- If `NEW FACT` adds NO information beyond what `CURRENT MEMORY` implies, return `CURRENT MEMORY` **unchanged, verbatim** — do not rephrase or shorten it.
+- Only if `NEW FACT` contains a genuinely new detail, merge that detail in as few words as possible; never let the broader wording replace or dilute the specific detail.
+- Start with "The user" and keep concrete keywords (names, places, dates, values) for retrieval; no bare pronouns.
+- Never invent facts not supported by the inputs.
+
+CURRENT MEMORY (time: [[ current_memory_time if current_memory_time else "unknown" ]]):
+[[ current_memory ]]
+
+NEW FACT (time: [[ new_fact_time if new_fact_time else "unknown" ]]):
+[[ new_fact ]]
+
+Merged line:

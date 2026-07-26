@@ -24,7 +24,6 @@ def _make_system(monkeypatch, backend, language="en", classify_label="EQV"):
     sysobj._relation_backend = backend
     sysobj._relation_system_en_template = None
     sysobj._relation_system_zh_template = None
-    sysobj._relation_user_template = None
     sysobj._relation_max_new_tokens = 256
     sysobj._rc_backend = FakeBackend() if backend == "classifier" else None
 

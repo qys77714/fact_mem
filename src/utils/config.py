@@ -6,11 +6,12 @@ Used by run_exp_lme.py to read the unified config and build CLI args for each st
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -97,17 +98,46 @@ class DebugConfig(BaseModel):
     evaluate_print_one_sample: bool = False
 
 
+class ReplicationConfig(BaseModel):
+    """统计重复配置：控制同一实验重复跑几遍（不同随机种子）。"""
+
+    count: int = Field(default=1, ge=1)
+    scope: Literal["answer_judge", "full_pipeline"] = "answer_judge"
+    seeds: Optional[List[int]] = None
+
+    @model_validator(mode="after")
+    def _check_seeds_length(self) -> "ReplicationConfig":
+        if self.seeds is not None and len(self.seeds) != self.count:
+            raise ValueError(
+                "replication.seeds 长度"
+                f"({len(self.seeds)}) 必须等于 replication.count({self.count})"
+            )
+        return self
+
+
+class SweepConfig(BaseModel):
+    """token-limit 矩阵配置：控制要扫哪些 memory_token_limit 取值。"""
+
+    memory_token_limits: List[int] = Field(default_factory=list)
+
+    @field_validator("memory_token_limits")
+    @classmethod
+    def _validate_and_dedupe(cls, value: List[int]) -> List[int]:
+        deduped: List[int] = []
+        seen: set[int] = set()
+        for limit in value:
+            if limit <= 0:
+                raise ValueError(f"sweep.memory_token_limits 中的值必须 > 0，got {limit}")
+            if limit not in seen:
+                seen.add(limit)
+                deduped.append(limit)
+        return deduped
+
+
 class PromptsConfig(BaseModel):
-    relation_system_en: str = "lme_relation_classification_system_en_v2.jinja"
-    relation_system_zh: str = "lme_relation_classification_system_zh_v2.jinja"
-    relation_user: str = "lme_relation_classification_user.jinja"
-    fusion_bundle_en: str = "fuse_memory_bundle_en_v3.jinja"
-    fusion_bundle_zh: str = ""
-    fusion_edge_labels_en: str = "fuse_memory_bundle_edge_labels_en_v2.jinja"
-    fusion_edge_labels_zh: str = "fuse_memory_bundle_edge_labels_zh_v2.jinja"
-    judge_oqa: str = "pipeline_eval_oqa.jinja"
-    judge_mcq: str = "pipeline_eval_mcq.jinja"
-    judge_system: str = "pipeline_eval_system.jinja"
+    relation_user_en: str = "RD_0_relation_classify.jinja"
+    relation_user_zh: str = "RD_0_relation_classify.jinja"
+    judge_template: str = "pipeline_judge.jinja"
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +161,7 @@ class ZepMethodConfig(BaseModel):
 class RelationDecisionMethodConfig(BaseModel):
     enabled: bool = False
     related_top_k: int = 3
-    backend: str = "classifier"       # "classifier" | "llm"
+    backend: Literal["llm"] = "llm"
     fusion_model: str = ""
     condition_sim_threshold: float = 0.5
     pairwise_sim_threshold: float = 0.7
@@ -167,6 +197,29 @@ class MethodsConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Runtime-only planning objects (not part of the YAML schema, never persisted)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReplicationSpec:
+    """单次重复运行的规划信息：第几次重复 + 使用的随机种子。"""
+
+    index: int
+    seed: int
+
+
+@dataclass(frozen=True)
+class ExperimentVariant:
+    """一次 token-limit x replication 组合的规划信息（纯规划层，不落 YAML）。"""
+
+    config: "ExperimentConfig"
+    memory_token_limit: int
+    replication: ReplicationSpec
+    variant_id: str
+
+
+# ---------------------------------------------------------------------------
 # Root config
 # ---------------------------------------------------------------------------
 
@@ -184,11 +237,55 @@ class ExperimentConfig(BaseModel):
     token_limits: TokenLimitsConfig = Field(default_factory=TokenLimitsConfig)
     debug: DebugConfig = Field(default_factory=DebugConfig)
     prompts: PromptsConfig = Field(default_factory=PromptsConfig)
+    replication: ReplicationConfig = Field(default_factory=ReplicationConfig)
+    sweep: SweepConfig = Field(default_factory=SweepConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "ExperimentConfig":
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         return cls.model_validate(data)
+
+    # ------------------------------------------------------------------
+    # Replication / sweep planning (pure config-level, no I/O)
+    # ------------------------------------------------------------------
+
+    def replication_specs(self) -> list[ReplicationSpec]:
+        """展开 replication 配置为具体的 (index, seed) 列表。"""
+        seeds = self.replication.seeds
+        if seeds:
+            return [ReplicationSpec(index=i, seed=seed) for i, seed in enumerate(seeds)]
+        base_seed = self.generate.answer_sample_seed
+        return [
+            ReplicationSpec(index=i, seed=base_seed + i)
+            for i in range(self.replication.count)
+        ]
+
+    def experiment_variants(self) -> list[ExperimentVariant]:
+        """展开 sweep x replication 笛卡尔积为具体的实验变体列表。
+
+        顺序：token limit 外层、repeat 内层。每个 variant 携带深复制后的
+        ``ExperimentConfig``（不修改 ``self``），并设置对应的
+        ``generate.memory_token_limit`` / ``generate.answer_sample_seed``。
+        """
+        token_limits = self.sweep.memory_token_limits or [self.generate.memory_token_limit]
+        specs = self.replication_specs()
+
+        variants: list[ExperimentVariant] = []
+        for token_limit in token_limits:
+            for spec in specs:
+                variant_cfg = self.model_copy(deep=True)
+                variant_cfg.generate.memory_token_limit = token_limit
+                variant_cfg.generate.answer_sample_seed = spec.seed
+                variant_id = f"tl{token_limit}-r{spec.index:02d}-s{spec.seed}"
+                variants.append(
+                    ExperimentVariant(
+                        config=variant_cfg,
+                        memory_token_limit=token_limit,
+                        replication=spec,
+                        variant_id=variant_id,
+                    )
+                )
+        return variants
 
     # ------------------------------------------------------------------
     # Path helpers

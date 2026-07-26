@@ -18,25 +18,14 @@ from .schemas import (
     LME_RELATION_CLASSIFICATION_RESPONSE_FORMAT,
 )
 from .relation_decision import LmeRelationDecision, decide_lme_update_relation_decision
-from .relation_classifier_backend import RelationClassifierBackend, get_shared_backend
 from .prompts import (
     build_lme_answer_fuse_prompt,
-    build_lme_relation_classification_user_prompt,
-    lme_relation_system_prompt_for_language,
+    build_relation_classification_prompt,
 )
 
 logger = logging.getLogger(__name__)
 
 _VALID_RELATIONS = frozenset({"IND", "EQV", "NSO", "OSN", "CON"})
-
-
-def _check_relation_language(relation_backend: str, language: str) -> None:
-    """Raise ValueError if the backend/language combination is unsupported."""
-    if relation_backend == "classifier" and language != "en":
-        raise ValueError(
-            "relation_backend='classifier' 只支持英文（language='en'），"
-            f"当前 language={language!r}。请用 relation_backend='llm' 或英文输入。"
-        )
 
 
 class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
@@ -45,8 +34,7 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._relation_system_en_template = (kwargs.pop("relation_system_en_template", None) or "").strip() or None
         self._relation_system_zh_template = (kwargs.pop("relation_system_zh_template", None) or "").strip() or None
-        self._relation_user_template = (kwargs.pop("relation_user_template", None) or "").strip() or None
-        self._relation_backend = (kwargs.pop("relation_backend", "classifier") or "classifier")
+        self._relation_backend = (kwargs.pop("relation_backend", "llm") or "llm")
         # 消融实验：active_relations 控制哪些关系类型生效，未列出的降级为 IND。
         # None = 全部生效；frozenset({"CON"}) = 仅冲突；frozenset({"CON","EQV"}) = 冲突+等价。
         raw_active = kwargs.pop("active_relations", None)
@@ -59,12 +47,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         self._answer_fuse_max_new_tokens = int(kwargs.pop("answer_fuse_max_new_tokens", 512))
         trace_log_dir: Optional[str] = kwargs.get("trace_log_dir")
         super().__init__(*args, **kwargs)
-        _check_relation_language(self._relation_backend, self.language)
-        if self._relation_backend == "classifier":
-            # 进程级共享单例：N 个并发 episode 复用一份 backbone，避免显存 N 倍 OOM
-            self._rc_backend = get_shared_backend()
-        else:
-            self._rc_backend = None
         self.trace = MemoryTraceLogger(
             method="lme_candidate_relation_decision",
             log_dir=trace_log_dir or "logs/memory_trace",
@@ -88,30 +70,15 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
         trace_scope_id: Optional[str],
         trace: MemoryTraceLogger,
     ) -> str:
-        if self._relation_backend == "classifier":
-            _t0 = time.perf_counter()
-            label = self._rc_backend.classify(m_old_text, m_new)
-            _latency_ms = (time.perf_counter() - _t0) * 1000.0
-            trace.log_llm_interaction(
-                purpose="lme_candidate_relation_decision_classify_relation",
-                messages=[{"role": "user", "content": f"old: {m_old_text}\nnew: {m_new}"}],
-                response={"relation": label, "backend": "classifier"},
-                scope_id=trace_scope_id,
-                metadata={"backend": "classifier", "latency_ms": round(_latency_ms, 2)},
-            )
-            return label if label in _VALID_RELATIONS else "IND"
-
-        system = lme_relation_system_prompt_for_language(
-            self.language,
+        user_prompt = build_relation_classification_prompt(
+            m_old_text,
+            m_new,
+            language=self.language,
             template_en=self._relation_system_en_template,
             template_zh=self._relation_system_zh_template,
         )
-        user = build_lme_relation_classification_user_prompt(
-            m_old_text, m_new, template=self._relation_user_template
-        )
         messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "user", "content": user_prompt},
         ]
         raw_response = None
         _t0 = time.perf_counter()
@@ -539,7 +506,6 @@ class LmeCandidateRelationDecisionMemorySystem(LmeCandidateMemorySystemBase):
             current_memory,
             new_fact,
             relation,
-            language=self.language,
             current_memory_time=current_memory_time,
             new_fact_time=new_fact_time,
         )

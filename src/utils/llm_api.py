@@ -24,6 +24,8 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"qwen2.5-32b-instruct": "qwen2.5-32b-instruct",
 		"qwen1.5-72b-chat": "qwen1.5-72b-chat",
 		"glm-5": "glm-5",
+		# Qwen3 via DashScope (Aliyun API)
+		"Qwen3-32B": "qwen3-32b",
 		# # deepseek
 		# "deepseek-v3": "deepseek-v3",
 		# "deepseek-r1": "deepseek-r1",
@@ -33,6 +35,7 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"deepseek-v3": "deepseek-chat",
 		"deepseek-r1": "deepseek-reasoner",
 		"deepseek-v4-flash": "deepseek-v4-flash",
+		"deepseek-v4-pro": "deepseek-v4-pro",
 	}
 	model_name_openai = {
 		# openai
@@ -59,15 +62,19 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		"Qwen2.5-7B-Instruct": "Qwen2.5-7B-Instruct",
 		"qwen3-moe": "qwen3-moe",
 		"Qwen3-8B": "Qwen3-8B",
-		"Qwen3-32B": "Qwen3-32B", 
+		# Qwen3-32B moved to DashScope API (see model_name_qwen)
 		"Qwen3-4B": "Qwen3-4B",
+		"Qwen3-0.6B": "Qwen3-0.6B",
 		"qwen3-30b-moe": "qwen3-30b-moe",
 		"Qwen3.5-27B-FP8": "Qwen3.5-27B-FP8",
 		"Qwen3.5-27B": "Qwen3.5-27B",
+		"Qwen3.5-4B": "Qwen3.5-4B",
+		"Qwen3.5-9B": "Qwen3.5-9B",
 		"Qwen3-30B": "Qwen3-30B-A3B-Thinking-2507",
 		"gemma4-26B": "gemma-4-26B-A4B-it",
 		"gemma4-31B": "gemma-4-31B-it",
 		"gemma4-e2b": "gemma-4-E2B-it",
+		"gemma4-e4b": "gemma-4-E4B-it",
 	}
 
 	if model_name in list(model_name_vllm.keys()):
@@ -109,9 +116,11 @@ def load_api_chat_completion(model_name, async_=False, *args, **kargs):
 		raise ValueError(f"Unknown model: {model_name}")
 
 	if not async_:
-		client = OpenAIClient(api_key=api_key, base_url=base_url, model=model_name)
+		client = OpenAIClient(api_key=api_key, base_url=base_url, model=model_name,
+		                      dashscope_mode=("dashscope" in base_url))
 	else:
-		client = AsyncOpenAIClient(api_key=api_key, base_url=base_url, model=model_name)
+		client = AsyncOpenAIClient(api_key=api_key, base_url=base_url, model=model_name,
+		                           dashscope_mode=("dashscope" in base_url))
 
 	return client
 

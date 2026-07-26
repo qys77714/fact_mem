@@ -318,7 +318,7 @@ class Mem0MemorySystem(BaseMemorySystem):
         from prompts import render_prompt
 
         if not retrieved:
-            template = "agent_context_empty_zh.jinja" if language == "zh" else "agent_context_empty_en.jinja"
+            template = "pipeline_answer_memory_empty.jinja"
             return render_prompt(template)
 
         unit_template = "mem0_context_unit_zh.jinja" if language == "zh" else "mem0_context_unit_en.jinja"
@@ -443,7 +443,6 @@ class Mem0MemorySystem(BaseMemorySystem):
             retrieved_old_memory_json,
             response_content,
             language=self.language,
-            allow_delete=self._allow_memory_delete,
         )
         messages = [{"role": "user", "content": update_prompt}]
         raw_response = None

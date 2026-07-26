@@ -23,6 +23,7 @@ dependencies = [
     "kuzu>=0.11.3",
     "rouge-score>=0.1.2",
     "vllm==0.19.1",
+    "openpyxl>=3.1.5",
 ]
 
 [[tool.uv.index]]

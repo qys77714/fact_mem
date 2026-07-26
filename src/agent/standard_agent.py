@@ -78,18 +78,11 @@ class StandardAgent(BaseAgent):
             self.tokenizer = None
 
     def _build_prompt(self, question: QuestionItem, context_block: str) -> str:
-        options_text = "\n".join(question.options) if question.options else ""
-        if self.language == "zh":
-            template = "agent_prompt_zh_mcq.jinja" if question.options else "agent_prompt_zh_open.jinja"
-        else:
-            template = "agent_prompt_en_mcq.jinja" if question.options else "agent_prompt_en_open.jinja"
-
         return render_prompt(
-            template,
+            "pipeline_answer.jinja",
             context_block=context_block,
             question_time=question.question_time,
             question=question.question,
-            options_text=options_text,
         )
 
     async def batch_answer_questions(

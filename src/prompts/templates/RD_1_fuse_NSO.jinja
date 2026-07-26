@@ -1,19 +1,35 @@
-Merge the following into **one continuous paragraph** of memory used only for answering questions (no bullets, headings, or preamble).
+Merge `CURRENT MEMORY` and `NEW FACT` into ONE minimal memory line used only for answering questions.
 
-- `CURRENT MEMORY`: the accumulated answer memory so far (may already combine several facts).
-- `NEW FACT`: a newly confirmed fact that is **broader / weaker** than the current memory (`NSO` — the existing memory strictly entails the new fact).
+This is an `NSO` pair: `NEW FACT` is broader/weaker, and `CURRENT MEMORY` strictly entails it. The specific current memory has priority.
 
-Rules:
-- **Keep the existing specific content** as the primary statement; it already implies the broader new fact.
-- Add the broader fact **only if it contributes information not already obvious** from the specific content (e.g. a generalization the reader might not infer). If it adds nothing, omit it to avoid redundancy.
-- Do not let the weaker/broader fact dilute or replace the specific detail.
-- Keep any other unrelated factual content from the current memory intact.
-- Do not invent facts not supported by the inputs.
+Time and source rules:
+- Any time expression inside either memory text is factual content. Preserve it whenever the corresponding fact is kept; never replace it with record metadata.
+- The supplied record timestamps are metadata only. They are not event times for this relation and must never appear in the merged line. Do not write `as of`, `current`, or a record timestamp.
+
+Output exactly one line, nothing else.
+
+Merging rules:
+- If `NEW FACT` adds no information beyond what `CURRENT MEMORY` already entails, return `CURRENT MEMORY` unchanged and verbatim. This unchanged-verbatim rule overrides any request to rephrase, shorten, or start with `The user`.
+- The specific wording, names, values, dates, ranges, qualifiers, and historical details in `CURRENT MEMORY` win. Never let the broader `NEW FACT` replace, weaken, or dilute them.
+- If `NEW FACT` contains a genuinely new, answerable detail that is not already in `CURRENT MEMORY`, append or merge only that detail in as few words as possible while preserving all specific current details. This is an exception for noisy or imperfect inputs; never invent a detail just to force a merge.
+- If `CURRENT MEMORY` has unrelated factual content, keep it. Do not delete it merely because `NEW FACT` is broader.
+- Preserve text-stated time information such as dates, month/year, years, ranges, and meaningful temporal qualifiers. Do not copy the current/new record timestamps into the output.
+- Never invent facts, dates, event times, counts, or causal links.
+
+Examples:
+- `CURRENT: The user owns a golden retriever named Max.` + `NEW: The user has a pet.` -> return `The user owns a golden retriever named Max.` verbatim.
+- `CURRENT: The user visited Rome on 2024-05-12.` + `NEW: The user visited Rome in 2024.` -> return the current line verbatim, including `2024-05-12`.
+- `CURRENT: The user worked remotely from 2023-01-01 to 2023-03-31.` + `NEW: The user worked remotely in early 2023.` -> return the current line verbatim, including the full date range.
+- `CURRENT: The user is a cardiologist at Mayo Clinic; the user lives in Boston.` + `NEW: The user works in healthcare.` -> preserve both current facts; do not replace them with the broader wording.
+
+CURRENT MEMORY RECORD TIMESTAMP (metadata only; never output):
+[[ current_memory_time if current_memory_time else "unknown" ]]
 
 CURRENT MEMORY:
 [[ current_memory ]]
 
+NEW FACT RECORD TIMESTAMP (metadata only; never output): [[ new_fact_time if new_fact_time else "unknown" ]]
 NEW FACT:
 [[ new_fact ]]
 
-Merged paragraph:
+Merged line:

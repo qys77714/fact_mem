@@ -22,22 +22,35 @@ def _prepare_extra_body_for_model(
     existing: dict | None,
     *,
     qwen_enable_thinking: bool,
+    is_dashscope: bool = False,
 ) -> dict | None:
     """Prepare extra_body per model capability.
 
-    Only Qwen-like serving stacks should receive chat_template_kwargs.enable_thinking.
+    Only Qwen-like serving stacks should receive enable_thinking.
     For non-Qwen models (e.g. gpt-5.4), explicitly drop chat_template_kwargs to avoid
     unknown-parameter errors.
+
+    DashScope API (Aliyun) expects enable_thinking at the top level of extra_body,
+    while vLLM-deployed Qwen models expect it inside chat_template_kwargs.
     """
     merged = dict(existing) if existing else {}
+
+    # DeepSeek models: disable thinking by default (flash models should be non-thinking)
+    if model_name and "deepseek" in model_name.lower():
+        merged["thinking"] = {"type": "disabled"}
 
     if not _is_qwen_family_model(model_name):
         merged.pop("chat_template_kwargs", None)
         return merged or None
 
-    chat_kw = dict(merged.get("chat_template_kwargs") or {})
-    chat_kw["enable_thinking"] = bool(qwen_enable_thinking)
-    merged["chat_template_kwargs"] = chat_kw
+    if is_dashscope:
+        # DashScope API: enable_thinking at top level of extra_body
+        merged["enable_thinking"] = bool(qwen_enable_thinking)
+    else:
+        # vLLM-deployed Qwen: enable_thinking inside chat_template_kwargs
+        chat_kw = dict(merged.get("chat_template_kwargs") or {})
+        chat_kw["enable_thinking"] = bool(qwen_enable_thinking)
+        merged["chat_template_kwargs"] = chat_kw
 
     return merged or None
 
@@ -73,9 +86,11 @@ class OpenAIClient:
         api_key=None,
         base_url: str = "https://api.openai.com/v1",
         model: str = "gpt-4o-mini",
+        dashscope_mode: bool = False,
     ):
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model_name = model
+        self.dashscope_mode = dashscope_mode
         self.logger = logging.getLogger(__name__)
         if _legacy_log_enabled():
             time.sleep(1)
@@ -121,6 +136,7 @@ class OpenAIClient:
                             self.model_name,
                             user_extra,
                             qwen_enable_thinking=qwen_enable_thinking,
+                            is_dashscope=self.dashscope_mode,
                         ),
                         **kargs,
                     )
@@ -157,9 +173,11 @@ class AsyncOpenAIClient:
         api_key=None,
         base_url: str = "https://api.openai.com/v1",
         model: str = "gpt-4o-mini",
+        dashscope_mode: bool = False,
     ):
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model_name = model
+        self.dashscope_mode = dashscope_mode
         self.logger = logging.getLogger(__name__)
         if _legacy_log_enabled():
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[4:-7]
@@ -204,6 +222,7 @@ class AsyncOpenAIClient:
                                 self.model_name,
                                 user_extra,
                                 qwen_enable_thinking=qwen_enable_thinking,
+                                is_dashscope=self.dashscope_mode,
                             ),
                             **kwargs,
                         )

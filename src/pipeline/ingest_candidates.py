@@ -145,7 +145,6 @@ def _apply_config_fingerprint_block(args: argparse.Namespace) -> dict[str, Any]:
             block["relation_episode_concurrency"] = args.relation_episode_concurrency
         block["relation_system_en_template"] = (getattr(args, "relation_system_en_template", "") or "").strip()
         block["relation_system_zh_template"] = (getattr(args, "relation_system_zh_template", "") or "").strip()
-        block["relation_user_template"] = (getattr(args, "relation_user_template", "") or "").strip()
         block["fusion_enabled"] = not bool(getattr(args, "no_fusion", False))
     if args.update_method == "mem0":
         block["mem0_related_top_k"] = args.mem0_related_top_k
@@ -393,9 +392,9 @@ def main() -> int:
     parser.add_argument(
         "--relation-backend",
         dest="relation_backend",
-        choices=["classifier", "llm"],
-        default="classifier",
-        help="relation_decision 成对关系判断后端：classifier=本地 relation_classifier（默认，仅英文）；llm=manager_model",
+        choices=["llm"],
+        default="llm",
+        help="relation_decision 成对关系判断后端（仅 llm）",
     )
     parser.add_argument(
         "--active-relations",
@@ -546,21 +545,28 @@ def main() -> int:
         default="",
         dest="relation_system_en_template",
         metavar="NAME.jinja",
-        help="relation_decision：英文 system 模板（覆盖默认 lme_relation_classification_system_en_v2.jinja）",
+        help="relation_decision：英文 system 模板（覆盖默认 RD_0_relation_classify.jinja）",
     )
     parser.add_argument(
         "--relation-system-template-zh",
         default="",
         dest="relation_system_zh_template",
         metavar="NAME.jinja",
-        help="relation_decision：中文 system 模板（覆盖默认 lme_relation_classification_system_zh_v2.jinja）",
+        help="relation_decision：中文 system 模板（覆盖默认 RD_0_relation_classify.jinja）",
     )
     parser.add_argument(
-        "--relation-user-template",
-        default="",
-        dest="relation_user_template",
-        metavar="NAME.jinja",
-        help="relation_decision：成对比较 user 模板（覆盖默认 lme_relation_classification_user.jinja）",
+        "--condition-sim-threshold",
+        type=float,
+        default=0.5,
+        dest="condition_sim_threshold",
+        help="relation_decision：条件相似度阈值（默认 0.5），用于过滤与新增记忆不够相似的旧记忆",
+    )
+    parser.add_argument(
+        "--pairwise-sim-threshold",
+        type=float,
+        default=0.7,
+        dest="pairwise_sim_threshold",
+        help="relation_decision：成对相似度阈值（默认 0.7），低于此值的 pair 不进入分类器",
     )
     parser.add_argument(
         "--no-fusion",
@@ -606,6 +612,9 @@ def main() -> int:
         return 1
 
     paths = sorted(args.candidates_dir.glob(args.glob))
+    # Skip stage_manifest.json and other non-candidate metadata files
+    _SKIP_CANDIDATE_NAMES = frozenset({"stage_manifest.json", "extract_progress.state"})
+    paths = [p for p in paths if p.name not in _SKIP_CANDIDATE_NAMES]
     if not paths:
         print(f"No files matched {args.candidates_dir}/{args.glob}", file=sys.stderr)
         return 1
@@ -720,10 +729,11 @@ def main() -> int:
         rel_kw = {
             "relation_system_en_template": (args.relation_system_en_template or "").strip() or None,
             "relation_system_zh_template": (args.relation_system_zh_template or "").strip() or None,
-            "relation_user_template": (args.relation_user_template or "").strip() or None,
             "relation_backend": args.relation_backend,
             "active_relations": active_relations,
             "fusion_enabled": not bool(getattr(args, "no_fusion", False)),
+            "condition_sim_threshold": float(getattr(args, "condition_sim_threshold", 0.5)),
+            "pairwise_sim_threshold": float(getattr(args, "pairwise_sim_threshold", 0.7)),
         }
         memory = LmeCandidateRelationDecisionMemorySystem(
             **lme_candidate_base_kw,

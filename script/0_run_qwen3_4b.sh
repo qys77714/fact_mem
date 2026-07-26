@@ -1,10 +1,10 @@
 # 定义可用的 GPU 和端口
-gpus=(5)
-ports=(7113)
+gpus=(3)
+ports=(7114)
 model_name=Qwen3-4B
 MAX_MODEL_LEN=8192
 GPU_MEM_UTIL=0.9
-MAX_NUM_BATCHED_TOKENS=$((4096 * 16))
+MAX_NUM_BATCHED_TOKENS=$((4096 * 8))
 
 # 循环遍历 GPU 和端口
 for i in ${!gpus[@]}; do

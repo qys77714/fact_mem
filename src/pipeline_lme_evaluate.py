@@ -1,10 +1,12 @@
 import argparse
 import asyncio
 import json
+import os
 import re
+import tempfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TypedDict
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict, Union
 
 from prompts import render_prompt
 from utils.eval_report import append_csv_row, append_eval_json, append_jsonl, utc_timestamp_iso
@@ -18,7 +20,7 @@ from utils.question_filter import (
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="读取 jsonl 并使用 LLM Judge 评估。")
     parser.add_argument(
         "--input",
@@ -34,22 +36,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--use_cot", action="store_true", help="是否让 Judge 输出简短推理")
     parser.add_argument(
-        "--judge-oqa-template",
-        default="pipeline_eval_oqa.jinja",
+        "--judge-template",
+        default="pipeline_judge.jinja",
         metavar="NAME.jinja",
-        help="开放问答 Judge 的 user 模板（置于 src/prompts/templates/）",
-    )
-    parser.add_argument(
-        "--judge-mcq-template",
-        default="pipeline_eval_mcq.jinja",
-        metavar="NAME.jinja",
-        help="选择题 Judge 的 user 模板（置于 src/prompts/templates/）",
-    )
-    parser.add_argument(
-        "--judge-system-template",
-        default="pipeline_eval_system.jinja",
-        metavar="NAME.jinja",
-        help="Judge 的 system 模板（置于 src/prompts/templates/）",
+        help="Judge 的 user 模板（置于 src/prompts/templates/）",
     )
     parser.add_argument(
         "--judge-qwen-thinking",
@@ -75,10 +65,28 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="可选：同时向该 CSV 追加一行扁平指标（便于表格对比）",
     )
-    parser.add_argument(
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
         "--write_back",
         action="store_true",
         help="是否写回输入 jsonl：is_correct（API 失败时为 null）与 judge_api_failed",
+    )
+    output_group.add_argument(
+        "--output",
+        default=None,
+        metavar="PATH",
+        help="将 judged jsonl 写到该独立路径，不修改输入文件；与 --write_back 互斥。"
+        "只 Judge 子集时，未被 Judge 的行原样保留（不添加/不覆盖结果字段），"
+        "输出顺序与输入一致。会自动创建父目录，原子写入。",
+    )
+    parser.add_argument(
+        "--metrics-output",
+        dest="metrics_output",
+        default=None,
+        metavar="PATH",
+        help="可选：将本次评测的完整 metrics record 写为单个 JSON object 到该路径"
+        "（覆盖同路径旧值，原子写入）；可与 --append_result 并存。不传则保持现有"
+        "eval_judge.json append 行为不变。",
     )
     parser.add_argument(
         "--question-types",
@@ -114,7 +122,7 @@ def parse_args() -> argparse.Namespace:
         metavar="N",
         help="多文件时同时评测的文件个数上限；默认与 --input 数量相同（全部并行）。",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def load_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -200,32 +208,15 @@ def _build_judge_user_prompt(
     item: Dict[str, Any],
     use_cot: bool,
     *,
-    oqa_template: str,
-    mcq_template: str,
+    judge_template: str,
 ) -> str:
     question = item.get("question", "")
     reference = item.get("answer", "")
     candidate = item.get("model_answer", item.get("hypothesis", ""))
-    question_time = item.get("question_time", "") or ""
-    is_mcq = bool(item.get("options"))
 
-    if is_mcq:
-        options = item.get("options", []) or []
-        options_block = "\n".join(options) if options else "(no options)"
-        golden_option = item.get("golden_option", "")
-        return render_prompt(
-            mcq_template,
-            question=question,
-            options_block=options_block,
-            golden_option=golden_option,
-            reference=reference,
-            candidate=candidate,
-            use_cot=use_cot,
-        )
     return render_prompt(
-        oqa_template,
+        judge_template,
         question=question,
-        question_time=question_time,
         reference=reference,
         candidate=candidate,
         use_cot=use_cot,
@@ -240,9 +231,7 @@ async def evaluate(
     max_new_tokens: int,
     judge_qwen_thinking: bool,
     print_one_sample: bool,
-    judge_oqa_template: str,
-    judge_mcq_template: str,
-    judge_system_template: str,
+    judge_template: str,
 ) -> Tuple[Dict[str, Any], List[JudgeOutcome]]:
     if not samples:
         return {
@@ -262,12 +251,10 @@ async def evaluate(
         prompt = _build_judge_user_prompt(
             item,
             use_cot=use_cot,
-            oqa_template=judge_oqa_template,
-            mcq_template=judge_mcq_template,
+            judge_template=judge_template,
         )
         messages_list.append(
             [
-                {"role": "system", "content": render_prompt(judge_system_template)},
                 {"role": "user", "content": prompt},
             ]
         )
@@ -285,7 +272,7 @@ async def evaluate(
             return_raw_message=True,
         )
         sample_resp = sample_result[0] if sample_result else None
-        user_prompt = messages_list[0][1].get("content", "") if len(messages_list[0]) > 1 else ""
+        user_prompt = messages_list[0][0].get("content", "") if len(messages_list[0]) > 0 else ""
         print("\n=== [Judge Sample] prompt ===", flush=True)
         print(user_prompt, flush=True)
         print("=== [Judge Sample] response.reasoning_content ===", flush=True)
@@ -351,6 +338,90 @@ async def evaluate(
     return metrics, outcomes
 
 
+def merge_judge_outcomes(
+    samples_all: List[Dict[str, Any]],
+    samples: List[Dict[str, Any]],
+    outcomes: List[JudgeOutcome],
+    merge_keys: bool,
+) -> List[Dict[str, Any]]:
+    """按 Judge 结果合并回原始行，纯函数（不做 IO，不修改输入 dict）。
+
+    - ``merge_keys=False``：假定 ``samples_all`` 与 ``outcomes`` 按位置一一对应
+      （未过滤/未抽样时 ``samples is samples_all``）。
+    - ``merge_keys=True``：``samples`` 是 ``samples_all`` 的子集（question-types 过滤
+      或分层抽样），按 :func:`answer_row_key` 匹配；未被 Judge 的行原样保留，不添加、
+      不覆盖 ``judge_api_failed`` / ``is_correct``。
+
+    返回与 ``samples_all`` 顺序一致的行拷贝列表。
+    """
+    if len(outcomes) != len(samples):
+        raise ValueError("Judge results size mismatch with sample size.")
+
+    if not merge_keys:
+        if len(samples_all) != len(outcomes):
+            raise ValueError("Judge results size mismatch with sample size.")
+        merged: List[Dict[str, Any]] = []
+        for row, outcome in zip(samples_all, outcomes):
+            new_row = dict(row)
+            new_row["judge_api_failed"] = outcome["api_failed"]
+            new_row["is_correct"] = outcome["is_correct"]
+            merged.append(new_row)
+        return merged
+
+    by_key = {answer_row_key(r): o for r, o in zip(samples, outcomes)}
+    merged = []
+    for row in samples_all:
+        new_row = dict(row)
+        outcome = by_key.get(answer_row_key(row))
+        if outcome is not None:
+            new_row["judge_api_failed"] = outcome["api_failed"]
+            new_row["is_correct"] = outcome["is_correct"]
+        merged.append(new_row)
+    return merged
+
+
+def _atomic_write(target: Path, write_fn: Any) -> None:
+    """通用原子写：临时文件（同目录）+ ``write_fn(file_obj)`` + ``os.replace``。
+
+    失败时清理临时文件，原目标文件保持不变，避免中断后出现半文件。
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            write_fn(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, target)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def write_jsonl_atomic(path: Union[str, Path], rows: Iterable[Dict[str, Any]]) -> None:
+    """原子写 JSONL（临时文件 + os.replace），自动创建父目录。"""
+
+    def _write(f: Any) -> None:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    _atomic_write(Path(path), _write)
+
+
+def write_json_atomic(path: Union[str, Path], obj: Dict[str, Any]) -> None:
+    """原子写单个 JSON object（覆盖同路径旧值），自动创建父目录。"""
+
+    def _write(f: Any) -> None:
+        f.write(json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
+
+    _atomic_write(Path(path), _write)
+
+
 async def evaluate_one_input(
     input_path: str,
     args: argparse.Namespace,
@@ -378,31 +449,17 @@ async def evaluate_one_input(
         max_new_tokens=args.max_new_tokens,
         judge_qwen_thinking=args.judge_qwen_thinking,
         print_one_sample=print_one_sample,
-        judge_oqa_template=args.judge_oqa_template,
-        judge_mcq_template=args.judge_mcq_template,
-        judge_system_template=args.judge_system_template,
+        judge_template=args.judge_template,
     )
     metrics["benchmark"] = benchmark
 
-    if args.write_back:
-        if len(outcomes) != len(samples):
-            raise ValueError("Judge results size mismatch with sample size.")
+    if args.write_back or args.output:
         merge_keys = q_types is not None or int(getattr(args, "stratified_sample_n", 0) or 0) > 0
-        if not merge_keys:
-            rows_out = list(zip(samples, outcomes))
-        else:
-            by_key = {answer_row_key(r): o for r, o in zip(samples, outcomes)}
-            rows_out = []
-            for row in samples_all:
-                key = answer_row_key(row)
-                o = by_key.get(key)
-                rows_out.append((row, o))
-        with Path(input_path).open("w", encoding="utf-8") as f:
-            for row, o in rows_out:
-                if o is not None:
-                    row["judge_api_failed"] = o["api_failed"]
-                    row["is_correct"] = o["is_correct"]
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        merged_rows = merge_judge_outcomes(samples_all, samples, outcomes, merge_keys)
+        if args.write_back:
+            write_jsonl_atomic(Path(input_path), merged_rows)
+        if args.output:
+            write_jsonl_atomic(Path(args.output), merged_rows)
 
     resolved_input = str(Path(input_path).resolve())
     n = len(samples)
@@ -413,9 +470,7 @@ async def evaluate_one_input(
         "input_path": resolved_input,
         "judge_model": args.judge_model,
         "use_cot": args.use_cot,
-        "judge_oqa_template": args.judge_oqa_template,
-        "judge_mcq_template": args.judge_mcq_template,
-        "judge_system_template": args.judge_system_template,
+        "judge_template": args.judge_template,
         "judge_qwen_thinking": args.judge_qwen_thinking,
         "max_concurrency": args.max_concurrency,
         "max_new_tokens": args.max_new_tokens,
@@ -429,6 +484,9 @@ async def evaluate_one_input(
         "judged_count": metrics["judged_count"],
         "per_type": metrics["per_type"],
     }
+    if getattr(args, "metrics_output", None):
+        write_json_atomic(Path(args.metrics_output), record)
+
     append_path = (
         Path(args.append_result)
         if args.append_result
@@ -450,9 +508,7 @@ async def evaluate_one_input(
                 "n": n,
                 "judge_model": args.judge_model,
                 "use_cot": args.use_cot,
-                "judge_oqa_template": args.judge_oqa_template,
-                "judge_mcq_template": args.judge_mcq_template,
-                "judge_system_template": args.judge_system_template,
+                "judge_template": args.judge_template,
                 "judge_qwen_thinking": args.judge_qwen_thinking,
                 "max_concurrency": args.max_concurrency,
                 "max_new_tokens": args.max_new_tokens,

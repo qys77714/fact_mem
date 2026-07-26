@@ -1,0 +1,106 @@
+# Task: classify the relation between two facts about the same user
+
+`OLD FACT` is an existing memory. `NEW FACT` is a newly extracted candidate.
+Classify the semantic relation between the two facts. Judge only what is stated
+or strictly entailed; do not fill gaps with common sense, likely intentions, or
+real-world assumptions.
+
+## Labels
+
+- `EQV` — Equivalent: both facts have the same truth conditions; OLD entails
+  NEW and NEW entails OLD.
+- `OSN` — Old is entailed by New: NEW strictly entails OLD (`NEW → OLD`).
+  NEW is narrower, more specific, or adds a detail that guarantees OLD.
+- `NSO` — New is entailed by Old: OLD strictly entails NEW (`OLD → NEW`).
+  NEW is broader, more general, or omits a detail from OLD.
+- `CON` — Contradiction: the facts assign incompatible values to the same
+  single-valued attribute of the same aligned entity in the same relevant
+  state. In this memory task, a later value supersedes an earlier value, so a
+  change of residence, employer, marital status, or stated favorite can still
+  be `CON` when the two facts are competing values for that attribute.
+- `IND` — Independent: all remaining cases, including merely related facts,
+  different entities, different attributes, compatible multiple values, or
+  pairs with no strict entailment.
+
+## Decision procedure
+
+Apply these checks in order:
+
+1. **Align the facts.** Identify the entity, attribute/event, value, and any
+   time, modality, negation, or completion status in each fact. If the facts
+   concern different entities, different objects, or different attributes,
+   return `IND`.
+
+2. **Check contradiction.** Use `CON` only when the same aligned entity has
+   incompatible values for one genuinely single-valued attribute. Do not use
+   `CON` merely because two activities, methods, topics, games, destinations,
+   documents, or goals differ. Multi-valued facts can coexist.
+
+3. **Check equivalence.** Return `EQV` only when each fact guarantees the
+   other. Similar wording, shared topic, approximate meaning, or a common
+   purpose is not enough.
+
+4. **Check entailment direction.** Ask both questions explicitly:
+   - If NEW is true, must OLD be true? If yes, and OLD does not guarantee NEW,
+     return `OSN`.
+   - If OLD is true, must NEW be true? If yes, and NEW does not guarantee OLD,
+     return `NSO`.
+   If neither guarantee holds, return `IND`.
+
+## Important distinctions
+
+- Strict entailment means “true in every situation,” not “usually,”
+  “probably,” “related to,” or “suggests.”
+- Preserve the direction of specificity: a named breed entails `pet`, a city
+  entails its country, and an exact date entails its month/year. The reverse
+  directions do not hold.
+- Do not treat an extra detail as entailment unless the whole fact still
+  guarantees the other fact. A specific check does not entail that all checks
+  were completed.
+- Preserve negation, desire, plan, belief, question, and event status:
+  “wants to forget X” is not “X”; “plans to do X” is not “has done X”; “used
+  to do X” is not “does X now.”
+- A fact about going to a place and a fact about staying in that place can both
+  be true. A person can play multiple games, use multiple break methods, have
+  multiple children, or hold multiple compatible preferences; these are not
+  `CON`.
+- Explicitly different times or contexts can make otherwise compatible facts
+  `IND` when both can be true as stated. For competing values of a single
+  current/profile attribute, use `CON` as defined above.
+- When a relation is uncertain and no strict guarantee or true incompatibility
+  is established, choose `IND`.
+
+## Examples
+
+- OLD: “The user has a pet.”
+  NEW: “The user has a golden retriever named Max.” → `OSN`
+- OLD: “The user has a golden retriever named Max.”
+  NEW: “The user has a pet.” → `NSO`
+- OLD: “The user lives in Beijing.”
+  NEW: “The user lives in Shanghai.” → `CON`
+- OLD: “The user has a son named Max.”
+  NEW: “The user has a son named Leo.” → `IND`
+- OLD: “The user takes breaks by stretching.”
+  NEW: “The user takes breaks by resting without physical activity.” → `IND`
+- OLD: “The user studies computer science.”
+  NEW: “The user is a software engineer.” → `IND`
+- OLD: “The user wants help improving a short piece.”
+  NEW: “The user wants to improve a personal email.” → `IND` unless the text
+  explicitly identifies the short piece as that email.
+- OLD: “The user reduced spending on luxury goods.”
+  NEW: “The user cut back on spending on luxury goods.” → `EQV`
+
+## Output
+
+Return exactly one JSON object with exactly one key and no explanation,
+markdown, or additional text:
+
+{"relation":"IND|EQV|OSN|NSO|CON"}
+
+## Input to classify
+
+Classify the following two facts. Output only the JSON object and no explanation or markdown.
+
+OLD FACT: [[ m_old ]]
+
+NEW FACT: [[ m_new ]]

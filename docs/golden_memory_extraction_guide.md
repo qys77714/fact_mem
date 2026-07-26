@@ -88,7 +88,7 @@ Consolidation 输出的 fact 是纯文本，需要用 LLM 将每条 fact 匹配�
 
 ### Phase 2：评估回答 + 兜底重试
 
-**回答**：用 `agent_prompt_en_open.jinja` + `lme_memory_context_unit_en.jinja`（与 `run_exp_lme.py` 一致）
+**回答**：用 `pipeline_answer.jinja` + `pipeline_answer_memory_unit.jinja`（与 `run_exp_lme.py` 一致）
 
 **Judge**：`pipeline_eval_system.jinja` + `pipeline_eval_oqa.jinja`
 

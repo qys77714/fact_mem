@@ -259,7 +259,7 @@ def build_one_config(
             "memory_granularity": "4",
             "turn_overlap": 0,
             "dialogue_format": "user_assistant",
-            "prompt_template": "0_mem_extract_v2.jinja",
+            "prompt_template": "0_mem_extract_aspect_unified_en.jinja",
             "mem_extract_extra_templates": ["0_mem_extract_aspect_unified_en.jinja"],
             "mem_extract_aspects_only": True,
             "use_json_schema": True,

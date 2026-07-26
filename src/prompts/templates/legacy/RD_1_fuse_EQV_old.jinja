@@ -1,0 +1,33 @@
+Merge the following into **one continuous paragraph** of memory used only for answering questions (no bullets, headings, or preamble).
+
+- `CURRENT MEMORY`: the accumulated answer memory so far (may already combine several facts).
+- `NEW FACT`: a newly confirmed fact that the classifier labeled **equivalent** (`EQV`) to a fact already in the current memory (same truth conditions, just reworded).
+
+Two equivalent statements can mean two different things. Decide which case applies:
+
+1. **Same fact restated** — a stable attribute or a single past event mentioned again (e.g. "works at Google", "visited Rome in 2019"). State it **once**; do not duplicate phrasings and do not invent a count.
+2. **A repeatable event that recurred** — an action that can naturally happen more than once (e.g. buying snacks, visiting a friend, going to the gym). If `CURRENT MEMORY` and `NEW FACT` describe such an event happening on **different occasions**, record it as **multiple occurrences** with an exact count (e.g. "the user bought spicy snacks twice").
+
+Use the occurrence times to decide:
+- `CURRENT MEMORY` time: [[ current_memory_time if current_memory_time else "unknown" ]]
+- `NEW FACT` time: [[ new_fact_time if new_fact_time else "unknown" ]]
+
+Counting rules (be conservative — only count when evidence supports it):
+- Count as a separate occurrence **only** when the event is genuinely repeatable AND the two times are clearly different occasions. **Identical wording does not mean the same event** — a repeatable action reported on two different dates is two occurrences, even if phrased the same way.
+- If the times are the same, missing, or it is plausibly the **same** event re-mentioned, do **not** increase the count — state it once.
+- For stable attributes (employment, age, location, preferences, relationships), never count — always state once.
+- When `CURRENT MEMORY` already states a count (e.g. "twice") and `NEW FACT` is the same repeatable event at a **different** time than the `CURRENT MEMORY` time, treat it as one more occurrence and **increment** the count directly ("twice" → "three times"). State the exact count, not a hedged "at least N times".
+- Keep any other unrelated factual content from the current memory intact. Do not invent facts not supported by the inputs.
+
+Worked examples:
+- CURRENT "the user bought spicy snacks" (time 2024-01-01) + NEW "the user bought spicy snacks" (time 2024-01-08) → "the user bought spicy snacks twice" (repeatable, different dates → count, despite identical wording).
+- CURRENT "the user bought spicy snacks" (time 2024-01-01) + NEW "the user purchased spicy snacks" (time 2024-01-01) → "the user bought spicy snacks" (same date → likely the same purchase → state once).
+- CURRENT "the user works at Google" (time 2024-01-01) + NEW "the user is employed by Google" (time 2024-03-01) → "the user works at Google" (stable attribute → never count).
+
+CURRENT MEMORY (time: [[ current_memory_time if current_memory_time else "unknown" ]]):
+[[ current_memory ]]
+
+NEW FACT (time: [[ new_fact_time if new_fact_time else "unknown" ]]):
+[[ new_fact ]]
+
+Merged paragraph:

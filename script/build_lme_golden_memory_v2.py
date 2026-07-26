@@ -292,7 +292,7 @@ def answer_with_golden_memory(
     question_time: str,
     max_new_tokens: int = 512,
 ) -> str | None:
-    """Answer using the same template as run_exp_lme.py: agent_prompt_en_open.jinja"""
+    """Answer using the same template as run_exp_lme.py: pipeline_answer.jinja"""
     context_units = []
     for i, gm in enumerate(golden_memories):
         if isinstance(gm, dict):
@@ -304,7 +304,7 @@ def answer_with_golden_memory(
         if not content:
             continue
         unit = render_prompt(
-            "lme_memory_context_unit_en.jinja",
+            "pipeline_answer_memory_unit.jinja",
             index=i + 1,
             text=content,
             time=date,
@@ -315,7 +315,7 @@ def answer_with_golden_memory(
     context_block = "\n".join(context_units)
 
     prompt = render_prompt(
-        "agent_prompt_en_open.jinja",
+        "pipeline_answer.jinja",
         context_block=context_block,
         question=question,
         question_time=question_time,

@@ -70,10 +70,10 @@ class LmeCandidateMemorySystemBase(Mem0MemorySystem):
         from prompts import render_prompt
 
         if not retrieved:
-            template = "agent_context_empty_zh.jinja" if language == "zh" else "agent_context_empty_en.jinja"
+            template = "pipeline_answer_memory_empty.jinja"
             return render_prompt(template)
 
-        unit_template = "lme_memory_context_unit_zh.jinja" if language == "zh" else "lme_memory_context_unit_en.jinja"
+        unit_template = "pipeline_answer_memory_unit.jinja"
         context_lines = [
             render_prompt(
                 unit_template,

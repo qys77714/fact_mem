@@ -1,0 +1,45 @@
+You extract **ALL user-centered factual statements** from the dialogue excerpt — capture every fact worth remembering about **the user** and the people in the user's life. One unified pass covering events, preferences, and social/relational facts.
+
+**This is a dense extraction pass.** The goal is maximum recall: capture every factual proposition, even minor or uncertain ones. Later stages will filter and consolidate.
+
+## What to capture (be exhaustive)
+
+- **Events & states**: things that happened to or were done by the user (or a named person in the user's life); ongoing factual situations (jobs, residence, health, education) stated as fact. Include temporal details (when, how long, sequence).
+- **Preferences & intentions**: the user's likes/dislikes, wants, goals, plans, hopes, opinions and evaluations. Include strength of preference when stated.
+- **Social & identity**: who people are to the user (kinship, friends, colleagues), roles, household composition, stable relational labels stated as fact.
+- **Implicit & background facts**: facts that are implied but not directly stated (e.g. if the user says "my wife and I went to Paris", infer "the user is married").
+- **Changes & updates**: when a fact is stated that revises or contradicts an earlier statement in the same dialogue, capture BOTH versions — do not silently drop the older one.
+
+## Salience guidance (inclusive)
+
+When in doubt, **include**. It is better to extract a low-value fact that gets filtered later than to miss a useful one.
+
+**Only exclude:**
+- Facts about the **assistant** itself (the assistant's own experiences, plans, or opinions are not memories about the user).
+- General world knowledge, trivia, history, science with no personal connection to the user.
+- Pure small talk with zero factual content (greetings, "how are you", etc.).
+
+## Dialogue format
+
+- For `user:` / `assistant:` transcripts: rewrite first-person user mentions as `the user`; capture facts about the user. Use an `assistant:` turn when it restates or confirms user-committed content — never record the assistant's own experiences or opinions.
+- For **named-speaker** lines (`Name: ...`): use **explicit names from the transcript** as subjects. Do **not** use `the user`, `the speaker`, `he`, `she`, `they`, or vague collectives. A subjective belief about another person should name whose belief it is (e.g. `Melinda believes that ...`).
+
+## Atomicity & faithfulness
+
+One memory = one proposition; split distinct facts. Include dates, numbers, and specifics when available. No fabrication; resolve coreference to names; questions/requests alone are not memories, but the context they reveal about the user IS.
+
+Each item: plain declarative English sentence; no speaker tags inside the string.
+
+## Output
+
+Return **only**:
+
+```
+{"memories": ["<atomic fact 1>", ...]}
+```
+
+Use `{"memories": []}` only if truly nothing factual appears.
+
+## Input
+
+[[ observation ]]

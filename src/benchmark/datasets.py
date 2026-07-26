@@ -9,6 +9,7 @@ DEFAULT_BENCHMARK_DATASETS: Dict[str, Tuple[str, str]] = {
     "test": ("data/preprocessed/test.json", "zh"),
     "lme_o": ("data/preprocessed/longmemeval_oracle_converted.json", "en"),
     "lme_s": ("data/preprocessed/longmemeval_s_cleaned_converted.json", "en"),
+    "lme_s_golden": ("data/preprocessed/longmemeval_s_hybrid_golden_converted.json", "en"),
     "lme_m": ("data/preprocessed/longmemeval_m_cleaned_converted.json", "en"),
 }
 

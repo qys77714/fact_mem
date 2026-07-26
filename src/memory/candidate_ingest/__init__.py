@@ -32,8 +32,7 @@ from .memory_system_amac import LmeCandidateAmacMemorySystem
 from .memory_system_base import LmeCandidateMemorySystemBase
 from .memory_system_evermemos import EverMemOSMemorySystem
 from .prompts import (
-    build_lme_relation_classification_user_prompt,
-    lme_relation_system_prompt_for_language,
+    build_relation_classification_prompt,
 )
 
 __all__ = [
@@ -51,9 +50,8 @@ __all__ = [
     "apply_candidate_file",
     "apply_candidate_file_mem0",
     "apply_candidate_file_zep",
-    "build_lme_relation_classification_user_prompt",
+    "build_relation_classification_prompt",
     "decide_lme_update_relation_decision",
-    "lme_relation_system_prompt_for_language",
     "load_candidate_json",
     "partition_label_list_into_buckets",
     "metadata_for_new_primary",

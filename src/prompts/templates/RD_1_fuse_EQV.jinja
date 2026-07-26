@@ -1,32 +1,44 @@
-Merge the following into **one continuous paragraph** of memory used only for answering questions (no bullets, headings, or preamble).
+Merge `CURRENT MEMORY` and `NEW FACT` into ONE continuous paragraph of memory used only for answering questions. Output one paragraph, with no bullets, headings, preamble, analysis, or record timestamps.
 
-- `CURRENT MEMORY`: the accumulated answer memory so far (may already combine several facts).
-- `NEW FACT`: a newly confirmed fact that the classifier labeled **equivalent** (`EQV`) to a fact already in the current memory (same truth conditions, just reworded).
+The classifier labeled this pair `EQV`: the two facts have the same truth conditions. First decide whether they are a stable fact or single event stated again, or a genuinely repeatable event that happened on another occasion.
 
-Two equivalent statements can mean two different things. Decide which case applies:
+Time-source priority:
+- A time stated inside either memory text is the event time and is authoritative. Preserve text-stated dates, month/year, years, ranges, and other time expressions that are part of the fact.
+- If the memory text has no event time, the record timestamp below is the event-time fallback. For repeatable actions such as buying, visiting, traveling, eating, attending/participating in seminars or events, meeting people, taking classes, shopping, and exercising, different record timestamps therefore mean different occasions even when the wording and topic are identical.
+- If the text contains an event time, never use a conflicting record timestamp to override it. If two text-stated event times are the same, treat the facts as the same occasion unless the text explicitly says otherwise.
+- Record timestamps are metadata only and must never appear in the merged paragraph. Do not write `as of`, `current`, or any record timestamp.
 
-1. **Same fact restated** — a stable attribute or a single past event mentioned again (e.g. "works at Google", "visited Rome in 2019"). State it **once**; do not duplicate phrasings and do not invent a count.
-2. **A repeatable event that recurred** — an action that can naturally happen more than once (e.g. buying snacks, visiting a friend, going to the gym). If `CURRENT MEMORY` and `NEW FACT` describe such an event happening on **different occasions**, record it as **multiple occurrences** with an exact count (e.g. "the user bought spicy snacks twice").
+Rules for merging:
+- Stable attributes and single past events are stated once, even when the record timestamps differ: employment, age, location, preference, relationship, one named event, and similar facts are not counted.
+- A genuinely repeatable event can be counted only when the text semantics support repetition AND the event times differ under the time-source priority above. Repeatable actions include buying, visiting, traveling, eating, attending or participating in seminars/events, meeting people, taking classes, shopping, and exercising. Singular wording alone does not make such an action a one-off event.
+- When two occurrences are established, state the exact count `twice`; when three are established, state `three times`, and so on. Put the count in the output even when dates are also listed, for example `The user visited Rome twice, on 2024-03-01 and 2024-03-10.` Never use only `again`, `another time`, or a list of dates without the exact count.
+- If event times are the same, missing, or cannot establish separate occasions, state the event once. Do not count merely because the wording differs.
+- If `CURRENT MEMORY` already contains an exact count and `NEW FACT` is another occurrence of the same repeatable event at a different event time, increment it directly (`twice` -> `three times`). When no text event time is present, a different NEW FACT record timestamp is enough to establish that third occurrence. Never collapse `twice` back to `twice` in this case.
+- If the source texts contain explicit event dates, keep those dates in the merged memory when they matter, even when you also state an exact count. Never drop a historical text-stated date to shorten the paragraph.
+- Preserve unrelated factual content already in `CURRENT MEMORY`, including its text-stated time information, after the merged fact. Do not invent facts.
 
-Use the occurrence times to decide:
-- `CURRENT MEMORY` time: [[ current_memory_time if current_memory_time else "unknown" ]]
-- `NEW FACT` time: [[ new_fact_time if new_fact_time else "unknown" ]]
+Final output check:
+- If the merged paragraph describes exactly two occurrences, it MUST contain the literal word `twice`; replace any `again` or `another time` wording before answering.
+- If it describes exactly three occurrences, it MUST contain the literal phrase `three times`.
+- Do not output a list of two dates without an exact count.
 
-Counting rules (be conservative — only count when evidence supports it):
-- Count as a separate occurrence **only** when the event is genuinely repeatable AND the two times are clearly different occasions. **Identical wording does not mean the same event** — a repeatable action reported on two different dates is two occurrences, even if phrased the same way.
-- If the times are the same, missing, or it is plausibly the **same** event re-mentioned, do **not** increase the count — state it once.
-- For stable attributes (employment, age, location, preferences, relationships), never count — always state once.
-- When `CURRENT MEMORY` already states a count (e.g. "twice") and `NEW FACT` is the same repeatable event at a **different** time than the `CURRENT MEMORY` time, treat it as one more occurrence and **increment** the count directly ("twice" → "three times"). State the exact count, not a hedged "at least N times".
-- Keep any other unrelated factual content from the current memory intact. Do not invent facts not supported by the inputs.
+Examples:
+- `CURRENT: the user bought spicy snacks` + `NEW: the user purchased spicy snacks`, no text times, record times different -> `The user bought spicy snacks twice.`
+- The same repeatable event with text dates `2024-01-01` and `2024-01-08` -> state it twice and preserve both text dates; do not print the record timestamps.
+- The same repeatable event with the same text date -> state it once, even if record timestamps differ.
+- `CURRENT: the user works at Google` + `NEW: the user is employed by Google`, even with different record timestamps -> `The user works at Google.`
+- `CURRENT: the user bought snacks twice` + a third occurrence at a different event time -> `The user bought snacks three times.`
+- Exact fallback-count example: `CURRENT: the user bought snacks twice` with record timestamp `2024-01-01 09:00` + `NEW: the user bought snacks` with record timestamp `2024-01-08 09:00` -> `The user bought snacks three times.`
+- Exact seminar example: `CURRENT: the user attended a seminar on smart cities` with record timestamp `2024-02-01 09:00` + `NEW: the user participated in a seminar on smart cities` with record timestamp `2024-03-01 09:00` -> `The user attended a seminar on smart cities twice.`
+- Exact dated-count example: `CURRENT: the user bought a laptop on 2024-12-01` + `NEW: the user bought a laptop on 2023-06-15` -> `The user bought a laptop twice, on 2024-12-01 and 2023-06-15.`
 
-Worked examples:
-- CURRENT "the user bought spicy snacks" (time 2024-01-01) + NEW "the user bought spicy snacks" (time 2024-01-08) → "the user bought spicy snacks twice" (repeatable, different dates → count, despite identical wording).
-- CURRENT "the user bought spicy snacks" (time 2024-01-01) + NEW "the user purchased spicy snacks" (time 2024-01-01) → "the user bought spicy snacks" (same date → likely the same purchase → state once).
-- CURRENT "the user works at Google" (time 2024-01-01) + NEW "the user is employed by Google" (time 2024-03-01) → "the user works at Google" (stable attribute → never count).
+CURRENT MEMORY RECORD TIMESTAMP (metadata only; never output):
+[[ current_memory_time if current_memory_time else "unknown" ]]
 
 CURRENT MEMORY:
 [[ current_memory ]]
 
+NEW FACT RECORD TIMESTAMP (metadata only; never output): [[ new_fact_time if new_fact_time else "unknown" ]]
 NEW FACT:
 [[ new_fact ]]
 

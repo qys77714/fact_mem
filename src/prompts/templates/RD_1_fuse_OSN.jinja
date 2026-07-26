@@ -1,19 +1,40 @@
-Merge the following into **one continuous paragraph** of memory used only for answering questions (no bullets, headings, or preamble).
+Merge `CURRENT MEMORY` and `NEW FACT` into ONE minimal memory line for future question answering.
 
-- `CURRENT MEMORY`: the accumulated answer memory so far (may already combine several facts).
-- `NEW FACT`: a newly confirmed fact that is **more specific** than the current memory (`OSN` — the new fact strictly entails the existing one).
+This is an `OSN` relation: `NEW FACT` is more specific than, and refines, one fact stated in `CURRENT MEMORY`. Replace only that broader/subsumed part with the more specific new fact.
+
+Output exactly ONE line and nothing else.
 
 Rules:
-- Prefer the **specific detail** from the `NEW FACT`; let it replace the vaguer version of the same fact in the current memory.
-- Do not keep both the vague and the specific form of the same fact — the specific one subsumes the vague one (e.g. drop "has a pet" once "has a golden retriever named Max" is stated).
-- Keep any other unrelated factual content from the current memory intact.
-- Order by time as much as possible; state each distinct time only once.
-- Do not invent facts not supported by the inputs.
 
-CURRENT MEMORY:
+1. Keep the specific information from `NEW FACT` exactly once. Preserve concrete names, places, values, dates, years, date ranges, and other answerable qualifiers. Do not weaken a specific new fact into its broader wording from `CURRENT MEMORY`.
+
+2. A date, year, clock time, or date range written inside either memory is part of the memory's factual content, not metadata. Never drop a compatible explicit time from the fact that remains in the merged line. If `CURRENT MEMORY` supplies a compatible time for the same event and `NEW FACT` only makes the event more specific, carry that time forward. If `NEW FACT` supplies a more specific explicit time, keep that time. Do not infer or invent a time.
+
+3. Record timestamps are metadata only. The values after `CURRENT MEMORY RECORD TIMESTAMP` and `NEW FACT RECORD TIMESTAMP` must never appear in the output. Never write `as of`, `recorded at`, `current as of`, or any equivalent record-time marker. A time explicitly written in the memory text is different from its record timestamp and must be handled as in Rule 2.
+
+4. Preserve a separate fact from `CURRENT MEMORY` when it has distinct answerable information that is not subsumed by `NEW FACT`; append it after a semicolon. Drop only the old wording that the new fact actually replaces. If `NEW FACT` contains an additional independent fact, keep that fact too.
+
+5. Preserve a history or state transition already expressed in either memory when it remains factual, such as `A -> B(now)`. Do not flatten a specific transition into a generic category. Keep meaningful status or sequence qualifiers when they are part of the stated fact.
+
+6. Compress wording, but do not remove factual details merely to make the line shorter. Do not add facts, dates, locations, relationships, or current status not supported by the two memory texts. Start with `The user` unless the existing history format is clearer.
+
+7. If the inputs do not perfectly fit the stated OSN relation, produce the shortest faithful union of the supported non-conflicting facts. Do not force one fact to replace an unrelated fact.
+
+Examples:
+
+- CURRENT: `The user has a pet.` NEW: `The user owns a golden retriever named Max.` -> `The user owns a golden retriever named Max.`
+- CURRENT: `The user visited Rome.` NEW: `The user visited Rome on 2024-05-12.` -> preserve `2024-05-12`.
+- CURRENT: `The user attended an AI conference in 2023.` NEW: `The user attended NeurIPS.` -> preserve both `NeurIPS` and `2023`.
+- CURRENT: `The user moved to Seattle in 2024.` NEW: `The user moved to Capitol Hill in Seattle.` -> preserve `Capitol Hill`, `Seattle`, and `2024`.
+- CURRENT: `The user owns a dog; the user lives in Boston.` NEW: `The user owns a Labrador named Max.` -> keep the specific dog fact and the independent Boston fact.
+- CURRENT: `The user's phone history: iPhone -> Android (now)` NEW: `The user owns a phone.` -> preserve the history rather than replacing it with the generic category.
+
+CURRENT MEMORY RECORD TIMESTAMP (metadata only; never output): [[ current_memory_time if current_memory_time else "unknown" ]]
+CURRENT MEMORY TEXT:
 [[ current_memory ]]
 
-NEW FACT:
+NEW FACT RECORD TIMESTAMP (metadata only; never output): [[ new_fact_time if new_fact_time else "unknown" ]]
+NEW FACT TEXT:
 [[ new_fact ]]
 
-Merged paragraph:
+Merged memory:

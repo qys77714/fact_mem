@@ -1,24 +1,35 @@
-Merge the following into **one continuous paragraph** of memory used only for answering questions (no bullets, headings, or preamble).
+Merge `CURRENT MEMORY` and `NEW FACT` into ONE minimal memory line used only for answering questions.
 
-- `CURRENT MEMORY`: the accumulated answer memory so far. For this attribute it may already record an **ordered history** of values that changed over time. Last updated: [[ current_memory_time if current_memory_time else "unknown" ]].
-- `NEW FACT`: a newly confirmed fact that **conflicts** with the current value of the same single-valued attribute (`CON`, e.g. residence, employer, status, a preferred value). The `NEW FACT` is the **latest** state. Time of the new fact: [[ new_fact_time if new_fact_time else "unknown" ]].
+This is a `CON` pair: both inputs describe one single-valued user attribute, but the values conflict. `NEW FACT` is the later memory update in record order. The supplied record timestamps are metadata only: they may establish which update is newest when the text has no time, but they are not action/event times and must never be printed.
 
-This memory must support both "what is the current value?" and "list the full history in order" questions. So it must preserve the **complete chronological chain**, not just the last transition.
+Time rules (highest priority first):
+- A time stated inside the memory text is factual content. Preserve it with the value it qualifies. This includes dates, month/year, years, date ranges, and any other time phrase that changes the fact.
+- If a memory text has no intrinsic time, use its record timestamp only as an internal fallback for update order/currentness. Do not copy that timestamp into the output and do not invent a date.
+- Never replace a text-stated time with a record timestamp. Never drop an earlier value's text-stated date.
 
-Rules:
-- **Preserve every historical value already present in `CURRENT MEMORY`, in their original chronological order.** Never drop the earliest values when adding a new one.
-- **Append the `NEW FACT` value as the latest** entry in the chain.
-- Make the order explicit and recoverable earliest-to-latest, e.g. "the value was first A, then changed to B, and is now C".
-- **Always attach a date to the latest (current) value** using the `NEW FACT` time provided below, e.g. "and is now currently living in Shanghai (as of 2024-06-15)". For earlier historical values, preserve any dates already recorded in `CURRENT MEMORY`; if a historical value lacks a date, keep the relative order but do not invent dates.
-- Mark the most recent value clearly as the **current** one; earlier values are superseded prior states, not deleted.
-- If `CURRENT MEMORY` held only a single value (no chain yet), start the chain: "previously X, now Y".
-- Keep any other unrelated factual content from the current memory intact.
-- Do not invent facts not supported by the inputs.
+Output exactly one line, nothing else:
+The user's <self-contained attribute>: <v1> -> <v2> -> ... -> <v_latest>
+
+Formatting:
+- Keep every historical value already in `CURRENT MEMORY`, in its existing order, then append the conflicting `NEW FACT` value once. Never drop, duplicate, or reorder values.
+- If neither input text contains an intrinsic time, mark only the latest value with `(now)`: `<v1> -> <v2> -> <v_latest> (now)`. `now` is a status marker, not a timestamp.
+- If the latest value itself contains any intrinsic time phrase, including a year, month/year, date, date range, or relative time, do NOT add `(now)` to it. `(now)` is allowed only when the latest value is undated in the memory text.
+- If a value contains an intrinsic time, attach that time to that value, preserving at least its date precision: `A (24/11/30) -> B (24/12/01)`. Do not add `(current, as of ...)` or any record timestamp.
+- If only some values have intrinsic times, keep those dates and use `(now)` only for the latest undated value; never fill in a missing date from record metadata.
+- If `CURRENT MEMORY` already ends with `(now)`, remove that marker before appending the new value, so `A -> B (now)` + `C` becomes `A -> B -> C (now)`.
+- Keep the attribute phrase self-contained and retrieval-friendly. Start with `The user's`, name the entity and attribute with concrete keywords, and avoid bare pronouns.
+- Compress filler words, sources, and hedges, but do not compress away a time expression that is part of the fact.
+- If `CURRENT MEMORY` contains other unrelated facts, preserve them in shortened form after a semicolon, including their intrinsic time information.
+- Never invent facts, dates, or event times.
+
+CURRENT MEMORY RECORD TIMESTAMP (metadata only; never output):
+[[ current_memory_time if current_memory_time else "unknown" ]]
 
 CURRENT MEMORY:
 [[ current_memory ]]
 
+NEW FACT RECORD TIMESTAMP (metadata only; never output): [[ new_fact_time if new_fact_time else "unknown" ]]
 NEW FACT:
 [[ new_fact ]]
 
-Merged paragraph:
+Merged line:

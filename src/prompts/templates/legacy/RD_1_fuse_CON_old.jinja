@@ -1,0 +1,22 @@
+Merge `CURRENT MEMORY` and `NEW FACT` into ONE minimal memory line used only for answering questions.
+
+Both describe the same single-valued attribute of the user with conflicting values (`CON`). `NEW FACT` is the **latest** state (time: [[ new_fact_time if new_fact_time else "unknown" ]]). `CURRENT MEMORY` may already hold an ordered value history.
+
+Output format (one line, nothing else):
+The user's <attribute, worded close to how the user would ask about it>: <v1> -> <v2> -> ... -> <v_latest> (current, as of [[ new_fact_time if new_fact_time else "unknown" ]])
+
+Rules:
+- Keep every historical value already in `CURRENT MEMORY`, oldest to newest, then append the `NEW FACT` value as the last (current) one.
+- The attribute phrase must be self-contained and retrieval-friendly: start with "The user's", name the entity and attribute with the concrete keywords used in the facts (e.g. "The user's number of Korean restaurants tried in their city"), no bare pronouns.
+- After the attribute phrase, compress aggressively: only the bare values (numbers, names, places). Drop all filler words, sources ("the user mentioned"), and hedges.
+- Attach a date ONLY to the current value; drop dates of earlier values.
+- Never invent, drop, or reorder values.
+- If `CURRENT MEMORY` contains other unrelated facts, keep them, but shortened, appended after a semicolon.
+
+CURRENT MEMORY (time: [[ current_memory_time if current_memory_time else "unknown" ]]):
+[[ current_memory ]]
+
+NEW FACT (time: [[ new_fact_time if new_fact_time else "unknown" ]]):
+[[ new_fact ]]
+
+Merged line:

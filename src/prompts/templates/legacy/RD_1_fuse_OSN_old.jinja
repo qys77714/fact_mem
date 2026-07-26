@@ -1,0 +1,21 @@
+Merge `CURRENT MEMORY` and `NEW FACT` into ONE minimal memory line used only for answering questions.
+
+`NEW FACT` is **more specific** than the fact it refines in `CURRENT MEMORY` (`OSN` — the new fact strictly entails the existing one).
+
+Output: ONE line, nothing else.
+
+Rules:
+- **`NEW FACT` is the factual baseline.** State it exactly once (compressed); drop the vaguer version it subsumes (e.g. drop "has a pet" once "has a golden retriever named Max" is stated).
+- Do NOT graft qualifiers, context, or details from `CURRENT MEMORY` onto the `NEW FACT` statement — the merged line must not assert anything about the new fact that `NEW FACT` itself does not say.
+- Start with "The user" and keep the concrete keywords (names, places, dates, values) for retrieval; no bare pronouns.
+- Compress aggressively: drop filler words, sources ("the user mentioned"), hedges, and decorative context that adds no answerable information.
+- A separate fact from `CURRENT MEMORY` may be kept ONLY if it carries distinct answerable information on its own; append it shortened after a semicolon. If it adds nothing, drop it.
+- Never invent facts not supported by the inputs.
+
+CURRENT MEMORY (time: [[ current_memory_time if current_memory_time else "unknown" ]]):
+[[ current_memory ]]
+
+NEW FACT (time: [[ new_fact_time if new_fact_time else "unknown" ]]):
+[[ new_fact ]]
+
+Merged line:

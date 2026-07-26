@@ -39,3 +39,6 @@ experiment_results_all_methods_backup_20260726.xlsx
 # Generated experiment configs (only lme_default.yaml is tracked)
 config/exp_*.yaml
 
+# Data packages for collaborators
+easy-mem-*.zip
+

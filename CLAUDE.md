@@ -58,12 +58,51 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 - **聚合**：多 repeat 的 `metrics.json` 用 `script/aggregate_experiment_metrics.py` 算 mean/sample_std。
 - **完整用法**：[`docs/experiment-artifacts.md`](docs/experiment-artifacts.md)。
 
-## 当前数据集与配置
+## Benchmark 与数据集
 
-主实验数据集：`data/preprocessed/longmemeval_s_hybrid_golden.json`（由 `script/build_hybrid_golden_dataset.py` 构建）。
+| Benchmark | 说明 | 数据文件 |
+|-----------|------|---------|
+| `lme_o` (Oracle) | 完整 session 上下文作为记忆库（理论上界） | `longmemeval_oracle_converted.json` |
+| `lme_s` (Single) | 单人对话 cleaned 数据 | `longmemeval_s_cleaned_converted.json` |
+| `lme_s_golden` (Hybrid Golden) | Golden memory + BM25-dense 混合检索（**主实验**） | `longmemeval_s_hybrid_golden_converted.json` |
+| `lme_m` (Multi) | 多人对话数据 | `longmemeval_m_cleaned_converted.json` |
+
+主实验使用 `benchmark: lme_s`（Hybrid Golden 数据，由 `script/build_hybrid_golden_dataset.py` 构建）。
+
+## 实验状态
+
+实验矩阵：**5 filler 等级（N0/N2/N4/N6/N8）× 7 模型 × 3 灌库方法 × 2 token limit（256/512）**。
+
+### 已完成 ✅
+
+| 模型 | 覆盖范围 |
+|------|---------|
+| `gemma4-26B` | 全部 filler × 全部方法 × tl256/512 |
+| `gemma4-e4b` | 全部 filler × 全部方法 × tl256/512 |
+| `Qwen3-4B` | 全部 filler × 全部方法 × tl256/512 |
+| `Qwen3-8B` | 全部 filler × 全部方法 × tl256/512 |
+| Oracle (`gemma4-26B`) | 全部 4 方法 × tl256 |
+
+### 进行中 🔄
+
+| 模型 | 已完成 | 待跑 |
+|------|--------|------|
+| `Qwen3-32B` | N0 rd_addall | 其余 filler × 方法 |
+| `Qwen3.5-4B` | N0-N6 rd_addall | N8, evm, mem0 |
+| `Qwen3.5-9B` | N0 rd_addall | 其余 filler × 方法 |
+
+### 方法缩写
+
+| Config 中 method 名 | 实际灌库方法 |
+|---------------------|-------------|
+| `rd_addall` | `relation_decision` + `add_all`（同一 config 内比较） |
+| `evm` | `evermemos` |
+| `mem0` | `mem0` |
+
+## 配置文件
 
 关键 config：
-- `config/exp_N{0,2,4,6,8}_{model}_{method}.yaml` — hybrid 主实验配置（N=filler 数量，model=答题模型，method=灌库方法：`rd_addall` / `evm` / `mem0`）
+- `config/exp_N{0,2,4,6,8}_{model}_{method}.yaml` — hybrid 主实验配置（仅 `lme_default.yaml` 被 git 跟踪，其余为本地生成）
 - `config/exp_oracle_gemma4-26b_all.yaml` — oracle 全方法比较
 - `config/lme_default.yaml` — **默认模板（带完整注释）**，协作者复制此文件修改即可
 - 可选 `sweep.memory_token_limits` + `replication.{count,scope,seeds}` — 一次 YAML 展开多 variant（见 artifact 文档）
@@ -85,7 +124,7 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
    - 消融实验：在 `methods.relation_decision` 下设 `active_relations: ["CON"]` 或 `fusion_enabled: false`
    - 多方法比较：同时开多个 `methods.*.enabled: true`
 
-数据路径映射定义于 `src/benchmark/datasets.py` 的 `DEFAULT_BENCHMARK_DATASETS`。`benchmark: lme_s` 默认读 `data/preprocessed/longmemeval_s_cleaned_converted.json`。
+数据路径映射定义于 `src/benchmark/datasets.py` 的 `DEFAULT_BENCHMARK_DATASETS`。主实验使用 `benchmark: lme_s`；hybrid 特性由 filler/candidate 系统提供（golden memory + distractor 混合），不由 benchmark key 控制。
 
 > **数据获取**：预处理数据集较大（200MB+），未包含在 Git 仓库中。协作者需从项目维护者处获取数据文件（网盘/其他渠道），放置于 `data/preprocessed/` 和 `data/raw_data/` 目录下。
 

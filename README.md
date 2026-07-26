@@ -168,23 +168,48 @@ replication:
 
 ---
 
-## 数据
+## Benchmark 数据集
 
-预处理数据路径由 [`src/benchmark/datasets.py`](src/benchmark/datasets.py) 中 `DEFAULT_BENCHMARK_DATASETS` 管理。
+| Benchmark | 说明 | 数据文件 |
+|-----------|------|---------|
+| `lme_o` (Oracle) | 使用原始 session 完整上下文作为记忆库（理论上界） | `longmemeval_oracle_converted.json` |
+| `lme_s` (Single) | 单人对话 cleaned 数据 | `longmemeval_s_cleaned_converted.json` |
+| `lme_s_golden` (Hybrid Golden) | Golden memory + BM25-dense 混合检索（**主实验**） | `longmemeval_s_hybrid_golden_converted.json` |
+| `lme_m` (Multi) | 多人对话数据 | `longmemeval_m_cleaned_converted.json` |
 
-| `benchmark` 值 | 默认数据文件 | 语言 |
-|----------------|-------------|------|
-| `lme_o` | `data/preprocessed/longmemeval_oracle_converted.json` | en |
-| `lme_s` | `data/preprocessed/longmemeval_s_cleaned_converted.json` | en |
+## 实验状态
+
+### 主实验矩阵（LME-S Hybrid）
+
+实验矩阵：5 filler 等级 × 7 模型 × 3 灌库方法 × 2 token limit（256/512）
+
+| 模型 | 状态 |
+|------|------|
+| `gemma4-26B` | ✅ 完成（N0/N2/N4/N6/N8，全部方法，tl256/512） |
+| `gemma4-e4b` | ✅ 完成（N0/N2/N4/N6/N8，全部方法，tl256/512） |
+| `Qwen3-4B` | ✅ 完成（N0/N2/N4/N6/N8，全部方法，tl256/512） |
+| `Qwen3-8B` | ✅ 完成（N0/N2/N4/N6/N8，全部方法，tl256/512） |
+| `Qwen3-32B` | 🔄 进行中（仅 N0 rd_addall 完成） |
+| `Qwen3.5-4B` | 🔄 进行中（rd_addall N0-N6 完成，其余待跑） |
+| `Qwen3.5-9B` | 🔄 进行中（仅 N0 rd_addall 完成） |
+
+### Oracle 基线
+
+| 模型 | 状态 |
+|------|------|
+| `gemma4-26B` | ✅ 完成（全部 4 方法，tl256） |
+
+### 方法说明
+
+| 方法 | 缩写 | 说明 |
+|------|------|------|
+| `relation_decision` + `add_all` | rd_addall | 关系分类灌库 + 全量基线（同一 config 内比较） |
+| `evermemos` | evm | EverMemOS 增量语义聚类 |
+| `mem0` | mem0 | Mem0 风格增量更新 |
 
 ### 数据获取
 
 预处理数据集文件较大（200MB+），未包含在 Git 仓库中。协作者需从项目维护者处获取数据文件，放置于 `data/preprocessed/` 和 `data/raw_data/` 目录下。
-
-如需构造 hybrid golden 数据集，使用：
-```bash
-uv run --no-sync python script/build_hybrid_golden_dataset.py
-```
 
 ---
 

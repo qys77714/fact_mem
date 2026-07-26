@@ -176,9 +176,31 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 
 数据路径映射定义于 `src/benchmark/datasets.py` 的 `DEFAULT_BENCHMARK_DATASETS`。主实验使用 `benchmark: lme_s`；hybrid 特性由 filler/candidate 系统提供（golden memory + distractor 混合），不由 benchmark key 控制。
 
-> **数据获取**：预处理数据集较大（200MB+），未包含在 Git 仓库中。协作者需从项目维护者处获取以下文件：
-> - 数据集 JSON → `data/preprocessed/` 和 `data/raw_data/`
-> - Candidate 预抽取目录 → `artifacts/stages/candidates/`（或自行跑 `--stages extract` 生成，但需 LLM）
+> **数据获取**：以下文件未包含在 Git 仓库中，协作者需从项目维护者处获取：
+
+### 必须获取（否则无法跑实验）
+
+| 数据 | 目标路径 | 大小 | 说明 |
+|------|---------|------|------|
+| 数据集 JSON | `data/preprocessed/` + `data/raw_data/` | ~3GB | LME-S/O/M 的原始和预处理数据 |
+| 候选记忆 | `artifacts/stages/candidates/` | ~41MB | 预抽取的候选记忆，按 filler 等级分目录 |
+
+**候选记忆目录 → candidate_suffix 映射**（放置后 config 中 `extract.candidate_suffix` 才能匹配）：
+
+| 目录 Hash | candidate_suffix | 说明 | Episodes |
+|-----------|-----------------|------|----------|
+| `5b3b093d` | `hybrid_filler_N0` | 无 filler（仅 golden memory） | 470 |
+| `40d0a4e8` | `hybrid_filler_N2` | 2 条 distractor / 题 | 471 |
+| `dac380a4` | `hybrid_filler_N4` | 4 条 distractor / 题 | 471 |
+| `111c614b` | `hybrid_filler_N6` | 6 条 distractor / 题 | 470 |
+| `cda53dff` | `hybrid_filler_N8` | 8 条 distractor / 题 | 470 |
+| `200a19dc` | `oracle_dense` | Oracle 全量 session 上下文 | 501 |
+
+### 可选获取（可自行生成但耗时/费钱）
+
+| 数据 | 目标路径 | 大小 | 说明 |
+|------|---------|------|------|
+| Ingest 向量库 | `artifacts/stages/ingest/` | ~66GB | 灌库产物。可跳过，自行跑 `--stages ingest` 生成，但 relation_decision 需 LLM 关系分类（约 470×3 次调用/episode） |
 
 ## relation_decision 灌库策略
 

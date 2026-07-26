@@ -12,6 +12,8 @@
 
 ## 环境与运行
 
+> ⚠️ **重要**：本仓库只包含代码和实验配置。**模型部署、API key、端口映射均由协作者自行配置**，不会随代码提供。`.env` 文件是连接代码与模型服务的唯一桥梁——你需要根据自己的模型部署情况填写 `.env`，并在 YAML config 中指定正确的模型别名。
+
 ### 依赖安装
 
 - 包管理用 **uv**。跑任何脚本用 `uv run --no-sync python ...`（裸 `python` 缺 `openai`/`dotenv` 等依赖；不带 `--no-sync` 的 `uv run` 会重新 sync，可能改坏已验证好的环境）。
@@ -35,27 +37,38 @@
 - **全本地**：按上表部署多个 vllm 实例。`extract`/`manager`/`answer` 可共用同一模型实例（设为相同模型名）。
 - 模型别名定义于 `src/utils/llm_api.py`，可通过改 YAML 的 `models.*` 字段换模型。
 
-### .env 配置
+### .env 配置（连接代码与模型服务）
+
+`.env` 文件的作用：告诉代码「每个模型别名对应哪个实际服务」。`src/utils/llm_api.py` 根据 `.env` 和 YAML config 中的 `models.*` 字段，将请求路由到正确的 API endpoint。
 
 从模板复制并填写：`cp .env.example .env`
 
 ```bash
-# ---- 本地 VLLM ----
+# === 本地 VLLM 模型（需 GPU 部署） ===
 VLLM_API_KEY=zjj                            # 与启动脚本 --api-key 一致
-PORT_GEMMA4_26B=7111                        # 每模型一个端口，命名 PORT_{别名大写}
+VLLM_BASE_URL=http://localhost:8000/v1/     # 默认地址
+# 多模型时每个模型指定端口（命名规则：PORT_{模型别名大写，-变_}）
+PORT_GEMMA4_26B=7111
 PORT_GEMMA4_E4B=7115
 
-# ---- Embedding ----
+# === Embedding 服务（必须本地） ===
 EMBEDDING_BASE_URL=http://localhost:7110/v1/
 EMBEDDING_API_KEY=zjj
 
-# ---- 云端 API（至少配一个做 Judge）----
+# === 云端 API（至少配一个做 Judge） ===
 DASHSCOPE_API_KEY=your_key                  # qwen3-max judge
 # 或
 OPENAI_API_KEY=your_key                     # gpt-4o-mini judge
 ```
 
-端口映射：`.env` 中 `PORT_{MODEL}` 变量 → `src/utils/llm_api.py` 自动读取，无需改代码。密钥从根目录 `.env` 经 dotenv 自动加载（`env | grep` 看不到，需在 python 里 `load_dotenv()`）。
+**工作流程**：
+1. YAML config 中写 `models.answer: gemma4-26B`
+2. `llm_api.py` 查 `.env` 中 `PORT_GEMMA4_26B` → 得到端口 7111
+3. 请求发到 `http://localhost:7111/v1/`
+
+如果没有配对应 `PORT_*` 变量，则 fallback 到 `VLLM_BASE_URL`。云端模型（qwen3-max、gpt-4o-mini 等）不需要 `PORT_*`，只需对应的 `*_API_KEY`。
+
+密钥从根目录 `.env` 经 dotenv 自动加载（`env | grep` 看不到，需在 python 里 `load_dotenv()`）。
 
 ### 启动模型服务
 

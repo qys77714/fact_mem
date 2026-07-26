@@ -209,7 +209,14 @@ replication:
 
 ### 数据获取
 
-预处理数据集文件较大（200MB+），未包含在 Git 仓库中。协作者需从项目维护者处获取数据文件，放置于 `data/preprocessed/` 和 `data/raw_data/` 目录下。
+预处理数据集文件较大（200MB+），未包含在 Git 仓库中。数据集托管在 HuggingFace：
+
+```bash
+wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip
+unzip easy-mem-data.zip -d .
+```
+
+候选记忆（`easy-mem-candidates.zip`）由维护者通过网盘等方式提供。
 
 ---
 

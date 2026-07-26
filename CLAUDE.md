@@ -191,7 +191,9 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 
 数据路径映射定义于 `src/benchmark/datasets.py` 的 `DEFAULT_BENCHMARK_DATASETS`。主实验使用 `benchmark: lme_s`；hybrid 特性由 filler/candidate 系统提供（golden memory + distractor 混合），不由 benchmark key 控制。
 
-> **数据获取**：以下文件未包含在 Git 仓库中，协作者需从项目维护者处获取：
+> **数据获取**：以下文件未包含在 Git 仓库中，协作者需从以下渠道获取：
+> - 数据集（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip` → 解压到项目根目录 → `data/`
+> - 候选记忆：维护者提供 `easy-mem-candidates.zip` → 解压到项目根目录 → `artifacts/stages/candidates/`
 
 ### 必须获取（否则无法跑实验）
 

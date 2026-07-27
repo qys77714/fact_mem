@@ -164,6 +164,65 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 | `evm` | `evermemos` |
 | `mem0` | `mem0` |
 
+## 消融实验
+
+两组消融实验，均在 **hybrid 数据集**（`benchmark: lme_s`）上运行，覆盖所有 filler 等级（N0/N2/N4/N6/N8），token limit 256。
+
+### 消融 1：关系类型消融（Relation Type Ablation）
+
+**目标**：验证不同关系类型对记忆质量的贡献。比较 Add-all → CON-only → CON+EQV → Full RD 四条线。
+
+**模型**：`gemma4-e4b`、`Qwen3.5-4B`
+
+**已跑（复用主实验）**：
+- **Add-all**：主实验 `exp_N{0,2,4,6,8}_{model}_rd_addall.yaml` 中的 `add_all` 结果
+- **Full RD**：主实验中同 config 的 `relation_decision` 结果
+
+**待跑**：
+
+| 变体 | 关键参数 | 建议配置命名 |
+|------|---------|-------------|
+| CON-only | `active_relations: ["CON"]`，`fusion_enabled: true`（默认） | `exp_N{0,2,4,6,8}_{model}_rd_con.yaml` |
+| CON+EQV | `active_relations: ["CON", "EQV"]`，`fusion_enabled: true`（默认） | `exp_N{0,2,4,6,8}_{model}_rd_coneqv.yaml` |
+
+**操作步骤**：
+1. 复制已有主实验 config：`cp config/exp_N0_gemma4-e4b_rd_addall.yaml config/exp_N0_gemma4-e4b_rd_con.yaml`
+2. 修改 `experiment.suffix` 为唯一新标签（如 `con_N0`）
+3. `methods.add_all.enabled` 设为 `false`
+4. `methods.relation_decision` 下添加/修改 `active_relations`
+5. **改配置后必须全量清理**（见「改配置后必须全量清理」节）
+
+### 消融 2：Fusion 消融
+
+**目标**：验证 LLM 融合步骤的贡献。比较 Full RD ↔ RD without fusion（简单按关系类型保留，不调 LLM 融合）。
+
+**模型**：`gemma4-e4b`、`Qwen3.5-4B`
+
+**已跑（复用主实验）**：
+- **Full RD**：主实验中的 `relation_decision` 结果（同上）
+
+**待跑**：
+
+| 变体 | 关键参数 | 建议配置命名 |
+|------|---------|-------------|
+| RD without fusion | `fusion_enabled: false` | `exp_N{0,2,4,6,8}_{model}_rd_nofusion.yaml` |
+
+**操作步骤**：
+1. 复制已有主实验 config：`cp config/exp_N0_gemma4-e4b_rd_addall.yaml config/exp_N0_gemma4-e4b_rd_nofusion.yaml`
+2. 修改 `experiment.suffix` 为唯一新标签（如 `nofusion_N0`）
+3. `methods.add_all.enabled` 设为 `false`
+4. `methods.relation_decision.fusion_enabled` 设为 `false`
+
+### 消融实验矩阵总览
+
+| 消融 | 对比项 | 模型 | 已跑 | 待跑 |
+|------|-------|------|------|------|
+| 关系类型 | Add-all | gemma4-e4b, Qwen3.5-4B | ✅ 主实验 | — |
+| 关系类型 | CON-only | gemma4-e4b, Qwen3.5-4B | — | 🔲 5 filler × 2 模型 |
+| 关系类型 | CON+EQV | gemma4-e4b, Qwen3.5-4B | — | 🔲 5 filler × 2 模型 |
+| 关系类型 | Full RD | gemma4-e4b, Qwen3.5-4B | ✅ 主实验 | — |
+| Fusion | RD without fusion | gemma4-e4b, Qwen3.5-4B | — | 🔲 5 filler × 2 模型 |
+
 ## 配置文件
 
 关键 config：
@@ -385,6 +444,7 @@ pkill -f "run_exp_lme|ingest_candidates|pipeline_lme"
 | `Qwen3-4B` | `Qwen3-4B` |
 | `Qwen3-30B` | `Qwen3-30B-A3B-Thinking-2507` |
 | `Qwen3.5-27B` | `Qwen3.5-27B` |
+| `Qwen3.5-4B` | `Qwen3.5-4B` |
 | `Qwen3.5-9B` | `Qwen3.5-9B` |
 | `qwen3-embedding-0.6b` | embedding 服务（默认端口 7110） |
 

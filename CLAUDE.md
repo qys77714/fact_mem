@@ -30,7 +30,7 @@
 | 记忆抽取 | `models.extract` | gemma4-26B | 本地 vllm | 4×GPU (TP=4) |
 | 灌库管理 | `models.manager` | gemma4-26B / gemma4-e4b | 本地 vllm | 4×GPU / 2×GPU |
 | 答题 | `models.answer` | gemma4-26B | 本地 vllm | 4×GPU (TP=4) |
-| Judge | `models.judge` | gpt-4o-mini / qwen3-max | 云端 API | 无需 |
+| Judge | `models.judge` | deepseek-v4-flash | 云端 API | 无需 |
 | Embedding | `models.embedding` | qwen3-embedding-0.6b | 本地 vllm `--task embed` | 1×GPU |
 
 **协作者模型选择建议**：
@@ -57,10 +57,8 @@ PORT_GEMMA4_E4B=7115
 EMBEDDING_BASE_URL=http://localhost:7110/v1/
 EMBEDDING_API_KEY=zjj
 
-# === 云端 API（至少配一个做 Judge） ===
-DASHSCOPE_API_KEY=your_key                  # qwen3-max judge
-# 或
-OPENAI_API_KEY=your_key                     # gpt-4o-mini judge
+# === 云端 API（Judge 必须用 deepseek-v4-flash） ===
+DEEPSEEK_API_KEY=your_key                   # deepseek-v4-flash judge（必须）
 ```
 
 **工作流程**：
@@ -95,15 +93,17 @@ bash script/0_run_qwen3_8b.sh               # Qwen3-8B 示例
 
 ## 实验入口
 
+> 🚫 **禁止使用 `--legacy-layout`**：所有新实验必须走新 artifact 布局（默认），产物在 `artifacts/`。
+> `--legacy-layout`（`MemDB/` + `experiment/` 旧路径）仅用于兼容历史数据，**新实验一律不准用**。
+> 所有 ingest/extract/generate/evaluate 都必须通过 `run_exp_lme.py`（新框架）运行，禁止使用直接脚本
+> （如 `ingest_candidates.py`、`pipeline_lme_generate.py`）跑新实验，否则新框架无法追踪 stage 指纹。
+
 ```bash
-# 主入口（默认新 artifact 布局，产物在 artifacts/）
+# 主入口（新 artifact 布局，产物在 artifacts/）
 uv run --no-sync python run_exp_lme.py [--config config/exp_N0_gemma4-26b_rd_addall.yaml] [--stages extract,ingest,generate,evaluate]
 
 # 只跑部分阶段（例如只换 token limit 时复用已有 ingest）
 uv run --no-sync python run_exp_lme.py --config config/tl512.yaml --stages generate,evaluate
-
-# 旧路径续跑（MemDB/ + experiment/）
-uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 ```
 
 四个阶段：
@@ -134,6 +134,8 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 
 主实验使用 `benchmark: lme_s`（Hybrid Golden 数据，由 `script/build_hybrid_golden_dataset.py` 构建）。
 
+> ⚠️ **Hybrid 数据集评测以 470 题为准**：hybrid golden 数据集共 500 条，其中 30 条为 abstention（`golden_memory=[]`），实际可答题 470 条。计算 accuracy 时应以 470 为分母（或确保 evaluate 脚本正确过滤 abstention），否则与 500 题全量计算的结果不可比。其他模型已有结果均基于 470 题。
+
 ## 实验状态
 
 实验矩阵：**5 filler 等级（N0/N2/N4/N6/N8）× 7 模型 × 3 灌库方法 × 2 token limit（256/512）**。
@@ -163,6 +165,170 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 | `rd_addall` | `relation_decision` + `add_all`（同一 config 内比较） |
 | `evm` | `evermemos` |
 | `mem0` | `mem0` |
+
+## LoCoMo 实验
+
+LoCoMo（Long Conversation Memory）是一个双人长对话记忆评测基准。与 LME 不同：
+- 每段对话有 **2 位命名说话者**（真实姓名，不映射为 user/assistant）
+- 每段对话 = 1 个 episode，含 19-32 个 session，105-260 道 QA 题
+- 每个 conversation 对应一个独立的 memory store
+- 记忆包含对话 ID 证据追踪（`evidence` 字段），不参与记忆管理决策
+- 抽取按 session 整块处理（`granularity: all`），对话格式为 `[dia_id] Speaker: text`
+- 图片 turn 使用 `blip_caption` 作为文本信息
+
+### 数据
+
+- 原始数据：`data/raw_data/locomo10.json`（10 conversations，1,986 QAs）
+- 候选记忆（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates-locomo.zip` → 解压到项目根目录 → `artifacts/stages/candidates/7a91a190/`
+- 候选记忆本地路径：`artifacts/stages/candidates/7a91a190/`（candidate_id = `7a91a190`，4,127 条，已抽取）
+
+### 模板
+
+| 阶段 | 模板 | 说明 |
+|------|------|------|
+| 抽取 | `Extract_Stage_LoCoMo.jinja` | 按 session 整块抽取，输出含 evidence |
+| RD 分类 | `RD_0_LoCoMo_relation_classify.jinja` | 命名说话者、时序/事件规则 |
+| 答题 | `pipeline_answer.jinja`（复用 LME） | 含 "the user" 措辞，对 LoCoMo 可接受 |
+| Judge | `pipeline_judge.jinja`（复用 LME） | 与 benchmark 无关 |
+
+### 代码改动
+
+LoCoMo 相关代码：
+
+| 文件 | 改动 |
+|------|------|
+| `src/benchmark/locomo.py` | LoCoMo 数据加载器 |
+| `src/benchmark/__init__.py` | `get_benchmark("locomo")` 路由 |
+| `src/benchmark/datasets.py` | 注册 `"locomo"` 数据路径 |
+| `src/utils/mem_extract_schemas.py` | `LoCoMoMemExtractResponse` + `normalize_extract_memories()` |
+| `src/pipeline/extract_candidates.py` | LoCoMo 模板选择、对话格式、render_kwargs 传递、evidence 合并 |
+
+LoCoMo 自动检测：`episode.metadata.get("benchmark") == "locomo"` → 切换 LoCoMo 模式，LME 不受影响。
+
+### 实验入口
+
+```bash
+# ========== 抽取候选记忆（已完成，candidate_id = 7a91a190，勿重跑）==========
+# 产物在 artifacts/stages/candidates/7a91a190/，也可从 HuggingFace 下载
+
+# ========== 灌库（add_all）==========
+# 通过 run_exp_lme.py（推荐，新框架自动管理路径）：
+#   uv run --no-sync python run_exp_lme.py --config config/locomo_default.yaml --stages ingest
+# 或手动指定路径：
+PYTHONPATH=src uv run --no-sync python src/pipeline/ingest_candidates.py \
+  --benchmark locomo \
+  --update-method add_all \
+  --candidates-dir artifacts/stages/candidates/7a91a190 \
+  --database-root MemDB/ingest/locomo/add_all \
+  --candidate-extract-model gemma4-26B \
+  --candidate-suffix locomo_default \
+  --embedding-model qwen3-embedding-0.6b \
+  --manager-model gemma4-26B \
+  --language en \
+  --add-all-episode-concurrency 10
+
+# ========== 灌库（relation_decision）==========
+PYTHONPATH=src uv run --no-sync python src/pipeline/ingest_candidates.py \
+  --benchmark locomo \
+  --update-method relation_decision \
+  --candidates-dir artifacts/stages/candidates/7a91a190 \
+  --database-root MemDB/ingest/locomo/relation_decision \
+  --candidate-extract-model gemma4-26B \
+  --candidate-suffix locomo_default \
+  --embedding-model qwen3-embedding-0.6b \
+  --manager-model gemma4-26B \
+  --language en \
+  --relation-episode-concurrency 10 \
+  --relation-concurrency 20 \
+  --relation-system-template-en RD_0_LoCoMo_relation_classify.jinja
+
+# ========== 答题（推荐 parallel_episodes=10, answer-concurrency=5）==========
+PYTHONPATH=src uv run --no-sync python src/pipeline_lme_generate.py \
+  --benchmark locomo \
+  --method prebuilt \
+  --database_root MemDB/ingest/locomo/<method> \
+  --answer_model gemma4-26B \
+  --embedding_model qwen3-embedding-0.6b \
+  --retrieve_topk 50 \
+  --memory_token_limit 256 \
+  --output MemDB/pred/locomo/<method>/pred_tl256.jsonl \
+  --parallel_episodes 10 \
+  --answer-concurrency 5 \
+  --agent_trace_dir MemDB/pred/locomo/<method>/agent_trace_tl256
+
+# ========== 评估 ==========
+PYTHONPATH=src uv run --no-sync python src/pipeline_lme_evaluate.py \
+  --benchmark locomo \
+  --judge_model deepseek-v4-flash \
+  --input MemDB/pred/locomo/<method>/pred_tl256.jsonl \
+  --output MemDB/pred/locomo/<method>/judged_tl256.jsonl \
+  --metrics-output MemDB/pred/locomo/<method>/metrics_tl256.json \
+  --max_concurrency 8 --max_new_tokens 512 --use_cot
+```
+
+### LoCoMo 与 LME 的关键差异
+
+| 维度 | LME | LoCoMo |
+|------|-----|--------|
+| 对话角色 | user/assistant | 真实姓名 |
+| Episode 结构 | 1 题/episode | 多题/episode（105-260） |
+| 对话格式 | `**user**: text` | `[D1:3] Caroline: text` |
+| 抽取粒度 | N turn/chunk | session 整块 |
+| 记忆命名空间 | per-episode | per-conversation（= per-episode） |
+| Evidence | 无 | 每条记忆带 dialogue ID |
+| Filler | N0-N8 五级 | 无 filler 机制 |
+
+### LoCoMo 当前结果
+
+> 已跑：extract=gemma4-26B, answer=gemma4-26B, judge=deepseek-v4-flash, candidate_id=7a91a190
+
+**gemma4-26B（tl=1024）**
+
+| Method | Accuracy | 备注 |
+|--------|----------|------|
+| add_all | 73.2% | evaluate 完成 |
+
+**gemma4-e4b（manager=gemma4-e4b, tl=256，ingest 完成，generate/evaluate 待跑）**
+
+| Method | ingest | generate | evaluate |
+|--------|--------|----------|----------|
+| add_all | —（复用 gemma4-26B candidates） | 🔲 | 🔲 |
+| RD | ✅ 10/10 | 🔲 | 🔲 |
+| mem0 | ✅ 10/10 | 🔲 | 🔲 |
+| evermemos | ✅ 10/10 | 🔲 | 🔲 |
+
+**Qwen3.5-4B（manager=Qwen3.5-4B, tl=256，ingest 完成，generate/evaluate 待跑）**
+
+| Method | ingest | generate | evaluate |
+|--------|--------|----------|----------|
+| add_all | —（复用 gemma4-26B candidates） | 🔲 | 🔲 |
+| RD | ✅ 10/10 | 🔲 | 🔲 |
+| mem0 | ✅ 10/10 | 🔲 | 🔲 |
+| evermemos | ✅ 10/10 | 🔲 | 🔲 |
+
+### LoCoMo ingest 产物路径
+
+| 模型 | 方法 | 路径 |
+|------|------|------|
+| gemma4-26B | add_all | `artifacts/stages/ingest/add_all_test/` |
+| gemma4-e4b | RD | `artifacts/stages/ingest/locomo_gemma4-e4b/relation_decision/` |
+| gemma4-e4b | mem0 | `artifacts/stages/ingest/locomo_gemma4-e4b/mem0/` |
+| gemma4-e4b | evermemos | `artifacts/stages/ingest/locomo_gemma4-e4b/evermemos/` |
+| Qwen3.5-4B | RD | `artifacts/stages/ingest/locomo_qwen3.5-4b/relation_decision/` |
+| Qwen3.5-4B | mem0 | `artifacts/stages/ingest/locomo_qwen3.5-4b/mem0/` |
+| Qwen3.5-4B | evermemos | `artifacts/stages/ingest/locomo_qwen3.5-4b/evermemos/` |
+
+### LoCoMo 待跑：generate + evaluate
+
+两个模型（gemma4-e4b, Qwen3.5-4B）× 4 方法（add_all, RD, mem0, evermemos），tl=256。
+
+add_all 的 ingest 复用 gemma4-26B 那套（`artifacts/stages/ingest/add_all_test/`），只需换 answer model 重跑 generate+evaluate。
+
+**注意**：
+- LoCoMo answer 推荐 `--parallel_episodes 10 --answer-concurrency 5`
+- Qwen3.5-4B 有 thinking 模式，代码已通过 `enable_thinking=false` 自动关闭
+- Qwen3.5-4B RD 分类较慢，已降低并发（`--relation-episode-concurrency 5 --relation-concurrency 10`）
+- gemma4-e4b 和 Qwen3.5-4B 不能同时跑（共享 GPU），需串行
 
 ## 消融实验
 
@@ -317,6 +483,7 @@ uv run --no-sync python run_exp_lme.py --config config/old.yaml --legacy-layout
 
 ## 关键踩坑与 footgun
 
+- **新实验必须用新框架**：禁止 `--legacy-layout`，禁止直接调用 `ingest_candidates.py` / `pipeline_lme_generate.py` 等脚本跑新实验。所有阶段必须通过 `run_exp_lme.py`（新 artifact 布局）运行，确保 stage 指纹追踪正确。
 - **禁止随意删除实验数据**：不要删除 `artifacts/` 下的任何目录或文件，除非用户明确要求删除特定 ingest/run。即使要重跑某个 ingest，也必须先和用户确认后再删。误删实验数据不可恢复。
 - **新 benchmark 数据集必须放 `raw_data/`**：`LMEBenchmark` 只对 `raw_data/` 下的原始格式（format A）自动转换为 preprocessed 格式（format B）。直接放 `preprocessed/` 下的原始数据不会被转换，导致 `QAs` 为空、0 题被处理。注册时用 `_converted` 后缀路径（如 `lme_s_golden → longmemeval_s_hybrid_golden_converted.json`）。
 - **后台任务不要用 `tail -20`**：会截掉错误信息，导致任务静默失败而看不到原因。建议直接 `2>&1` 全量输出，完成后再 `tail` 查看末尾。

@@ -11,6 +11,8 @@ DEFAULT_BENCHMARK_DATASETS: Dict[str, Tuple[str, str]] = {
     "lme_s": ("data/preprocessed/longmemeval_s_cleaned_converted.json", "en"),
     "lme_s_golden": ("data/preprocessed/longmemeval_s_hybrid_golden_converted.json", "en"),
     "lme_m": ("data/preprocessed/longmemeval_m_cleaned_converted.json", "en"),
+    "locomo": ("data/raw_data/locomo10.json", "en"),
+    "meme_filler32k": ("data/raw_data/MEME/meme_filler32k.json", "en"),
 }
 
 

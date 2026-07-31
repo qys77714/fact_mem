@@ -1,0 +1,102 @@
+# easy-mem LoCoMo 密集抽取实验配置（4-turn chunk + dense extraction）
+# 用法：uv run --no-sync python run_exp_lme.py --config config/locomo_dense_gran4.yaml --stages extract
+#
+# 与 locomo_default 的区别：
+#   - granularity: 4（每 4 个 turn 一个 chunk，而非整个 session）
+#   - 抽取模板：Extract_Stage_LoCoMo_Dense.jinja（密集抽取，最大化召回）
+#   - candidate_suffix: locomo_dense_gran4（新标识，不复用旧候选）
+
+experiment:
+  benchmark: locomo
+  suffix: locomo_dense_gran4
+
+# ---- 模型选择 ----
+models:
+  extract: gemma4-26B
+  manager: gemma4-26B
+  answer: gemma4-26B
+  judge: qwen3-max
+  embedding: qwen3-embedding-0.6b
+
+# ---- 候选记忆抽取（密集模式，4-turn chunk）----
+extract:
+  candidate_suffix: locomo_dense_gran4
+  granularity: 4                    # 每 4 个 turn 一个 chunk
+  turn_overlap: 0
+  language: en
+  aspect_templates:
+    - "Extract_Stage_LoCoMo_Dense.jinja"
+
+# ---- 灌库方法（后续阶段暂不启用）----
+methods:
+  add_all:
+    enabled: false
+
+  relation_decision:
+    enabled: false
+    backend: llm
+    related_top_k: 3
+    fusion_model: ""
+    fusion_enabled: true
+    condition_sim_threshold: 0.5
+    pairwise_sim_threshold: 0.5
+
+  mem0:
+    enabled: false
+
+  evermemos:
+    enabled: false
+
+# ---- 答题生成 ----
+generate:
+  retrieve_topk: 50
+  memory_token_limit: 1024
+  answer_stratified_sample: 0
+  answer_sample_seed: 43
+  show_memory_time: true
+
+  hybrid:
+    enabled: false
+
+# ---- 评估 ----
+evaluate:
+  use_cot: true
+
+# ---- 可选：一次配置扫多个 token limit ----
+sweep:
+  memory_token_limits:
+    - 1024
+
+# ---- 可选：统计重复 ----
+replication:
+  count: 1
+  scope: answer_judge
+
+# ---- 并发控制 ----
+parallel:
+  extract_chunk_concurrency: 100
+  ingest_relation_concurrency: 20
+  ingest_episode_concurrency:
+    relation_decision: 20
+    mem0: 20
+    add_all: 100
+    evermemos: 20
+    fusion_episodes: 100
+    fusion_packages: 10
+  generate_parallel_episodes: 10
+  generate_answer_concurrency: 2
+  evaluate_max_concurrency: 8
+
+# ---- Token 限制 ----
+token_limits:
+  extract_max_new_tokens: 4096
+  ingest_relation_max_new_tokens: 256
+  ingest_manager_max_new_tokens: 2048
+  fusion_max_new_tokens: 512
+  evaluate_max_new_tokens: 512
+
+# ---- 提示模板 ----
+prompts:
+  relation_user_en: RD_0_LoCoMo_relation_classify.jinja
+  relation_user_zh: RD_0_LoCoMo_relation_classify.jinja
+  judge_template: pipeline_judge.jinja

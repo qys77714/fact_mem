@@ -31,11 +31,19 @@ from pipeline.paths import default_candidates_dir, safe_model_tag
 from prompts import render_prompt
 from utils.env import load_env
 from utils.llm_api import load_api_chat_completion
-from utils.mem_extract_schemas import MEM_EXTRACT_RESPONSE_FORMAT, MemExtractResponse
+from utils.mem_extract_schemas import (
+    LOCOMO_MEM_EXTRACT_RESPONSE_FORMAT,
+    MEM_EXTRACT_RESPONSE_FORMAT,
+    MemExtractResponse,
+    LoCoMoMemExtractResponse,
+    normalize_extract_memories,
+)
 from utils.question_filter import parse_question_types_arg
 
 
 def _resolve_mem_extract_prompt_template(benchmark: str, language: str = "en") -> str:
+    if benchmark.strip().lower().startswith("locomo"):
+        return "Extract_Stage_LoCoMo.jinja"
     return "0_mem_extract_aspect_unified_en.jinja"
 
 
@@ -128,6 +136,34 @@ def _turns_to_chunk_transcript(turns: list, dialogue_format: str) -> str:
     return "\n\n".join(lines)
 
 
+def _format_locomo_dialogue(turns: list) -> str:
+    """将 LoCoMo turn 列表格式化为 ``[dia_id] Speaker: text`` 形式，
+    包含图片 caption（如有）。"""
+    lines: List[str] = []
+    for turn in turns:
+        speaker = (turn.speaker or "Unknown").strip()
+        dia_id = ""
+        blip_caption = ""
+        if turn.metadata:
+            dia_id = str(turn.metadata.get("dia_id", "")).strip()
+            blip_caption = str(turn.metadata.get("blip_caption", "")).strip()
+        content = (turn.content or "").strip()
+        if not content and not blip_caption:
+            continue
+        prefix = f"[{dia_id}]" if dia_id else ""
+        line = f"{prefix} {speaker}: {content}".strip()
+        if blip_caption:
+            line += f" [image caption: {blip_caption}]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _is_locomo_episode(episode: MemoryEpisode) -> bool:
+    """判断 episode 是否来自 LoCoMo benchmark。"""
+    meta = getattr(episode, "metadata", {}) or {}
+    return str(meta.get("benchmark", "")).strip().lower() == "locomo"
+
+
 def episode_to_observation_chunks(
     episode: MemoryEpisode,
     granularity: Union[str, int],
@@ -141,32 +177,72 @@ def episode_to_observation_chunks(
 
     ``overlap_turns``：相邻窗口共享的 turn 数（滑动窗口）；0 表示互不重叠（与原行为一致）。
 
+    对于 LoCoMo benchmark（episode.metadata.benchmark == "locomo"）：
+    - 强制 ``granularity="all"``（一个 session = 一个 chunk）
+    - 对话格式为 ``[dia_id] Speaker: text``
+    - meta 中携带 ``_render_kwargs``（speaker_a/b、session_datetime、session）
+      供 ``_process_single_chunk`` 使用
+
     返回 ``(observation_text, meta)`` 列表，``meta`` 含全局 ``chunk_index``（按 session→turn 块顺序递增）。
     """
+    locomo = _is_locomo_episode(episode)
+    # LoCoMo 不再强制按 session 整块；由传入 granularity 决定切块大小
+    actual_granularity: Union[str, int] = granularity
+    actual_overlap: int = int(overlap_turns)
+
+    speaker_a = ""
+    speaker_b = ""
+    if locomo:
+        speaker_a = str(episode.metadata.get("speaker_a", "")).strip()
+        speaker_b = str(episode.metadata.get("speaker_b", "")).strip()
+
     chunks_out: List[Tuple[str, Dict[str, Any]]] = []
     chunk_index = 0
     for sess_idx, session in enumerate(episode.sessions, start=1):
         st = (session.session_date or "").strip()
         for turn_start, turn_end, chunk_turns in _iter_turn_chunks(
-            session.turns, granularity, overlap_turns=overlap_turns
+            session.turns, actual_granularity, overlap_turns=actual_overlap
         ):
-            parts = [f"=== Session {sess_idx}"]
-            if st:
-                parts[0] += f" ({st})"
-            if turn_start is not None:
-                parts.append(f"turns {turn_start}-{turn_end}")
-            header = " ".join(parts) + " ==="
-            transcript = _turns_to_chunk_transcript(chunk_turns, dialogue_format)
-            text = f"{header}\n{transcript}"
-            meta: Dict[str, Any] = {
-                "chunk_index": chunk_index,
-                "session_index": sess_idx,
-                "turn_start": turn_start,
-                "turn_end": turn_end,
-                "turn_overlap": int(overlap_turns),
-                "session_date": st,
-            }
-            chunks_out.append((text, meta))
+            if locomo:
+                # LoCoMo：用专用的对话格式，template variables 走 _render_kwargs
+                session_text = _format_locomo_dialogue(chunk_turns)
+                if not session_text.strip():
+                    continue  # 跳过空 session
+                meta: Dict[str, Any] = {
+                    "chunk_index": chunk_index,
+                    "session_index": sess_idx,
+                    "turn_start": None,  # session 级整块
+                    "turn_end": None,
+                    "turn_overlap": 0,
+                    "session_date": st,
+                    "_locomo": True,
+                    "_render_kwargs": {
+                        "speaker_a": speaker_a,
+                        "speaker_b": speaker_b,
+                        "session_datetime": st,
+                        "session": session_text,
+                    },
+                }
+                # observation_text 供调试预览用
+                chunks_out.append((session_text, meta))
+            else:
+                parts = [f"=== Session {sess_idx}"]
+                if st:
+                    parts[0] += f" ({st})"
+                if turn_start is not None:
+                    parts.append(f"turns {turn_start}-{turn_end}")
+                header = " ".join(parts) + " ==="
+                transcript = _turns_to_chunk_transcript(chunk_turns, dialogue_format)
+                text = f"{header}\n{transcript}"
+                meta = {
+                    "chunk_index": chunk_index,
+                    "session_index": sess_idx,
+                    "turn_start": turn_start,
+                    "turn_end": turn_end,
+                    "turn_overlap": int(overlap_turns),
+                    "session_date": st,
+                }
+                chunks_out.append((text, meta))
             chunk_index += 1
     return chunks_out
 
@@ -322,6 +398,16 @@ def _merge_chunk_pass_rows(meta: Dict[str, Any], pass_rows: List[Dict[str, Any]]
         if e:
             errs.append(f"pass{i}:{e}")
     parse_err: Optional[str] = "; ".join(errs) if errs else None
+
+    # 合并 evidence：按 pass 顺序拼接，多 pass 时可能无法精确对齐，
+    # 优先保留首个有 evidence 的 pass（典型场景：单 pass）。
+    merged_evidence: Optional[List[List[str]]] = None
+    for r in pass_rows:
+        ev = r.get("candidate_evidence")
+        if ev:
+            merged_evidence = list(ev)
+            break
+
     row: Dict[str, Any] = {
         "chunk_index": meta["chunk_index"],
         "session_index": meta["session_index"],
@@ -332,6 +418,8 @@ def _merge_chunk_pass_rows(meta: Dict[str, Any], pass_rows: List[Dict[str, Any]]
         "candidate_memories": merged,
         "parse_error": parse_err,
     }
+    if merged_evidence:
+        row["candidate_evidence"] = merged_evidence
     return row
 
 
@@ -353,11 +441,21 @@ def _process_single_chunk(
     use_json_schema: bool,
     pbar: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    user_prompt = render_prompt(prompt_template, observation=observation)
+    render_kwargs = meta.get("_render_kwargs")
+    is_locomo = bool(meta.get("_locomo"))
+
+    if render_kwargs:
+        user_prompt = render_prompt(prompt_template, **render_kwargs)
+    else:
+        user_prompt = render_prompt(prompt_template, observation=observation)
+
     messages = [{"role": "user", "content": user_prompt}]
     chat_kw: Dict[str, Any] = {}
     if use_json_schema:
-        chat_kw["response_format"] = MEM_EXTRACT_RESPONSE_FORMAT
+        if is_locomo:
+            chat_kw["response_format"] = LOCOMO_MEM_EXTRACT_RESPONSE_FORMAT
+        else:
+            chat_kw["response_format"] = MEM_EXTRACT_RESPONSE_FORMAT
     raw = client.get_response_chat(
         messages,
         max_new_tokens=max_new_tokens,
@@ -368,6 +466,7 @@ def _process_single_chunk(
     if pbar is not None:
         pbar.update(1)
     memories: List[Any] = []
+    evidence: Optional[List[List[str]]] = None
     err: Optional[str] = None
     if raw is None:
         err = "llm_api_failed"
@@ -377,8 +476,15 @@ def _process_single_chunk(
             err = "json_parse_failed_or_empty"
         else:
             try:
-                validated = MemExtractResponse.model_validate(parsed)
-                memories = list(validated.memories)
+                if is_locomo:
+                    validated = LoCoMoMemExtractResponse.model_validate(parsed)
+                    mem_strs, evidence = normalize_extract_memories(
+                        parsed, locomo_mode=True
+                    )
+                    memories = list(mem_strs)
+                else:
+                    validated = MemExtractResponse.model_validate(parsed)
+                    memories = list(validated.memories)
             except Exception as e:
                 err = f"pydantic_validate_failed:{e!s}"
     row: Dict[str, Any] = {
@@ -391,6 +497,8 @@ def _process_single_chunk(
         "candidate_memories": memories,
         "parse_error": err,
     }
+    if evidence:
+        row["candidate_evidence"] = evidence
     return row
 
 

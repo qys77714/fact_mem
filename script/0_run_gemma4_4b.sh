@@ -1,10 +1,10 @@
 # 定义可用的 GPU 和端口
-gpus=(4)
+gpus=(1,2)
 ports=(7115)
 model_name=gemma-4-E4B-it
-MAX_MODEL_LEN=8192
+MAX_MODEL_LEN=8196
 GPU_MEM_UTIL=0.9
-MAX_NUM_BATCHED_TOKENS=$((4096 * 8))
+MAX_NUM_BATCHED_TOKENS=$((4096 * 16))
 
 # 循环遍历 GPU 和端口
 for i in ${!gpus[@]}; do

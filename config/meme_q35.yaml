@@ -1,0 +1,104 @@
+# easy-mem MEME 实验配置（默认模板）
+# 用法：uv run --no-sync python run_exp_lme.py --config config/meme_default.yaml [--stages extract,ingest,generate,evaluate]
+#
+# MEME 与 LME 的主要区别：
+#   - 每 episode 含 ~7 after questions（before questions 不参与评测）
+#   - 对话格式：标准 user/assistant（与 LME 一致）
+#   - 抽取模板：0_mem_extract_dense_en.jinja（全量密集抽取）
+#   - 抽取粒度：4-turn
+#   - 全量评测（不抽样）
+
+experiment:
+  benchmark: meme_filler32k      # MEME 32k filler 变体（100 episodes）
+  suffix: meme_q35           # 可读标签
+
+# ---- 模型选择 ----
+models:
+  extract: gemma4-26B               # 候选记忆抽取
+  manager: Qwen3.5-4B               # 灌库管理（relation_decision/mem0/evermemos 使用）
+  answer: gemma4-26B                # 答题
+  judge: deepseek-v4-flash          # LLM Judge
+  embedding: qwen3-embedding-0.6b   # Embedding（本地 vllm）
+
+# ---- 候选记忆抽取 ----
+extract:
+  candidate_suffix: meme_default    # 候选版本标签
+  granularity: 4                    # 4-turn 分块
+  turn_overlap: 0
+  language: en
+  aspect_templates:
+    - "0_mem_extract_dense_en.jinja"
+
+# ---- 灌库方法 ----
+methods:
+  add_all:
+    enabled: true
+
+  relation_decision:
+    enabled: true
+    backend: llm
+    related_top_k: 3
+    fusion_model: ""
+    fusion_enabled: true
+    condition_sim_threshold: 0.5
+    pairwise_sim_threshold: 0.5
+
+  mem0:
+    enabled: true
+
+  evermemos:
+    enabled: true
+
+# ---- 答题生成 ----
+generate:
+  retrieve_topk: 50
+  memory_token_limit: 256
+  answer_stratified_sample: 0        # MEME 全量评测（此字段对 MEME 无影响，run_exp_lme.py 硬编码 sample=0）
+  answer_sample_seed: 43
+  show_memory_time: true
+
+  hybrid:
+    enabled: false
+
+# ---- 评估 ----
+evaluate:
+  use_cot: true
+
+# ---- 可选：一次配置扫多个 token limit ----
+sweep:
+  memory_token_limits:
+    - 256
+
+# ---- 统计重复 ----
+replication:
+  count: 1
+  scope: answer_judge
+
+# ---- 并发控制 ----
+parallel:
+  extract_chunk_concurrency: 100
+  ingest_relation_concurrency: 20
+  ingest_episode_concurrency:
+    relation_decision: 20
+    mem0: 20
+    add_all: 100
+    evermemos: 20
+    fusion_episodes: 100
+    fusion_packages: 10
+  generate_parallel_episodes: 50
+  generate_answer_concurrency: 2
+  evaluate_max_concurrency: 8
+
+# ---- Token 限制 ----
+token_limits:
+  extract_max_new_tokens: 2048
+  ingest_relation_max_new_tokens: 256
+  ingest_manager_max_new_tokens: 2048
+  fusion_max_new_tokens: 512
+  evaluate_max_new_tokens: 512
+
+# ---- 提示模板 ----
+prompts:
+  relation_user_en: RD_0_relation_classify.jinja
+  relation_user_zh: RD_0_relation_classify.jinja
+  judge_template: pipeline_judge.jinja

@@ -1,0 +1,77 @@
+# easy-mem LoCoMo 密集抽取 + add_all 灌库
+# 用法：uv run --no-sync python run_exp_lme.py --config config/locomo_dense_gran4_addall.yaml --stages ingest,generate,evaluate --judge-model deepseek-v4-flash
+
+experiment:
+  benchmark: locomo
+  suffix: locomo_dense_addall
+
+models:
+  extract: gemma4-26B
+  manager: gemma4-26B               # add_all 不需要 manager，仅用于指纹
+  answer: gemma4-26B
+  judge: deepseek-v4-flash
+  embedding: qwen3-embedding-0.6b
+
+extract:
+  candidate_suffix: locomo_dense_gran4
+  granularity: 4
+  turn_overlap: 0
+  language: en
+  aspect_templates:
+    - "Extract_Stage_LoCoMo_Dense.jinja"
+
+methods:
+  add_all:
+    enabled: true
+  relation_decision:
+    enabled: false
+  mem0:
+    enabled: false
+  evermemos:
+    enabled: false
+
+generate:
+  retrieve_topk: 50
+  memory_token_limit: 512
+  answer_stratified_sample: 0
+  answer_sample_seed: 43
+  show_memory_time: true
+  hybrid:
+    enabled: false
+
+evaluate:
+  use_cot: true
+
+sweep:
+  memory_token_limits:
+    - 512
+
+replication:
+  count: 1
+  scope: answer_judge
+
+parallel:
+  extract_chunk_concurrency: 100
+  ingest_relation_concurrency: 20
+  ingest_episode_concurrency:
+    relation_decision: 20
+    mem0: 20
+    add_all: 100
+    evermemos: 20
+    fusion_episodes: 100
+    fusion_packages: 10
+  generate_parallel_episodes: 10
+  generate_answer_concurrency: 2
+  evaluate_max_concurrency: 8
+
+token_limits:
+  extract_max_new_tokens: 4096
+  ingest_relation_max_new_tokens: 256
+  ingest_manager_max_new_tokens: 2048
+  fusion_max_new_tokens: 512
+  evaluate_max_new_tokens: 512
+
+prompts:
+  relation_user_en: RD_0_LoCoMo_relation_classify.jinja
+  relation_user_zh: RD_0_LoCoMo_relation_classify.jinja
+  judge_template: pipeline_judge.jinja

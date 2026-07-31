@@ -1,8 +1,8 @@
 # 定义可用的 GPU 和端口
-gpus=(1)
+gpus=(3,4)
 ports=(7114)
 model_name=Qwen3.5-4B
-MAX_MODEL_LEN=8192
+MAX_MODEL_LEN=8196
 GPU_MEM_UTIL=0.9
 MAX_NUM_BATCHED_TOKENS=$((4096 * 8))
 

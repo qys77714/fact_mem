@@ -122,11 +122,16 @@ def short_hash(value: Any, length: int = _RUN_ID_HASH_LEN) -> str:
 
 
 def _get_path(config: Any, dotted: str, default: Any = None) -> Any:
-    """按 ``a.b.c`` 形式的点分路径从嵌套 Mapping 中取值，缺失则返回 default。"""
+    """按 ``a.b.c`` 形式的点分路径从嵌套对象中取值，缺失则返回 default。
+
+    支持 ``Mapping``（dict）和带有属性访问的对象（如 Pydantic BaseModel）。
+    """
     node = config
     for part in dotted.split("."):
         if isinstance(node, Mapping) and part in node:
             node = node[part]
+        elif hasattr(node, part):
+            node = getattr(node, part)
         else:
             return default
     return node

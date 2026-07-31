@@ -1,0 +1,137 @@
+# Task
+
+Extract short, atomic memory candidates from one timestamped session of a
+long-running conversation between two named people.
+
+The resulting memories will be stored in a shared, conversation-level memory
+store and later used to answer questions about either speaker, both speakers,
+their relationships, and events discussed in the conversation.
+
+## Speakers
+
+- `SPEAKER A`: [[ speaker_a ]]
+- `SPEAKER B`: [[ speaker_b ]]
+
+## Session Time
+
+[[ session_datetime ]]
+
+## Extraction Rules
+
+1. Treat both speakers as named people described by the memory. Neither person
+   is "the user", "the assistant", "I", or "you".
+2. Resolve first-person and second-person references to the correct names.
+   Every memory must be understandable without seeing the original turn.
+3. Extract information about either speaker, both speakers, their relationships,
+   other explicitly identified people or entities, and events involving them.
+4. Preserve explicitly stated:
+   - personal attributes and relationships;
+   - preferences, dislikes, interests, and habits;
+   - possessions and pets;
+   - education, employment, residence, and life circumstances;
+   - plans, goals, intentions, and scheduled activities;
+   - completed events and experiences;
+   - beliefs, opinions, emotions, and realizations when explicitly attributed;
+   - changes, corrections, negations, and comparisons with earlier states;
+   - causal statements and reasons;
+   - information conveyed through an image caption.
+5. Extract only information supported by the session. Do not infer unstated
+   personality traits, intentions, causes, or world facts. Do not turn generic
+   politeness or encouragement into a personality judgment.
+6. Keep each memory atomic: normally one subject, event, state, relation, or
+   proposition per memory. Split independent facts into separate memories.
+7. Preserve relation direction and participant roles. For example, "Caroline
+   encouraged Melanie" must not become "Melanie encouraged Caroline".
+8. Use explicit names instead of ambiguous pronouns. If a reference cannot be
+   resolved safely, preserve the most specific grounded description available;
+   do not guess.
+9. Preserve temporal scope:
+   - distinguish event time from the time at which it was mentioned;
+   - resolve relative dates such as "yesterday" or "last Sunday" using the
+     session time when the resolution is unambiguous;
+   - include the resolved date in the memory text;
+   - when exact resolution is uncertain, retain the relative expression and
+     anchor it to the session time;
+   - do not treat the session time as the event time when the speaker describes
+     an earlier or future event.
+10. Preserve separate occurrences of repeatable events. Do not collapse two
+    visits, races, meetings, purchases, or similar activities into one event
+    merely because they have the same participants or event type.
+11. Preserve updates without deleting history. If the session states both a
+    previous and a current value, extract self-contained memories that retain
+    their respective temporal scopes.
+12. When a turn contains an image caption, treat it as textually available
+    evidence. Attribute the sharing action and any supported content to the
+    correct speaker.
+13. Attach every supporting dialogue ID to the candidate. Use all and only the
+    dialogue IDs that directly support it.
+14. Do not use evaluation questions, reference answers, QA categories, or
+    gold-evidence annotations.
+15. Avoid duplicate candidates with the same truth conditions and the same
+    event or temporal scope.
+
+## Examples
+
+Conversation:
+
+```text
+[D2:1] Melanie: I ran a charity race last Sunday for mental-health awareness.
+[D2:2] Caroline: That sounds meaningful. I'm proud of you for taking part.
+```
+
+Session time: `25 May 2023`
+
+Valid output memories:
+
+```json
+{
+  "memories": [
+    {
+      "memory": "Melanie ran a charity race for mental-health awareness on 21 May 2023.",
+      "evidence": ["D2:1"]
+    },
+    {
+      "memory": "Caroline told Melanie that she was proud of Melanie for participating in the charity race.",
+      "evidence": ["D2:2"]
+    }
+  ]
+}
+```
+
+Conversation:
+
+```text
+[D5:7] Caroline: I lived in Chapel Hill in 2022, but I live in Raleigh now.
+```
+
+Valid output:
+
+```json
+{
+  "memories": [
+    {
+      "memory": "Caroline lived in Chapel Hill in 2022.",
+      "evidence": ["D5:7"]
+    },
+    {
+      "memory": "Caroline currently lives in Raleigh as of the session time.",
+      "evidence": ["D5:7"]
+    }
+  ]
+}
+```
+
+## Output Format
+
+Return one valid JSON object with exactly one top-level key, `"memories"`.
+
+- `"memories"` must be a JSON array.
+- Each array item must contain exactly:
+  - `"memory"`: one self-contained atomic memory string;
+  - `"evidence"`: a non-empty JSON array of supporting dialogue IDs.
+- Return `{"memories":[]}` if the session contains no supported memory.
+- Do not output Markdown, explanations, comments, or additional keys.
+
+## Session to Process
+
+[[ session ]]

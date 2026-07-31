@@ -1,0 +1,97 @@
+# easy-mem LoCoMo 实验配置 — Qwen3.5-4B ingest + gemma4-26B answer + deepseek-v4-flash judge
+# 用法：uv run --no-sync python run_exp_lme.py --config config/locomo_qwen3.5-4b_tl256.yaml --stages generate,evaluate --legacy-layout
+
+experiment:
+  benchmark: locomo
+  suffix: locomo_q35_4b_tl256
+
+# ---- 模型选择 ----
+models:
+  extract: gemma4-26B               # 候选记忆抽取（仅用于指纹，实际不复跑）
+  manager: Qwen3.5-4B               # 灌库管理（仅用于指纹，实际不复跑）
+  answer: gemma4-26B                # 答题
+  judge: deepseek-v4-flash          # LLM Judge（云端 API）
+  embedding: qwen3-embedding-0.6b   # Embedding（本地 vllm）
+
+# ---- 候选记忆抽取（仅用于指纹，不复跑）----
+extract:
+  candidate_suffix: locomo_default
+  granularity: all
+  turn_overlap: 0
+  language: en
+  aspect_templates:
+    - "Extract_Stage_LoCoMo.jinja"
+
+# ---- 灌库方法 ----
+methods:
+  add_all:
+    enabled: true
+
+  relation_decision:
+    enabled: true
+    backend: llm
+    related_top_k: 3
+    fusion_model: ""
+    fusion_enabled: true
+    condition_sim_threshold: 0.5
+    pairwise_sim_threshold: 0.5
+
+  mem0:
+    enabled: true
+
+  evermemos:
+    enabled: true
+
+# ---- 答题生成 ----
+generate:
+  retrieve_topk: 50
+  memory_token_limit: 256
+  answer_stratified_sample: 0
+  answer_sample_seed: 43
+  show_memory_time: true
+
+  hybrid:
+    enabled: false
+
+# ---- 评估 ----
+evaluate:
+  use_cot: true
+
+# ---- sweep ----
+sweep:
+  memory_token_limits:
+    - 256
+
+# ---- 统计重复 ----
+replication:
+  count: 1
+  scope: answer_judge
+
+# ---- 并发控制 ----
+parallel:
+  extract_chunk_concurrency: 100
+  ingest_relation_concurrency: 20
+  ingest_episode_concurrency:
+    relation_decision: 20
+    mem0: 20
+    add_all: 100
+    evermemos: 20
+    fusion_episodes: 100
+    fusion_packages: 10
+  generate_parallel_episodes: 10
+  generate_answer_concurrency: 2
+  evaluate_max_concurrency: 8
+
+# ---- Token 限制 ----
+token_limits:
+  extract_max_new_tokens: 4096
+  ingest_relation_max_new_tokens: 256
+  ingest_manager_max_new_tokens: 2048
+  fusion_max_new_tokens: 512
+  evaluate_max_new_tokens: 512
+
+# ---- 提示模板 ----
+prompts:
+  relation_user_en: RD_0_LoCoMo_relation_classify.jinja
+  relation_user_zh: RD_0_LoCoMo_relation_classify.jinja
+  judge_template: pipeline_judge.jinja

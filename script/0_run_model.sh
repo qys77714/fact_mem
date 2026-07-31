@@ -2,8 +2,8 @@
 gpus=(1,2,3,4)
 ports=(7111)
 model_name=gemma-4-26B-A4B-it
-MAX_MODEL_LEN=8192
-GPU_MEM_UTIL=0.9
+MAX_MODEL_LEN=8196
+GPU_MEM_UTIL=0.90
 MAX_NUM_BATCHED_TOKENS=$((4096 * 8))
 
 # 循环遍历 GPU 和端口

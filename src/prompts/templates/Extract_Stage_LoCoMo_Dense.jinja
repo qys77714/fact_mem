@@ -1,0 +1,57 @@
+# Task
+
+Extract **ALL factual statements** from this conversation segment between two named people.
+This is a **dense extraction pass** — capture every factual proposition to maximize recall.
+Later stages will filter, consolidate, and resolve conflicts.
+
+## Speakers
+
+- `SPEAKER A`: [[ speaker_a ]]
+- `SPEAKER B`: [[ speaker_b ]]
+
+## Session Time
+
+[[ session_datetime ]]
+
+## What to capture (be exhaustive)
+
+- **Events & states**: things that happened to or were done by either speaker; ongoing factual situations (jobs, residence, health, education). Include temporal details (when, how long, sequence).
+- **Preferences & intentions**: likes, dislikes, wants, goals, plans, hopes, opinions, and evaluations. Include strength of preference when stated.
+- **Social & identity**: who people are to each speaker (kinship, friends, colleagues), roles, household composition, stable relational labels stated as fact.
+- **Implicit & background facts**: facts implied but not directly stated (e.g. "my wife and I went to Paris" → "the speaker is married").
+- **Changes & updates**: when a fact revises or contradicts an earlier statement, capture **BOTH** versions. Do not silently drop the older one. For example, if a speaker says they lived in city A and later says they moved to city B, extract both "lived in city A" and "lives in city B".
+- **Image captions**: treat as textually available evidence. Attribute the sharing action and any supported content to the correct speaker.
+
+## When in doubt, **INCLUDE**
+
+It is better to extract a low-value fact that gets filtered later than to miss a useful one. Overlap and redundancy across chunks is acceptable — the downstream memory manager will handle consolidation.
+
+**Only exclude:**
+- General world knowledge, trivia, history, or science with no personal connection to the speakers.
+- Pure small talk with zero factual content (greetings, "how are you", etc.).
+
+## Formatting rules
+
+1. Treat both speakers as named people described by the memory. Neither person is "the user", "the assistant", "I", or "you".
+2. Resolve first-person and second-person references to the correct names. Every memory must be understandable without seeing the original turn.
+3. Use explicit names instead of ambiguous pronouns. If a reference cannot be resolved safely, preserve the most specific grounded description available.
+4. Preserve relation direction and participant roles. "Caroline encouraged Melanie" must not become "Melanie encouraged Caroline".
+5. Keep each memory atomic: one subject, event, state, relation, or proposition per memory. Split independent facts into separate memories.
+6. Preserve temporal scope: distinguish event time from mention time; resolve relative dates ("yesterday", "last Sunday") using the session time when unambiguous; include the resolved date in the memory text.
+7. Preserve separate occurrences of repeatable events. Do not collapse two visits, races, meetings, or purchases into one merely because they have the same participants.
+8. Attach every supporting dialogue ID to the candidate in the `"evidence"` field. Use all and only the dialogue IDs that directly support it.
+
+## Output Format
+
+Return one valid JSON object with exactly one top-level key, `"memories"`.
+
+- `"memories"` must be a JSON array.
+- Each array item must contain exactly:
+  - `"memory"`: one self-contained atomic memory string;
+  - `"evidence"`: a non-empty JSON array of supporting dialogue IDs (e.g. `["D2:1"]`).
+- Return `{"memories":[]}` only if truly nothing factual appears.
+- Do not output Markdown, explanations, comments, or additional keys.
+
+## Conversation Segment
+
+[[ session ]]

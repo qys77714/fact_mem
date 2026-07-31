@@ -354,20 +354,64 @@ MEME（Memory Evaluation for Multisession Entities）是一个多 session 实体
 | `src/benchmark/__init__.py` | `get_benchmark("meme_filler32k")` 路由 |
 | `src/benchmark/datasets.py` | 注册 `"meme_filler32k"` 数据路径 |
 
-### 实验入口
+### 协作者上手指南
+
+> 以下是从零搭建环境到跑完 MEME 全量实验的完整流程。
+
+#### 1. 环境准备
 
 ```bash
-# 一键运行全部 MEME 实验（自动下载数据/候选记忆）
+git clone <repo-url> && cd fact_mem
+cp .env.example .env   # 编辑 .env，填写模型端口和 API key
+uv sync                 # 安装依赖
+```
+
+#### 2. 部署模型服务
+
+MEME 实验需要以下模型同时运行：
+
+| 用途 | 模型 | 启动脚本 | 最低 GPU |
+|------|------|---------|---------|
+| Embedding | qwen3-embedding-0.6b | `bash script/0_run_embedding.sh` | 1×GPU |
+| Answer | gemma4-26B | `bash script/0_run_model.sh` | 4×GPU (TP=4) |
+| Manager（按需选一个） | gemma4-26B / e4b / 12b-it / Qwen3.5-4B / Qwen3.5-9B | `bash script/0_run_gemma4_12b.sh` 等 | 1-4×GPU |
+| Judge | deepseek-v4-flash | 无需本地（云端 API） | — |
+
+> **注意**：Manager 和 Answer 不能同时跑时（GPU 不够），可以分两阶段：
+> 先跑 ingest（只需 Manager）→ 停 Manager 启动 Answer → 再跑 generate+evaluate。
+> 脚本 `run_meme_experiments.sh` 默认跑全部阶段，可拆开：
+> ```bash
+> bash script/run_meme_experiments.sh --stages ingest          # 先灌库
+> # 停 Manager → 启动 Answer
+> bash script/run_meme_experiments.sh --stages generate,evaluate  # 再答题+评估
+> ```
+
+#### 3. 运行实验
+
+```bash
+# 一键跑全部 5 个 config（自动下载数据/候选记忆）
 bash script/run_meme_experiments.sh
 
-# 或单独运行某个 config
-uv run --no-sync python run_exp_lme.py --config config/meme_e4b.yaml --stages ingest,generate,evaluate
+# 或只跑某个 config
+uv run --no-sync python run_exp_lme.py --config config/meme_qwen35_9b.yaml --stages ingest,generate,evaluate
+
+# 预览不执行
+bash script/run_meme_experiments.sh --dry-run
 ```
 
 `script/run_meme_experiments.sh` 自动完成：
 1. 检查并下载 MEME 数据集（`easy-mem-data.zip`）和候选记忆（`easy-mem-candidates-meme.zip`）
 2. 按序运行全部 5 个 MEME config（gemma4-26B → gemma4-e4b → Qwen3.5-4B → Qwen3.5-9B → gemma4-12b-it）
 3. 已完成的 stage 自动跳过（内容寻址复用）
+
+#### 4. 查看结果
+
+产物在 `artifacts/runs/` 下，每个 run 目录含：
+- `manifest.json` — 实验元信息
+- `stages.json` — 各阶段指纹
+- `answer/<method>/pred.jsonl` — 答题结果
+- `answer/<method>/judged.jsonl` — Judge 评分
+- `answer/<method>/metrics.json` — 聚合指标
 
 ### MEME 配置
 

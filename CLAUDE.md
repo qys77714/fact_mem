@@ -365,9 +365,9 @@ uv run --no-sync python run_exp_lme.py --config config/meme_e4b.yaml --stages in
 
 | Config | Manager 模型 | Answer 模型 | 状态 |
 |--------|-------------|-------------|------|
-| `config/meme_default.yaml` | gemma4-26B | gemma4-26B | 🔲 待跑 |
-| `config/meme_e4b.yaml` | gemma4-e4b | gemma4-26B | 🔲 待跑 |
-| `config/meme_q35.yaml` | Qwen3.5-4B | gemma4-26B | 🔲 待跑 |
+| `config/meme_default.yaml` | gemma4-26B | gemma4-26B | ✅ 已完成 |
+| `config/meme_e4b.yaml` | gemma4-e4b | gemma4-26B | ✅ 已完成 |
+| `config/meme_q35.yaml` | Qwen3.5-4B | gemma4-26B | ✅ 已完成 |
 | `config/meme_qwen35_9b.yaml` | Qwen3.5-9B | gemma4-26B | 🔲 待跑 |
 | （待创建） | gemma4-12b-it | gemma4-26B | 🔲 待创建 config |
 
@@ -380,9 +380,9 @@ uv run --no-sync python run_exp_lme.py --config config/meme_e4b.yaml --stages in
 
 | Manager 模型 | add_all | relation_decision | mem0 | evermemos |
 |-------------|---------|-------------------|------|-----------|
-| gemma4-26B | 🔲 | 🔲 | 🔲 | 🔲 |
-| gemma4-e4b | 🔲 | 🔲 | 🔲 | 🔲 |
-| Qwen3.5-4B | 🔲 | 🔲 | 🔲 | 🔲 |
+| gemma4-26B | ✅ | ✅ | ✅ | ✅ |
+| gemma4-e4b | ✅ | ✅ | ✅ | ✅ |
+| Qwen3.5-4B | ✅ | ✅ | ✅ | ✅ |
 | Qwen3.5-9B | 🔲 | 🔲 | 🔲 | 🔲 |
 | gemma4-12b-it | 🔲 | 🔲 | 🔲 | 🔲 |
 

@@ -341,10 +341,25 @@ MEME（Memory Evaluation for Multisession Entities）是一个多 session 实体
 
 ### 数据
 
-- 数据集：`data/raw_data/MEME/meme_filler32k.json`（100 episodes，包含于 `easy-mem-data.zip`）
-- 候选记忆（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates-meme.zip` → 解压到项目根目录 → `artifacts/stages/candidates/ff157d29/`
-- 候选记忆本地路径：`artifacts/stages/candidates/ff157d29/`（candidate_id = `ff157d29`，100 episodes，已抽取）
-- candidate_suffix: `meme_default`
+所有 MEME 数据从 HuggingFace 下载（`Qys77/easy-mem-data`）：
+
+**数据集**（必须）
+
+| 文件 | 下载命令 | 解压后路径 | 大小 |
+|------|---------|-----------|------|
+| `easy-mem-data.zip` | `wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip` | `data/raw_data/MEME/meme_filler32k.json` | ~941MB（含 LME 数据） |
+
+**候选记忆**（必须，已预抽取，跳过 extract 阶段）
+
+| 文件 | 下载命令 | 解压后路径 | 大小 |
+|------|---------|-----------|------|
+| `easy-mem-candidates-meme.zip` | `wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates-meme.zip` | `artifacts/stages/candidates/ff157d29/` | ~583KB |
+
+> 解压命令：`unzip <zip文件> -d .`（在项目根目录执行，zip 内路径与项目结构一致）
+> `script/run_meme_experiments.sh` 会自动检查并下载缺失的数据，无需手动操作。
+
+- 候选记忆 candidate_id = `ff157d29`（100 episodes，extract=gemma4-26B）
+- config 中 `extract.candidate_suffix: meme_default` 对应此目录
 
 ### 代码
 
@@ -366,7 +381,21 @@ cp .env.example .env   # 编辑 .env，填写模型端口和 API key
 uv sync                 # 安装依赖
 ```
 
-#### 2. 部署模型服务
+#### 2. 下载数据
+
+```bash
+# 数据集（含 meme_filler32k.json）
+wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip
+unzip easy-mem-data.zip -d .
+
+# 候选记忆（预抽取，跳过 extract 阶段）
+wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates-meme.zip
+unzip easy-mem-candidates-meme.zip -d .
+```
+
+> 或直接跑 `bash script/run_meme_experiments.sh`，脚本会自动检测并下载缺失的数据。
+
+#### 3. 部署模型服务
 
 MEME 实验需要以下模型同时运行：
 
@@ -386,7 +415,7 @@ MEME 实验需要以下模型同时运行：
 > bash script/run_meme_experiments.sh --stages generate,evaluate  # 再答题+评估
 > ```
 
-#### 3. 运行实验
+#### 4. 运行实验
 
 ```bash
 # 一键跑全部 5 个 config（自动下载数据/候选记忆）
@@ -404,7 +433,7 @@ bash script/run_meme_experiments.sh --dry-run
 2. 按序运行全部 5 个 MEME config（gemma4-26B → gemma4-e4b → Qwen3.5-4B → Qwen3.5-9B → gemma4-12b-it）
 3. 已完成的 stage 自动跳过（内容寻址复用）
 
-#### 4. 查看结果
+#### 5. 查看结果
 
 产物在 `artifacts/runs/` 下，每个 run 目录含：
 - `manifest.json` — 实验元信息

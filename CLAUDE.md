@@ -363,11 +363,30 @@ uv run --no-sync python run_exp_lme.py --config config/meme_e4b.yaml --stages in
 
 ### MEME 配置
 
-| Config | Manager 模型 | Answer 模型 |
-|--------|-------------|-------------|
-| `config/meme_e4b.yaml` | gemma4-e4b | gemma4-26B |
-| `config/meme_q35.yaml` | Qwen3.5-4B | gemma4-26B |
-| `config/meme_qwen35_9b.yaml` | Qwen3.5-9B | gemma4-26B |
+| Config | Manager 模型 | Answer 模型 | 状态 |
+|--------|-------------|-------------|------|
+| `config/meme_default.yaml` | gemma4-26B | gemma4-26B | 🔲 待跑 |
+| `config/meme_e4b.yaml` | gemma4-e4b | gemma4-26B | 🔲 待跑 |
+| `config/meme_q35.yaml` | Qwen3.5-4B | gemma4-26B | 🔲 待跑 |
+| `config/meme_qwen35_9b.yaml` | Qwen3.5-9B | gemma4-26B | 🔲 待跑 |
+| （待创建） | gemma4-12b-it | gemma4-26B | 🔲 待创建 config |
+
+> 所有 MEME 实验共享同一套候选记忆（`candidate_id = ff157d29`，extract=gemma4-26B）。
+> 不同 manager 模型的 ingest 独立（指纹含 `models.manager`），answer 阶段共用 gemma4-26B。
+> `gemma4-12b-it` 模型 alias 尚未在 `src/utils/llm_api.py` 中注册，需先添加
+> `"gemma4-12b-it": "gemma-4-12B-it"`（或实际模型 ID）映射。
+
+### MEME 实验矩阵
+
+| Manager 模型 | add_all | relation_decision | mem0 | evermemos |
+|-------------|---------|-------------------|------|-----------|
+| gemma4-26B | 🔲 | 🔲 | 🔲 | 🔲 |
+| gemma4-e4b | 🔲 | 🔲 | 🔲 | 🔲 |
+| Qwen3.5-4B | 🔲 | 🔲 | 🔲 | 🔲 |
+| Qwen3.5-9B | 🔲 | 🔲 | 🔲 | 🔲 |
+| gemma4-12b-it | 🔲 | 🔲 | 🔲 | 🔲 |
+
+> **注意**：`add_all` 与 manager 模型无关（只使用 embedding），各 manager 的 add_all 指纹不同仅因 config 中 `models.manager` 字段参与指纹计算。如需共享 add_all ingest，可统一用 `meme_default.yaml` 跑一次 add_all，其余 config 只开 RD/mem0/evermemos。
 
 ## 消融实验
 

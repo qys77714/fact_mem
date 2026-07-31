@@ -357,9 +357,17 @@ MEME（Memory Evaluation for Multisession Entities）是一个多 session 实体
 ### 实验入口
 
 ```bash
-# 灌库 + 答题 + 评估（推荐通过 run_exp_lme.py）
+# 一键运行全部 MEME 实验（自动下载数据/候选记忆）
+bash script/run_meme_experiments.sh
+
+# 或单独运行某个 config
 uv run --no-sync python run_exp_lme.py --config config/meme_e4b.yaml --stages ingest,generate,evaluate
 ```
+
+`script/run_meme_experiments.sh` 自动完成：
+1. 检查并下载 MEME 数据集（`easy-mem-data.zip`）和候选记忆（`easy-mem-candidates-meme.zip`）
+2. 按序运行全部 5 个 MEME config（gemma4-26B → gemma4-e4b → Qwen3.5-4B → Qwen3.5-9B → gemma4-12b-it）
+3. 已完成的 stage 自动跳过（内容寻址复用）
 
 ### MEME 配置
 
@@ -369,12 +377,10 @@ uv run --no-sync python run_exp_lme.py --config config/meme_e4b.yaml --stages in
 | `config/meme_e4b.yaml` | gemma4-e4b | gemma4-26B | ✅ 已完成 |
 | `config/meme_q35.yaml` | Qwen3.5-4B | gemma4-26B | ✅ 已完成 |
 | `config/meme_qwen35_9b.yaml` | Qwen3.5-9B | gemma4-26B | 🔲 待跑 |
-| （待创建） | gemma4-12b-it | gemma4-26B | 🔲 待创建 config |
+| `config/meme_gemma4-12b.yaml` | gemma4-12b-it | gemma4-26B | 🔲 待跑 |
 
 > 所有 MEME 实验共享同一套候选记忆（`candidate_id = ff157d29`，extract=gemma4-26B）。
 > 不同 manager 模型的 ingest 独立（指纹含 `models.manager`），answer 阶段共用 gemma4-26B。
-> `gemma4-12b-it` 模型 alias 尚未在 `src/utils/llm_api.py` 中注册，需先添加
-> `"gemma4-12b-it": "gemma-4-12B-it"`（或实际模型 ID）映射。
 
 ### MEME 实验矩阵
 
@@ -668,6 +674,7 @@ pkill -f "run_exp_lme|ingest_candidates|pipeline_lme"
 | `gemma4-e4b` | `gemma-4-E4B-it` |
 | `gemma4-e2b` | `gemma-4-E2B-it` |
 | `gemma4-31B` | `gemma-4-31B-it` |
+| `gemma4-12b-it` | `gemma-4-12B-it` |
 | `Qwen3-8B` | `Qwen3-8B` |
 | `Qwen3-4B` | `Qwen3-4B` |
 | `Qwen3-30B` | `Qwen3-30B-A3B-Thinking-2507` |

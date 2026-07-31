@@ -403,7 +403,7 @@ MEME 实验需要以下模型同时运行：
 |------|------|---------|---------|
 | Embedding | qwen3-embedding-0.6b | `bash script/0_run_embedding.sh` | 1×GPU |
 | Answer | gemma4-26B | `bash script/0_run_model.sh` | 4×GPU (TP=4) |
-| Manager（按需选一个） | gemma4-26B / e4b / 12b-it / Qwen3.5-4B / Qwen3.5-9B | `bash script/0_run_gemma4_12b.sh` 等 | 1-4×GPU |
+| Manager（按需选一个） | gemma4-12b-it / Qwen3.5-9B | `bash script/0_run_gemma4_12b.sh` 等 | 1-4×GPU |
 | Judge | deepseek-v4-flash | 无需本地（云端 API） | — |
 
 > **注意**：Manager 和 Answer 不能同时跑时（GPU 不够），可以分两阶段：
@@ -418,7 +418,7 @@ MEME 实验需要以下模型同时运行：
 #### 4. 运行实验
 
 ```bash
-# 一键跑全部 5 个 config（自动下载数据/候选记忆）
+# 一键跑全部 2 个 config（自动下载数据/候选记忆）
 bash script/run_meme_experiments.sh
 
 # 或只跑某个 config
@@ -430,7 +430,7 @@ bash script/run_meme_experiments.sh --dry-run
 
 `script/run_meme_experiments.sh` 自动完成：
 1. 检查并下载 MEME 数据集（`easy-mem-data.zip`）和候选记忆（`easy-mem-candidates-meme.zip`）
-2. 按序运行全部 5 个 MEME config（gemma4-26B → gemma4-e4b → Qwen3.5-4B → Qwen3.5-9B → gemma4-12b-it）
+2. 按序运行全部 2 个 MEME config（Qwen3.5-9B → gemma4-12b-it）
 3. 已完成的 stage 自动跳过（内容寻址复用）
 
 #### 5. 查看结果
@@ -446,9 +446,6 @@ bash script/run_meme_experiments.sh --dry-run
 
 | Config | Manager 模型 | Answer 模型 | 状态 |
 |--------|-------------|-------------|------|
-| `config/meme_default.yaml` | gemma4-26B | gemma4-26B | ✅ 已完成 |
-| `config/meme_e4b.yaml` | gemma4-e4b | gemma4-26B | ✅ 已完成 |
-| `config/meme_q35.yaml` | Qwen3.5-4B | gemma4-26B | ✅ 已完成 |
 | `config/meme_qwen35_9b.yaml` | Qwen3.5-9B | gemma4-26B | 🔲 待跑 |
 | `config/meme_gemma4-12b.yaml` | gemma4-12b-it | gemma4-26B | 🔲 待跑 |
 
@@ -459,9 +456,6 @@ bash script/run_meme_experiments.sh --dry-run
 
 | Manager 模型 | add_all | relation_decision | mem0 | evermemos |
 |-------------|---------|-------------------|------|-----------|
-| gemma4-26B | ✅ | ✅ | ✅ | ✅ |
-| gemma4-e4b | ✅ | ✅ | ✅ | ✅ |
-| Qwen3.5-4B | ✅ | ✅ | ✅ | ✅ |
 | Qwen3.5-9B | 🔲 | 🔲 | 🔲 | 🔲 |
 | gemma4-12b-it | 🔲 | 🔲 | 🔲 | 🔲 |
 

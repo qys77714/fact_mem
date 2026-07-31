@@ -330,6 +330,45 @@ add_all 的 ingest 复用 gemma4-26B 那套（`artifacts/stages/ingest/add_all_t
 - Qwen3.5-4B RD 分类较慢，已降低并发（`--relation-episode-concurrency 5 --relation-concurrency 10`）
 - gemma4-e4b 和 Qwen3.5-4B 不能同时跑（共享 GPU），需串行
 
+## MEME 实验
+
+MEME（Memory Evaluation for Multisession Entities）是一个多 session 实体记忆评测基准。
+与 LME/LoCoMo 不同：
+- 每 episode 含 ~7 道 after questions（before questions 不参与评测）
+- 对话格式：标准 user/assistant（与 LME 一致）
+- 抽取模板：`0_mem_extract_dense_en.jinja`（全量密集抽取），4-turn 粒度
+- 全量评测，不抽样
+
+### 数据
+
+- 数据集：`data/raw_data/MEME/meme_filler32k.json`（100 episodes，包含于 `easy-mem-data.zip`）
+- 候选记忆（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates-meme.zip` → 解压到项目根目录 → `artifacts/stages/candidates/ff157d29/`
+- 候选记忆本地路径：`artifacts/stages/candidates/ff157d29/`（candidate_id = `ff157d29`，100 episodes，已抽取）
+- candidate_suffix: `meme_default`
+
+### 代码
+
+| 文件 | 说明 |
+|------|------|
+| `src/benchmark/meme.py` | MEME 数据加载器 |
+| `src/benchmark/__init__.py` | `get_benchmark("meme_filler32k")` 路由 |
+| `src/benchmark/datasets.py` | 注册 `"meme_filler32k"` 数据路径 |
+
+### 实验入口
+
+```bash
+# 灌库 + 答题 + 评估（推荐通过 run_exp_lme.py）
+uv run --no-sync python run_exp_lme.py --config config/meme_e4b.yaml --stages ingest,generate,evaluate
+```
+
+### MEME 配置
+
+| Config | Manager 模型 | Answer 模型 |
+|--------|-------------|-------------|
+| `config/meme_e4b.yaml` | gemma4-e4b | gemma4-26B |
+| `config/meme_q35.yaml` | Qwen3.5-4B | gemma4-26B |
+| `config/meme_qwen35_9b.yaml` | Qwen3.5-9B | gemma4-26B |
+
 ## 消融实验
 
 两组消融实验，均在 **hybrid 数据集**（`benchmark: lme_s`）上运行，覆盖所有 filler 等级（N0/N2/N4/N6/N8），token limit 256。
@@ -419,6 +458,7 @@ add_all 的 ingest 复用 gemma4-26B 那套（`artifacts/stages/ingest/add_all_t
 > **数据获取**：以下文件未包含在 Git 仓库中，协作者需从以下渠道获取：
 > - 数据集（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-data.zip` → 解压到项目根目录 → `data/`
 > - 候选记忆（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates.zip` → 解压到项目根目录 → `artifacts/stages/candidates/`
+> - MEME 候选记忆（HuggingFace）：`wget https://huggingface.co/datasets/Qys77/easy-mem-data/resolve/main/easy-mem-candidates-meme.zip` → 解压到项目根目录 → `artifacts/stages/candidates/ff157d29/`
 
 ### 必须获取（否则无法跑实验）
 
@@ -426,6 +466,7 @@ add_all 的 ingest 复用 gemma4-26B 那套（`artifacts/stages/ingest/add_all_t
 |------|---------|------|------|
 | 数据集 JSON | `data/preprocessed/` + `data/raw_data/` | ~3GB | LME-S/O/M 的原始和预处理数据 |
 | 候选记忆 | `artifacts/stages/candidates/` | ~41MB | 预抽取的候选记忆，按 filler 等级分目录 |
+| MEME 候选记忆 | `artifacts/stages/candidates/ff157d29/` | ~3.1MB | MEME benchmark 预抽取候选记忆（100 episodes） |
 
 **候选记忆目录 → candidate_suffix 映射**（放置后 config 中 `extract.candidate_suffix` 才能匹配）：
 
@@ -437,6 +478,7 @@ add_all 的 ingest 复用 gemma4-26B 那套（`artifacts/stages/ingest/add_all_t
 | `111c614b` | `hybrid_filler_N6` | 6 条 distractor / 题 | 470 |
 | `cda53dff` | `hybrid_filler_N8` | 8 条 distractor / 题 | 470 |
 | `200a19dc` | `oracle_dense` | Oracle 全量 session 上下文 | 501 |
+| `ff157d29` | `meme_default` | MEME 32k filler 候选记忆 | 100 |
 
 ### 可选获取（可自行生成但耗时/费钱）
 

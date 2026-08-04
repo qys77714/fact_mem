@@ -1,0 +1,32 @@
+{
+  "git_commit": "cec2b53847e2e1c5c898fe55d55226d5f224c239",
+  "git_branch": "feat/locomo-meme-benchmark",
+  "analysis_date": "2026-08-02",
+  "data_sources": {
+    "hybrid_golden": "data/preprocessed/longmemeval_s_hybrid_golden.json",
+    "candidate_id": "cda53dff",
+    "candidate_suffix": "hybrid_filler_N8"
+  },
+  "experiment_config": {
+    "benchmark": null,
+    "extract_model": "gemma4-26B",
+    "answer_model": "gemma4-26B",
+    "embedding_model": "qwen3-embedding-0.6b",
+    "memory_token_limit": 256,
+    "retrieve_topk": 50,
+    "judge_model": "qwen3-max"
+  },
+  "tokenizer": "Qwen3-8B (Qwen2Tokenizer)",
+  "analysis_scripts": [
+    "script/analyze_retrieval_diagnostics.py",
+    "script/generate_retrieval_report.py"
+  ],
+  "notes": [
+    "Single experimental runs (not 3-run mean). Process is deterministic.",
+    "Add-all results pooled between manager models (464/470 identical).",
+    "Mem0 gold matching uses fuzzy fallback (ratio >= 0.65) for rewritten texts.",
+    "For mem0 gemma4-e4b, 127/470 questions have gold lost from memory store.",
+    "RD retrieval only accesses Primary layer; Evidence is not in final answer context.",
+    "Confounder token share denominator: only memory entry tokens in final context."
+  ]
+}

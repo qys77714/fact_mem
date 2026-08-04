@@ -1,0 +1,81 @@
+======================================================================
+RETRIEVAL DIAGNOSTICS — COMPREHENSIVE REPORT
+======================================================================
+
+## 1. Question Coverage
+All methods must analyze exactly 470 questions (with gold annotations).
+  Qwen3.5-4B/add_all: 470 questions
+  Qwen3.5-4B/evermemos: 470 questions
+  Qwen3.5-4B/mem0: 470 questions
+  Qwen3.5-4B/relation_decision: 470 questions
+  gemma4-e4b/add_all: 470 questions
+  gemma4-e4b/evermemos: 470 questions
+  gemma4-e4b/mem0: 470 questions
+  gemma4-e4b/relation_decision: 470 questions
+
+## 2. Context Token Limit Check (should all be 0)
+  Qwen3.5-4B/add_all: over_256=0, mean=231.4 ± 14.8
+  Qwen3.5-4B/evermemos: over_256=0, mean=228.2 ± 18.4
+  Qwen3.5-4B/mem0: over_256=0, mean=230.1 ± 17.9
+  Qwen3.5-4B/relation_decision: over_256=0, mean=231.0 ± 17.6
+  gemma4-e4b/add_all: over_256=0, mean=231.2 ± 14.9
+  gemma4-e4b/evermemos: over_256=0, mean=228.7 ± 17.6
+  gemma4-e4b/mem0: over_256=0, mean=231.7 ± 19.9
+  gemma4-e4b/relation_decision: over_256=0, mean=231.1 ± 15.8
+
+## 3. Retrieved Entry Count Distribution
+  Qwen3.5-4B/add_all: mean=4.8, std=0.5, p25=4, p50=5, p75=5
+  Qwen3.5-4B/evermemos: mean=4.3, std=0.8, p25=4, p50=4, p75=5
+  Qwen3.5-4B/mem0: mean=4.6, std=0.5, p25=4, p50=5, p75=5
+  Qwen3.5-4B/relation_decision: mean=4.3, std=0.7, p25=4, p50=4, p75=5
+  gemma4-e4b/add_all: mean=4.8, std=0.5, p25=4, p50=5, p75=5
+  gemma4-e4b/evermemos: mean=4.3, std=0.8, p25=4, p50=4, p75=5
+  gemma4-e4b/mem0: mean=4.5, std=0.7, p25=4, p50=5, p75=5
+  gemma4-e4b/relation_decision: mean=4.4, std=0.6, p25=4, p50=4, p75=5
+
+## 4. Gold Recall by num_required_gold
+  Qwen3.5-4B/add_all: 1: 35.4%, 2: 26.8%, 3: 19.4%, 4: 9.4%, 5: 3.3%, 6: 10.0%
+  Qwen3.5-4B/evermemos: 1: 33.7%, 2: 22.3%, 3: 16.7%, 4: 7.8%, 5: 3.3%, 6: 6.7%
+  Qwen3.5-4B/mem0: 1: 79.6%, 2: 52.3%, 3: 50.9%, 4: 35.9%, 5: 30.0%, 6: 13.3%
+  Qwen3.5-4B/relation_decision: 1: 89.0%, 2: 83.4%, 3: 66.7%, 4: 51.6%, 5: 41.7%, 6: 30.0%
+  gemma4-e4b/add_all: 1: 35.4%, 2: 26.8%, 3: 19.4%, 4: 9.4%, 5: 3.3%, 6: 10.0%
+  gemma4-e4b/evermemos: 1: 34.3%, 2: 23.4%, 3: 16.7%, 4: 7.8%, 5: 3.3%, 6: 6.7%
+  gemma4-e4b/mem0: 1: 59.1%, 2: 48.9%, 3: 47.2%, 4: 46.9%, 5: 48.3%, 6: 30.0%
+  gemma4-e4b/relation_decision: 1: 90.6%, 2: 76.1%, 3: 73.1%, 4: 64.1%, 5: 45.0%, 6: 33.3%
+
+## 5. Confusion Type Breakdown (Gold Recall)
+  Qwen3.5-4B/add_all: Type I=30.8% (n=398), Type II=13.9% (n=72)
+  Qwen3.5-4B/evermemos: Type I=27.9% (n=398), Type II=9.7% (n=72)
+  Qwen3.5-4B/mem0: Type I=66.2% (n=398), Type II=33.3% (n=72)
+  Qwen3.5-4B/relation_decision: Type I=78.8% (n=398), Type II=96.5% (n=72)
+  gemma4-e4b/add_all: Type I=30.6% (n=398), Type II=14.6% (n=72)
+  gemma4-e4b/evermemos: Type I=28.6% (n=398), Type II=10.4% (n=72)
+  gemma4-e4b/mem0: Type I=55.7% (n=398), Type II=34.0% (n=72)
+  gemma4-e4b/relation_decision: Type I=80.8% (n=398), Type II=74.3% (n=72)
+
+## 6. RD Mixed Gold/Confounder Fused Entries
+  Qwen3.5-4B: 70 questions with mixed fused entries
+  gemma4-e4b: 117 questions with mixed fused entries
+
+## 7. Evidence Has Gold but Primary Missed
+  Qwen3.5-4B/add_all: 0
+  Qwen3.5-4B/evermemos: 263
+  Qwen3.5-4B/mem0: 0
+  Qwen3.5-4B/relation_decision: 0
+  gemma4-e4b/add_all: 0
+  gemma4-e4b/evermemos: 262
+  gemma4-e4b/mem0: 0
+  gemma4-e4b/relation_decision: 0
+
+## 8. Add-all Pooling Analysis
+  Common histories: 470
+  Identical (any_gold + entry_count): 464/470
+  VERDICT: Add-all results are effectively identical → POOLED.
+
+## 9. Mem0 Gold Memory Preservation
+  gemma4-e4b: gold IDs found in store for 343/470 questions
+  Qwen3.5-4B: gold IDs found in store for 464/470 questions
+
+## 10. Query ID and Candidate Consistency
+  All methods share: candidate_id=cda53dff, benchmark=lme_s_golden, N=8 confounders
+  Verified: same 470 query history_names across all methods and models

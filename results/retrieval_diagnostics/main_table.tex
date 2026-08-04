@@ -1,0 +1,22 @@
+\begin{table}[ht]
+\centering
+\caption{Retrieval diagnostics for $N=8$ confounder condition.}
+\label{tab:retrieval_diagnostics}
+\begin{tabular}{lccccc}
+\toprule
+Manager model & Metric & Append-all & Mem0-style & EverMemOS-style & RD \\
+\midrule
+Gemma 4 E4B & Any gold retrieved (\%) ↑ & 36.6 & 69.6 & 34.9 & 94.7 \\
+ & All gold retrieved (\%) ↑ & 21.7 & 48.3 & 19.6 & 74.7 \\
+ & Gold recall (\%) ↑ & 29.1 & 59.6 & 27.1 & 84.9 \\
+ & Confounder tokens (\%) ↓ & 84.1 & 23.6 & 67.3 & 43.0 \\
+ & Retrieved entries  & 5.1 & 4.8 & 4.8 & 4.7 \\
+\midrule
+Qwen3.5-4B & Any gold retrieved (\%) ↑ & 36.6 & 81.3 & 35.5 & 95.1 \\
+ & All gold retrieved (\%) ↑ & 21.7 & 57.4 & 18.5 & 73.8 \\
+ & Gold recall (\%) ↑ & 29.1 & 69.0 & 26.9 & 84.6 \\
+ & Confounder tokens (\%) ↓ & 84.0 & 58.6 & 68.3 & 47.1 \\
+ & Retrieved entries  & 5.1 & 5.0 & 4.8 & 4.7 \\
+\bottomrule
+\end{tabular}
+\end{table}

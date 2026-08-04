@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering
+\caption{Retrieval process diagnostics under $N=8$ confounder condition (256-token budget).}
+\label{tab:retrieval_diagnostics}
+\small
+\begin{tabular}{llcccc}
+\toprule
+Manager model & Metric & Append-all & Mem0-style & EverMemOS-style & RD \\
+\midrule
+Gemma 4 E4B & Any gold retrieved (\%) $\uparrow$ & 35.7 & 69.1 & 33.0 & 89.8 \\
+ & All gold retrieved (\%) $\uparrow$ & 20.9 & 35.3 & 18.9 & 66.0 \\
+ & Gold recall (\%) $\uparrow$ & 28.2 & 52.4 & 25.8 & 79.8 \\
+ & Confounder tokens (\%) $\downarrow$ & 86.5 & 26.0 & 69.9 & 47.4 \\
+ & Retrieved entries & 4.8 & 4.5 & 4.3 & 4.4 \\
+\cmidrule{2-6}
+Qwen3.5-4B & Any gold retrieved (\%) $\uparrow$ & 35.5 & 75.7 & 32.8 & 90.0 \\
+ & All gold retrieved (\%) $\uparrow$ & 21.1 & 47.7 & 17.7 & 66.4 \\
+ & Gold recall (\%) $\uparrow$ & 28.2 & 61.1 & 25.1 & 81.5 \\
+ & Confounder tokens (\%) $\downarrow$ & 86.6 & 62.9 & 71.1 & 51.3 \\
+ & Retrieved entries & 4.8 & 4.6 & 4.3 & 4.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
